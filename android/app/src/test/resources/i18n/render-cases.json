@@ -956,7 +956,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Stop all"
+                  "value": "Stop"
                 }
               ],
               "parameters": []
@@ -971,7 +971,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Pause timeline"
+                  "value": "Pause"
                 }
               ],
               "parameters": []
@@ -986,7 +986,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Resume timeline"
+                  "value": "Resume"
                 }
               ],
               "parameters": []
@@ -5858,7 +5858,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Alle stoppen"
+                  "value": "Stoppen"
                 }
               ],
               "parameters": []
@@ -5873,7 +5873,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Zeitachse pausieren"
+                  "value": "Pause"
                 }
               ],
               "parameters": []
@@ -5888,7 +5888,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Zeitachse fortsetzen"
+                  "value": "Fortsetzen"
                 }
               ],
               "parameters": []
@@ -10776,7 +10776,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Detener todo"
+                  "value": "Detener"
                 }
               ],
               "parameters": []
@@ -10791,7 +10791,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Pausar cronología"
+                  "value": "Pausar"
                 }
               ],
               "parameters": []
@@ -10806,7 +10806,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Reanudar cronología"
+                  "value": "Reanudar"
                 }
               ],
               "parameters": []
@@ -15714,7 +15714,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Tout arrêter"
+                  "value": "Arrêter"
                 }
               ],
               "parameters": []
@@ -15729,7 +15729,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Mettre la chronologie en pause"
+                  "value": "Pause"
                 }
               ],
               "parameters": []
@@ -15744,7 +15744,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Reprendre la chronologie"
+                  "value": "Reprendre"
                 }
               ],
               "parameters": []
@@ -20628,7 +20628,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Parar tudo"
+                  "value": "Parar"
                 }
               ],
               "parameters": []
@@ -20643,7 +20643,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Pausar linha do tempo"
+                  "value": "Pausar"
                 }
               ],
               "parameters": []
@@ -20658,7 +20658,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Retomar linha do tempo"
+                  "value": "Retomar"
                 }
               ],
               "parameters": []
@@ -25060,7 +25060,7 @@
         "key": "android.speech.stopAll",
         "params": {}
       },
-      "expected": "Stop all"
+      "expected": "Stop"
     },
     {
       "locale": "en",
@@ -25068,7 +25068,7 @@
         "key": "android.speech.pauseTimeline",
         "params": {}
       },
-      "expected": "Pause timeline"
+      "expected": "Pause"
     },
     {
       "locale": "en",
@@ -25076,7 +25076,7 @@
         "key": "android.speech.resumeTimeline",
         "params": {}
       },
-      "expected": "Resume timeline"
+      "expected": "Resume"
     },
     {
       "locale": "en",
@@ -27632,7 +27632,7 @@
         "key": "android.speech.stopAll",
         "params": {}
       },
-      "expected": "Alle stoppen"
+      "expected": "Stoppen"
     },
     {
       "locale": "de",
@@ -27640,7 +27640,7 @@
         "key": "android.speech.pauseTimeline",
         "params": {}
       },
-      "expected": "Zeitachse pausieren"
+      "expected": "Pause"
     },
     {
       "locale": "de",
@@ -27648,7 +27648,7 @@
         "key": "android.speech.resumeTimeline",
         "params": {}
       },
-      "expected": "Zeitachse fortsetzen"
+      "expected": "Fortsetzen"
     },
     {
       "locale": "de",
@@ -30204,7 +30204,7 @@
         "key": "android.speech.stopAll",
         "params": {}
       },
-      "expected": "Detener todo"
+      "expected": "Detener"
     },
     {
       "locale": "es",
@@ -30212,7 +30212,7 @@
         "key": "android.speech.pauseTimeline",
         "params": {}
       },
-      "expected": "Pausar cronología"
+      "expected": "Pausar"
     },
     {
       "locale": "es",
@@ -30220,7 +30220,7 @@
         "key": "android.speech.resumeTimeline",
         "params": {}
       },
-      "expected": "Reanudar cronología"
+      "expected": "Reanudar"
     },
     {
       "locale": "es",
@@ -32776,7 +32776,7 @@
         "key": "android.speech.stopAll",
         "params": {}
       },
-      "expected": "Tout arrêter"
+      "expected": "Arrêter"
     },
     {
       "locale": "fr",
@@ -32784,7 +32784,7 @@
         "key": "android.speech.pauseTimeline",
         "params": {}
       },
-      "expected": "Mettre la chronologie en pause"
+      "expected": "Pause"
     },
     {
       "locale": "fr",
@@ -32792,7 +32792,7 @@
         "key": "android.speech.resumeTimeline",
         "params": {}
       },
-      "expected": "Reprendre la chronologie"
+      "expected": "Reprendre"
     },
     {
       "locale": "fr",
@@ -35752,7 +35752,7 @@
         "key": "android.speech.stopAll",
         "params": {}
       },
-      "expected": "Parar tudo"
+      "expected": "Parar"
     },
     {
       "locale": "pt-BR",
@@ -35760,7 +35760,7 @@
         "key": "android.speech.pauseTimeline",
         "params": {}
       },
-      "expected": "Pausar linha do tempo"
+      "expected": "Pausar"
     },
     {
       "locale": "pt-BR",
@@ -35768,7 +35768,7 @@
         "key": "android.speech.resumeTimeline",
         "params": {}
       },
-      "expected": "Retomar linha do tempo"
+      "expected": "Retomar"
     },
     {
       "locale": "pt-BR",

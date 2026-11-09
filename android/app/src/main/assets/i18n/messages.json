@@ -954,7 +954,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Stop all"
+                "value": "Stop"
               }
             ],
             "parameters": []
@@ -969,7 +969,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Pause timeline"
+                "value": "Pause"
               }
             ],
             "parameters": []
@@ -984,7 +984,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Resume timeline"
+                "value": "Resume"
               }
             ],
             "parameters": []
@@ -5609,7 +5609,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Alle stoppen"
+                "value": "Stoppen"
               }
             ],
             "parameters": []
@@ -5624,7 +5624,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Zeitachse pausieren"
+                "value": "Pause"
               }
             ],
             "parameters": []
@@ -5639,7 +5639,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Zeitachse fortsetzen"
+                "value": "Fortsetzen"
               }
             ],
             "parameters": []
@@ -10280,7 +10280,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Detener todo"
+                "value": "Detener"
               }
             ],
             "parameters": []
@@ -10295,7 +10295,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Pausar cronología"
+                "value": "Pausar"
               }
             ],
             "parameters": []
@@ -10310,7 +10310,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Reanudar cronología"
+                "value": "Reanudar"
               }
             ],
             "parameters": []
@@ -14971,7 +14971,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Tout arrêter"
+                "value": "Arrêter"
               }
             ],
             "parameters": []
@@ -14986,7 +14986,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Mettre la chronologie en pause"
+                "value": "Pause"
               }
             ],
             "parameters": []
@@ -15001,7 +15001,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Reprendre la chronologie"
+                "value": "Reprendre"
               }
             ],
             "parameters": []
@@ -19638,7 +19638,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Parar tudo"
+                "value": "Parar"
               }
             ],
             "parameters": []
@@ -19653,7 +19653,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Pausar linha do tempo"
+                "value": "Pausar"
               }
             ],
             "parameters": []
@@ -19668,7 +19668,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Retomar linha do tempo"
+                "value": "Retomar"
               }
             ],
             "parameters": []
