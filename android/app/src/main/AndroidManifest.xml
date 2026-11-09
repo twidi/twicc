@@ -42,7 +42,7 @@
         </service>
         <activity
             android:name=".BrowserActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|uiMode"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".MainActivity" android:exported="true">
