@@ -4,10 +4,10 @@
   "channels": 1,
   "bitsPerSample": 16,
   "sources": {
-    "frontend/scripts/generate-android-notification-sounds.mjs": "633845f39d9298c2a0a427893ebb057c63bd917878582b6c98794f3e3c01d549",
+    "frontend/scripts/generate-android-notification-sounds.mjs": "cb7b292f93276839d6e49647c12be2d6817d0506c08d9b2573ccaabcb692b6e0",
     "frontend/src/utils/notificationSoundDefinitions.js": "19c5324faf609805de29c57c83f24412728d26f3fabd794f193446a120f59978"
   },
-  "sourceFingerprint": "ee70acda42b5294c0806a20341de5efb2e18361eee54b258d749073248cdebe9",
+  "sourceFingerprint": "d31c22027f6e616ab94bfb078bf3040c0dd7ef6e1d3563804b94179ea2f12bd1",
   "entries": [
     {
       "id": "beep",

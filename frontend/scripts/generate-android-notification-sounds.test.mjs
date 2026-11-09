@@ -1,16 +1,30 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { encodePcm16Wav, checkGeneratedSounds } from './generate-android-notification-sounds.mjs'
+import { encodePcm16Wav, checkGeneratedSounds, resolveScratchDirectory } from './generate-android-notification-sounds.mjs'
 
 const assets = fileURLToPath(new URL('../../android/app/src/main/assets/notification-sounds/', import.meta.url))
 const scratch = tmpdir()
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
+
+test('scratch guard rejects the repository root and descendants', () => {
+    const repository = fileURLToPath(new URL('../../', import.meta.url))
+    for (const path of [repository, join(repository, 'frontend/internal-scratch'), join(repository, 'frontend/..')]) {
+        assert.throws(() => resolveScratchDirectory(path), /outside the repository/, path)
+    }
+})
+
+test('scratch guard accepts sibling and outside paths without creating them', () => {
+    const repository = fileURLToPath(new URL('../../', import.meta.url)).replace(/\/$/, '')
+    for (const path of [repository + '-scratch', join(repository, '../session-scratch'), join(tmpdir(), 'sound-scratch')]) {
+        assert.equal(resolveScratchDirectory(path), resolve(path))
+    }
+})
 
 test('encodes mono PCM16 WAV with correct header, clipping and signed samples', () => {
     const wav = Buffer.from(encodePcm16Wav(new Float32Array([-2, -1, -0.5, 0, 0.5, 1, 2]), 48000))

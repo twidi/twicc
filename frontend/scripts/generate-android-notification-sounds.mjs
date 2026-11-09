@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 import { SOUND_CONFIGS, getNotificationTones } from '../src/utils/notificationSoundDefinitions.js'
 
-const repository = fileURLToPath(new URL('../../', import.meta.url))
+const repository = resolve(fileURLToPath(new URL('../../', import.meta.url)))
 const outputDirectory = join(repository, 'android/app/src/main/assets/notification-sounds')
 const sourcePaths = [
     'frontend/scripts/generate-android-notification-sounds.mjs',
@@ -201,6 +201,12 @@ async function renderSounds(browser, scratchDir) {
     }
 }
 
+export function resolveScratchDirectory(path) {
+    const scratchDir = resolve(path)
+    if (scratchDir === repository || scratchDir.startsWith(repository + '/')) throw new Error('Use a scratch directory outside the repository')
+    return scratchDir
+}
+
 async function main() {
     const { values } = parseArgs({ options: {
         browser: { type: 'string', default: '/usr/bin/google-chrome' },
@@ -213,8 +219,7 @@ async function main() {
         return
     }
     if (!values['scratch-dir']) throw new Error('Generation requires --scratch-dir outside the repository')
-    const scratchDir = resolve(values['scratch-dir'])
-    if (scratchDir === repository || scratchDir.startsWith(repository + '/')) throw new Error('Use a scratch directory outside the repository')
+    const scratchDir = resolveScratchDirectory(values['scratch-dir'])
     const renders = await renderSounds(values.browser, scratchDir)
     const manifest = { ...format, ...await sourceFingerprints(), entries: renders.map(({ id, frames, wav }) => ({ id, file: `${id}.wav`, frames, sha256: sha256(wav) })) }
     // Publish only after every OfflineAudioContext render succeeds.

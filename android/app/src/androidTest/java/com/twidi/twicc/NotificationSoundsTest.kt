@@ -18,7 +18,9 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Run only on a disposable emulator. These tests never open an Activity or a browser page. */
 class NotificationSoundsTest {
@@ -124,6 +126,89 @@ class NotificationSoundsTest {
             assertTrue(done.await(30, TimeUnit.SECONDS))
         }
         assertCatalog("fr", rows())
+    }
+
+    @Test fun heldPublicWorkerReconcilesLatestPersistedLocaleWithoutOverlap() = fixture {
+        select("en")
+        clearOwnedRows()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val active = AtomicInteger()
+        val maximumActive = AtomicInteger()
+        val locales = mutableListOf<String>()
+        val hooks = NotificationSounds.overrideReconciliationForTests({ locale ->
+            val count = active.incrementAndGet()
+            maximumActive.updateAndGet { maxOf(it, count) }
+            try {
+                locales.add(locale)
+                if (locales.size == 1) {
+                    entered.countDown()
+                    check(release.await(30, TimeUnit.SECONDS)) { "Held reconciliation timed out" }
+                }
+                NotificationSoundPublisher(context).reconcile(locale)
+            } finally { active.decrementAndGet() }
+        }, { finished.countDown() })
+        try {
+            NotificationSounds.publishAsync(context)
+            assertTrue(entered.await(30, TimeUnit.SECONDS))
+            assertEquals("preparing", NotificationSounds.state())
+            select("de")
+            repeat(12) { NotificationSounds.publishAsync(context) }
+            // Persist a newer locale without another call. The held worker must re-read it.
+            select("fr")
+            assertEquals(1, active.get())
+            release.countDown()
+            assertTrue(finished.await(60, TimeUnit.SECONDS))
+            assertEquals("ready", NotificationSounds.state())
+            assertEquals(listOf("en", "fr"), locales)
+            assertEquals(1, maximumActive.get())
+            assertEquals(0, active.get())
+            val completed = rows()
+            assertEquals(10, completed.size)
+            assertCatalog("fr", completed)
+        } finally {
+            release.countDown()
+            try { assertTrue(finished.await(60, TimeUnit.SECONDS)) }
+            finally { hooks.close() }
+        }
+    }
+
+    @Test fun publicFailureReleasesWorkerAndRetryPublishesReadyCatalog() = fixture {
+        select("en")
+        clearOwnedRows()
+        val attempts = AtomicInteger()
+        val active = AtomicInteger()
+        val maximumActive = AtomicInteger()
+        val released = LinkedBlockingQueue<String>()
+        val hooks = NotificationSounds.overrideReconciliationForTests({ locale ->
+            val count = active.incrementAndGet()
+            maximumActive.updateAndGet { maxOf(it, count) }
+            try {
+                if (attempts.incrementAndGet() == 1) {
+                    NotificationSoundPublisher(context) { _, _ ->
+                        throw IOException("Injected public worker failure after pending insert")
+                    }.reconcile(locale)
+                } else NotificationSoundPublisher(context).reconcile(locale)
+            } finally { active.decrementAndGet() }
+        }, { released.add(NotificationSounds.state()) })
+        try {
+            NotificationSounds.publishAsync(context)
+            assertEquals("error", released.poll(60, TimeUnit.SECONDS))
+            assertEquals("error", NotificationSounds.state())
+            assertEquals(0, active.get())
+            assertEquals(1, rows().size)
+            assertEquals(1, rows().single().pending)
+            NotificationSounds.publishAsync(context)
+            assertEquals("ready", released.poll(60, TimeUnit.SECONDS))
+            assertEquals("ready", NotificationSounds.state())
+            assertEquals(2, attempts.get())
+            assertEquals(1, maximumActive.get())
+            assertEquals(0, active.get())
+            val completed = rows()
+            assertEquals(10, completed.size)
+            assertCatalog("en", completed)
+        } finally { hooks.close() }
     }
 
     private fun assertCatalog(locale: String, entries: List<Row>) {

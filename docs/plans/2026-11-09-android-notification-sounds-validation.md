@@ -15,6 +15,8 @@ The APK is a development distribution candidate. Device acceptance is pending.
 
 The Task 4 frontend report records 5,273 passing tests and successful production builds.
 Task 5 changes no frontend source. It does not repeat the full frontend suite.
+The final review fixes change the generator guard and add a native worker test seam.
+The final wave runs 37 focused frontend tests. It does not repeat the full frontend suite.
 
 ## Host verification
 
@@ -32,9 +34,16 @@ export PATH="$JAVA_HOME/bin:$PATH"
 | --- | --- | --- |
 | `./gradlew -PtargetProfile=emulator -PttsBoundaryTests=true :policy:test :app:testWebviewDebugUnitTest :app:testGeckoDebugUnitTest :app:compileWebviewDebugAndroidTestKotlin :app:compileGeckoDebugAndroidTestKotlin :app:lintWebviewDebug :app:lintGeckoDebug` | `android/` | Exit 0. Policy: 93 tests. WebView: 105 tests. Gecko: 105 tests. No failures, errors, or skips. Both instrumentation source sets compile. Both lints pass. |
 | `npm run sounds:android:check` | `frontend/` | Exit 0. All ten committed sounds pass freshness checks. |
+| `node --test scripts/generate-android-notification-sounds.test.mjs src/utils/notificationSoundDefinitions.test.js src/utils/notificationSounds.test.js` | `frontend/` | Exit 0. All 37 tests pass. Repository root/descendant scratch paths fail; sibling/outside paths pass. |
+| `npm run i18n:android:check` | `frontend/` | Exit 0. 268 native keys and five locales remain fresh. |
 | `python3 -m unittest discover -s android/tests -v` | Checkout root | Exit 0. Eight build-script tests pass. |
 | `./gradlew -PtargetProfile=emulator -PttsBoundaryTests=true :app:compileWebviewDebugAndroidTestKotlin :app:compileGeckoDebugAndroidTestKotlin :app:lintWebviewDebug :app:lintGeckoDebug` | `android/` | Exit 0 after final fixture edits. Both instrumentation source sets compile. Both lints pass. |
 | `/home/twidi/.local/share/twicc-android/build.sh` | Checkout root | Exit 0. Policy: 93 tests. Gecko release: 105 tests. No failures, errors, or skips. Gecko release lint and ARM64 assembly pass. |
+
+The final wave repeats the complete first Gradle command after seam cleanup changes.
+Both instrumentation source sets compile with 14 target test methods: six catalog, seven settings, and one navigation fixture.
+These methods are compiled, not executed. The ten regenerated WAVs retain their previous bytes.
+Only the sound manifest source fingerprints change during regeneration.
 
 Debug lint records 73 WebView warnings and 67 Gecko warnings, with no errors.
 Warnings include existing SDK/API, dependency, unused resource, and preference-write findings.
@@ -53,8 +62,8 @@ The local wrapper preserves the existing signing configuration and keystore.
 | APK | `android/dist/gecko/64/release/twicc-gecko-64-v0.5.21-release.apk` |
 | Package | `com.twidi.twicc` |
 | Version | `0.5.21`, code `32` |
-| Size | 212,361,143 bytes |
-| SHA-256 | `f93dfded257725e8dfc5018df9b90b8b586519b8fbb7b0df9f875584aa6bc299` |
+| Size | 212,361,139 bytes |
+| SHA-256 | `9a7ab16a06f73134b658d0da744ec417f4468005d3ea3038f78a82195b549112` |
 | ABI | `arm64-v8a` |
 | Android floor and target | API 29 and API 35 |
 | Signature | `apksigner verify --verbose --print-certs` passes; APK Signature Scheme v2 |
@@ -71,9 +80,9 @@ Host evidence proves source contracts and build correctness. It does not prove A
 
 | Criterion | Available evidence | Remaining acceptance |
 | --- | --- | --- |
-| 1. Four defaults and silent speech | `NotificationSoundSettingsTest` compiles. It checks real channel preservation, default-channel factories, readable packaged URIs, notification audio attributes, and silent speech. | Execute on API 29 and 35. Check all four persisted defaults on a clean installation before the custom-channel fixture. |
+| 1. Four defaults and silent speech | `NotificationSoundSettingsTest` compiles. It checks real channel preservation, default-channel factories, readable packaged URIs, notification audio attributes, and preservation of a null-sound speech fixture. | Execute on API 29 and 35. Check all four persisted defaults and functional speech-channel silence on a clean installation before the custom-channel fixture. |
 | 2. All ten sounds selectable | Generator freshness passes. `NotificationSoundsTest` compiles with RingtoneManager discovery and byte checks for all ten entries. | Execute on API 29 and 35. Browse the Samsung picker. Listen to all ten sounds. |
-| 3. Stable catalog and category count | Compiled tests cover interrupted pending writes, redundant pending rows, twelve overlapping publication requests, locale changes, scanner refresh, URI preservation, and five categories. | Execute tests. Compare rows and categories across restart and a same-signature update without clearing data. |
+| 3. Stable catalog and category count | Compiled tests cover interrupted pending writes, redundant pending rows, twelve overlapping publication requests, held-worker locale changes, public failure/release/retry, scanner refresh, URI preservation, and five categories. Latches control the new worker scenarios without sleeps. | Execute tests. Compare rows and categories across restart and a same-signature update without clearing data. |
 | 4. Correct category actions and system ownership | Compiled settings tests cover four actions, intent extras, invalid kinds, app-settings fallback, and existing custom sound/silence preservation. Task 4 frontend tests pass. | Open all four Samsung categories. Verify independent choices across events and shared scope across instances. |
 | 5. Native audio without a page | Compiled provider test reads every WAV without opening an Activity. Packaged defaults do not depend on MediaStore publication. | Execute without a page. Verify native physical playback. |
 | 6. No embedded web notification audio | Task 4 playback tests pass for all ten sounds, permission states, bridge/language failures, and both transports. | Confirm silence from web audio when Android blocks notifications. |
@@ -84,6 +93,8 @@ Host evidence proves source contracts and build correctness. It does not prove A
 | 11. Both engines and Samsung | Policy and both app unit suites pass. Both engines' instrumentation sources compile. | Execute on API 29 and 35 for each engine. Complete Samsung acceptance. |
 
 The settings fixture seeds custom channels. It does not prove all persisted clean-install defaults.
+TTS creates its channel at `IMPORTANCE_LOW`, which provides existing functional alert silence.
+Clean creation does not explicitly set a null sound URI. The null-sound fixture proves preservation only.
 Reconstructing a publisher tests interrupted publication. It does not prove process restart or APK-update persistence.
 Synthetic push payloads enter after decryption. They test native posting, suppression, dismissal, and navigation.
 They do not test FCM transport delivery or audible physical output.
@@ -128,7 +139,7 @@ Run this sequence separately for both engines on a disposable emulator.
 Complete it before the settings fixture seeds its custom channels.
 
 1. Start with a fresh disposable installation. Launch it and wait for catalog preparation.
-2. Record the four persisted default URIs and the silent `tts_playback` channel.
+2. Record the four persisted default URIs and `tts_playback` importance. Verify its functional alert silence; do not assume a null sound URI.
 3. Confirm exactly five functional categories and ten completed MediaStore rows.
 4. Record each sound ID, MediaStore URI, localized title, and content hash.
 5. Select a published sound for Finished work through system Settings. Set Questions to silence.

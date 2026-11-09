@@ -28,6 +28,28 @@ object NotificationSounds {
     private var requestedLocale: String? = null
     private var successfulCatalog: Pair<String, String>? = null
     @Volatile private var manifest: SoundManifest? = null
+    private var reconciliationOverride: ReconciliationOverride? = null
+
+    private class ReconciliationOverride(val reconcile: (String) -> Unit, val onWorkerReleased: () -> Unit)
+
+    /** Tests keep real MediaStore reconciliation while controlling worker entry and release. */
+    internal fun overrideReconciliationForTests(reconcile: (String) -> Unit, onWorkerReleased: () -> Unit): AutoCloseable {
+        val replacement = ReconciliationOverride(reconcile, onWorkerReleased)
+        synchronized(lock) {
+            check(!running && reconciliationOverride == null)
+            successfulCatalog = null
+            reconciliationOverride = replacement
+        }
+        return AutoCloseable {
+            synchronized(lock) {
+                // Always detach during assertion-failure cleanup. An active worker retains its snapshot.
+                if (reconciliationOverride === replacement) {
+                    reconciliationOverride = null
+                    successfulCatalog = null
+                }
+            }
+        }
+    }
 
     fun uri(context: Context, soundId: String): Uri {
         require(soundId in ids)
@@ -71,7 +93,7 @@ object NotificationSounds {
     fun publishAsync(context: Context) {
         val app = context.applicationContext
         val locale = AndroidLanguageStore(app).read().locale
-        synchronized(lock) {
+        val override = synchronized(lock) {
             requestedLocale = locale
             if (running) return
             // Packaged assets cannot change within a process. The successful key includes their fingerprint.
@@ -79,16 +101,18 @@ object NotificationSounds {
             if (fingerprint != null && successfulCatalog == (fingerprint to locale)) return
             publicationState = "preparing"
             running = true
+            reconciliationOverride
         }
-        Thread({ publishRequested(app) }, "TwiCC notification sounds").start()
+        Thread({ publishRequested(app, override) }, "TwiCC notification sounds").start()
     }
 
-    private fun publishRequested(context: Context) {
+    private fun publishRequested(context: Context, override: ReconciliationOverride?) {
         while (true) {
             val locale = synchronized(lock) { checkNotNull(requestedLocale) }
             val result = runCatching {
                 val assets = catalog(context)
-                NotificationSoundPublisher(context).reconcile(locale)
+                if (override == null) NotificationSoundPublisher(context).reconcile(locale)
+                else override.reconcile(locale)
                 assets.fingerprint to locale
             }
             result.exceptionOrNull()?.let { Log.w("NotificationSounds", "Sound catalog publication failed", it) }
@@ -105,7 +129,10 @@ object NotificationSounds {
                     true
                 }
             }
-            if (finished) return
+            if (finished) {
+                override?.onWorkerReleased?.invoke()
+                return
+            }
         }
     }
 }
