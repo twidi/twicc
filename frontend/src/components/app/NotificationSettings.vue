@@ -363,14 +363,14 @@ defineExpose({ sync })
             <a v-if="!isAndroidApp && userTurnSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testUserTurnSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
-            <div class="notif-toast-row">
+            <div class="notif-switch-row">
                 <wa-switch
                     :checked="userTurnToast"
                     @change="onUserTurnToastChange"
                     size="small"
                 >{{ $t('settings.notifications.inAppToast') }}</wa-switch>
             </div>
-            <div v-if="canChooseNotification" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-switch-row">
                 <wa-switch
                     :checked="userTurnBrowser"
                     @change="onUserTurnBrowserChange"
@@ -398,7 +398,7 @@ defineExpose({ sync })
             <a v-if="!isAndroidApp && pendingRequestSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPendingRequestSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
-            <div v-if="canChooseNotification" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-switch-row">
                 <wa-switch
                     :checked="pendingRequestBrowser"
                     @change="onPendingRequestBrowserChange"
@@ -412,11 +412,13 @@ defineExpose({ sync })
         <!-- When extra usage starts -->
         <div class="setting-group">
             <label class="setting-group-label">{{ $t('settings.usage.extraUsageNotification.label') }}</label>
-            <wa-switch
-                :checked="notifyOnExtraUsageStart"
-                @change="onNotifyOnExtraUsageStartChange"
-                size="small"
-            >{{ $t('settings.usage.extraUsageNotification.notify') }}</wa-switch>
+            <div class="notif-switch-row">
+                <wa-switch
+                    :checked="notifyOnExtraUsageStart"
+                    @change="onNotifyOnExtraUsageStartChange"
+                    size="small"
+                >{{ $t('settings.usage.extraUsageNotification.notify') }}</wa-switch>
+            </div>
             <wa-select v-if="!isAndroidApp"
                 :value.prop="extraUsageStartSound"
                 @change="onExtraUsageStartSoundChange"
@@ -431,7 +433,7 @@ defineExpose({ sync })
             <a v-if="!isAndroidApp && extraUsageStartSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testExtraUsageStartSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
-            <div v-if="canChooseNotification" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-switch-row">
                 <wa-switch
                     :checked="extraUsageStartBrowser"
                     @change="onExtraUsageStartBrowserChange"
@@ -462,7 +464,7 @@ defineExpose({ sync })
             <a v-if="!isAndroidApp && peerSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPeerSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
-            <div v-if="canChooseNotification" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-switch-row">
                 <wa-switch
                     :checked="peerBrowser"
                     @change="onPeerBrowserChange"
@@ -617,16 +619,25 @@ defineExpose({ sync })
     padding-bottom: var(--wa-space-2xs);
 }
 
-.notif-browser-row {
+/* Every switch of a notification group sits in one of these rows: same
+   indent, same height, and a button (Android sound settings) can share the line. */
+.notif-switch-row {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     column-gap: var(--wa-space-s);
     row-gap: var(--wa-space-3xs);
+    padding-left: var(--wa-space-2xs);
 
     wa-switch {
         flex-shrink: 0;
     }
+}
+
+/* Consecutive switch rows stack tightly: the group gap alone separates them.
+   The last row keeps the group's bottom margin. */
+.settings-section .setting-group > .notif-switch-row:has(+ .notif-switch-row) {
+    margin-bottom: 0;
 }
 
 .notif-android-sound-settings {
@@ -648,11 +659,6 @@ defineExpose({ sync })
     &:hover {
         text-decoration: underline;
     }
-}
-
-.notif-browser-row,
-.notif-toast-row {
-    padding-left: var(--wa-space-2xs);
 }
 
 .notif-denied {
