@@ -160,6 +160,8 @@ class PushNotificationNavigationTest {
                 val foreground = post(service, one.id, "/project/p/session/one", expectNotification = false)
                 assertNull("The displayed session must never post a new notification", notification(foreground))
                 val foregroundQuestion = post(service, one.id, "/project/p/session/one", "pending_request", expectNotification = false)
+                val otherSessionQuestion = post(service, one.id, "/project/p/session/two", "pending_request")
+                assertNotNull("A question in another foreground session must notify", notification(otherSessionQuestion))
                 val otherInstance = post(service, two.id, "/project/p/session/one")
                 assertNotNull("The same session ID in another instance must remain visible", notification(otherInstance))
                 assertNull(notification(foreground)); assertNull(notification(foregroundQuestion))
@@ -179,17 +181,23 @@ class PushNotificationNavigationTest {
                 // A foreground tap must reach the page without any navigation heartbeat.
                 first.navigationPolling.set(false)
                 waitFor { !first.observedNavigationPolling.get() }
-                val immediate = post(service, one.id, "/project/p/session/two")
+                val immediate = post(service, one.id, "/project/p/session/foreground-other")
+                assertNotNull("Finished work in another foreground session must notify", notification(immediate))
                 val started = SystemClock.elapsedRealtime()
                 notification(immediate)!!.notification.contentIntent.send()
-                waitFor { first.routes.contains("/project/p/session/two") }
+                waitFor { first.routes.contains("/project/p/session/foreground-other") }
                 android.util.Log.i("PushNavigationTest", "Foreground tap routed in ${SystemClock.elapsedRealtime() - started} ms")
                 first.navigationPolling.set(true)
                 assertSame(original, resumedBrowser())
                 assertEquals("Session routing must not reload HTML", 1, first.loads.size)
+                waitFor { store.page(one)?.endsWith("/project/p/session/foreground-other") == true }
+
+                assertNotNull("Opening another session must retain B", notification(b))
+                first.nextRoute.set("/project/p/session/two")
                 waitFor { store.page(one)?.endsWith("/project/p/session/two") == true }
 
                 waitFor { notification(b) == null }
+                waitFor { notification(otherSessionQuestion) == null }
                 val backToA = post(service, one.id, "/project/p/session/one")
                 assertNotNull(notification(backToA))
                 first.nextRoute.set("/projects/p/session/one/files/root/example.txt")
@@ -206,23 +214,29 @@ class PushNotificationNavigationTest {
 
                 instrumentation.runOnMainSync { original!!.moveTaskToBack(true) }
                 waitFor { resumedBrowser() == null }
+                val backgroundFinished = post(service, one.id, "/project/p/session/two")
                 val backgroundQuestion = post(service, one.id, "/project/p/session/two", "pending_request")
-                assertNotNull("A background session must still notify", notification(backgroundQuestion))
+                assertNotNull("Finished work in the same background session must notify", notification(backgroundFinished))
+                assertNotNull("A question in the same background session must notify", notification(backgroundQuestion))
 
                 tap(service, one.id, "/project/p/session/two")
                 Thread.sleep(500)
                 assertSame(original, resumedBrowser())
                 assertEquals(1, first.documents.size)
+                waitFor { notification(backgroundFinished) == null }
                 waitFor { notification(backgroundQuestion) == null }
 
                 instrumentation.uiAutomation.executeShellCommand("input keyevent 223").close()
                 waitFor { !context.getSystemService(PowerManager::class.java).isInteractive }
                 val asleep = post(service, one.id, "/project/p/session/two")
-                assertNotNull("A screen-off session must notify", notification(asleep))
+                val asleepQuestion = post(service, one.id, "/project/p/session/two", "pending_request")
+                assertNotNull("Finished work in the same screen-off session must notify", notification(asleep))
+                assertNotNull("A question in the same screen-off session must notify", notification(asleepQuestion))
                 instrumentation.uiAutomation.executeShellCommand("input keyevent 224").close()
                 instrumentation.uiAutomation.executeShellCommand("wm dismiss-keyguard").close()
                 waitFor { resumedBrowser() === original }
                 waitFor { notification(asleep) == null }
+                waitFor { notification(asleepQuestion) == null }
 
                 tap(service, two.id, "/project/p/session/three")
                 waitFor { second.documents.size == 1 }

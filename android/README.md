@@ -196,8 +196,8 @@ python3 -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.20**,
-version code **31**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.21**,
+version code **32**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -217,9 +217,9 @@ the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.20-release.apk
+adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.21-release.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.20-release.apk
+adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.21-release.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to
@@ -450,6 +450,78 @@ rules as other session links. Opening a closed instance restores its saved page
 before handling the session target, so its navigation context remains available.
 Tapping the current session preserves its tab and workspace. Peer notifications
 open the inbox or pairing manager; extra usage opens Home.
+
+### Native notification sounds
+
+Android owns notification sounds in both engines. Each event group provides a
+**Sound and notification settings** action. It opens that event's system notification
+category. Sound, silence, visibility, app blocking, and Do Not Disturb remain
+Android settings. These sound settings apply across all saved instances in one
+installation. Event switches remain specific to each instance.
+
+There are exactly five functional categories: four event categories and Speech.
+New event categories use these defaults:
+
+| Event | Channel ID | Default sound |
+| --- | --- | --- |
+| Finished work | `twicc-user_turn` | `chime` |
+| Questions and approvals | `twicc-pending_request` | `signal` |
+| Extra usage | `twicc-extra_usage` | `sweep` |
+| Peer messages and pairing requests | `twicc-peer` | `ripple` |
+| Speech | `tts_playback` | Silent |
+
+**Existing installations** keep their current category settings. Android does
+not replace an existing category's sound with a new app default. Open each
+event's system category and select a sound manually after this development
+update. No channel reset, data reset, or reinstall is required.
+
+The app publishes ten notification sounds to Android's sound catalog: `beep`,
+`chime`, `ping`, `pop`, `bloop`, `tink`, `knock`, `sweep`, `signal`, and `ripple`.
+Their localized titles include TwiCC. System picker grouping depends on Android
+and the device vendor. Any published sound can serve several categories.
+Each category keeps its own selection. Preparation runs outside the UI thread.
+Settings show preparation progress or a retry action after publication failure.
+Publication failure does not disable packaged defaults or speech controls.
+
+Default sounds use stable, read-only packaged URIs:
+`content://com.twidi.twicc.notification-sounds/<soundId>`. These URIs work before
+catalog publication. Picker entries use separate MediaStore content URIs under
+`Notifications/TwiCC/<soundId>/`. Reconciliation preserves completed row URIs
+when it updates sound bytes or localized names. No category is created per
+sound or per saved instance.
+
+Embedded pages never play web notification audio, including when Android
+blocks notifications. Only eligible native notifications can produce an event
+sound. Ordinary browsers keep their selectors, previews, and Web Audio behavior.
+Speech notification creation, updates, and controls produce no extra alert.
+
+### Notification sound generation and checks
+
+`frontend/src/utils/notificationSoundDefinitions.js` contains the canonical
+oscillator schedules. The browser player and offline generator share them.
+The generator uses Chromium OfflineAudioContext and writes mono PCM16 WAVs at
+48 kHz. It includes a 50 ms end margin. The ten WAVs and `manifest.json` live in
+`android/app/src/main/assets/notification-sounds/` and belong in Git.
+
+Run these commands from the checkout root. Use existing frontend dependencies
+and a writable per-session scratch directory. Use the non-Snap Chrome locally.
+
+```bash
+cd frontend && npm run sounds:android:generate -- --browser /usr/bin/google-chrome --scratch-dir /absolute/session/scratch
+cd frontend && npm run sounds:android:check
+cd frontend && node --test src/utils/notificationSoundDefinitions.test.js scripts/generate-android-notification-sounds.test.mjs
+```
+
+Check mode verifies source fingerprints, IDs, WAV structure, and actual file
+hashes. It needs neither Chromium nor scratch space. Gradle performs an
+independent verification before every build. Gradle never regenerates sounds
+or installs Node packages. Catalog labels use the existing i18n generation
+commands above. Do not edit generated translations manually.
+
+See the [sound validation record](../docs/plans/2026-11-09-android-notification-sounds-validation.md)
+for host results, instrumentation commands, and pending API 29, API 35, and
+Samsung acceptance. Physical sound playback and update persistence remain
+pending until device checks run.
 
 ## Native speech
 
