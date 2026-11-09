@@ -41,9 +41,10 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels (in-memory laye
 ## Commands and tools
 
 - **Lint:** `uvx ruff check .` (ruff is not installed; `uv run ruff` fails). Run any absent Python tool with `uvx <tool>`. Never `uv add` a tool to make a command work.
-- **Python tests:** `cd <checkout> && uv run pytest`. `twicc.settings_test` isolates data dir, provider homes and DB, and forbids the real data dirs. Never add `TWICC_DATA_DIR=` to a pytest command.
+- **Python tests:** `cd <checkout> && uv run pytest`. `twicc.settings_test` isolates data dir, provider homes and DB, and forbids the real data dirs. Never add `TWICC_DATA_DIR=` to a pytest command. Each test has a 120-second limit (`timeout` in `pyproject.toml`). Opt-in integration tests and benchmarks have none.
 - **Frontend tests:** `cd frontend && npm test`.
 - **Codex real-binary tests** (`tests/test_codex_migration_integration.py`): skipped unless `TWICC_CODEX_INTEGRATION=1`.
+- **Scripted test loops (mutation testing, …):** launch each run as `timeout -k 5 <seconds> <command>`. Never use `subprocess.run(["uv", "run", …], timeout=…)`: it kills `uv` only, and the test process survives as an orphan.
 - **Hermetic LLM diagnostic:** run `uv run python scripts/diagnose_hermetic_llm.py --provider all --live --yes` after one of these changes:
   - the small Codex model (`TITLE_MODEL`, `_REFRESH_MODEL`);
   - a Codex or vendored Codex SDK update (`docs/codex-vendoring.md`);

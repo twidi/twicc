@@ -17,6 +17,7 @@ from django.conf import settings
 from twicc import provider_homes
 
 from tests.codex_agent_run_fixtures import T0
+from tests.orphan_watchdog import start_orphan_watchdog
 
 pytest_plugins = ["tests.content_storage_helpers", "tests.migration_templates"]
 
@@ -64,8 +65,19 @@ def compute_executor_started():
         asyncio.run(stop_compute_executor())
 
 
+def pytest_collection_modifyitems(items):
+    """Remove the per-test limit when a real-runtime test or benchmark is switched on."""
+    if any(
+        value == "1" and re.fullmatch(r"TWICC_\w*(?:INTEGRATION|BENCH|BENCHMARK)", name)
+        for name, value in os.environ.items()
+    ):
+        for item in items:
+            item.add_marker(pytest.mark.timeout(0))
+
+
 def pytest_configure(config):
     """Configure Django settings before tests run."""
+    start_orphan_watchdog()
     config.addinivalue_line(
         "markers", "real_retry_delays: keep the compute retry waits at their real length (see short_compute_retries)",
     )

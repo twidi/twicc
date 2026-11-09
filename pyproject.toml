@@ -194,6 +194,10 @@ testpaths = ["tests"]
 # flag makes this file authoritative regardless of the inherited environment; an
 # explicit `pytest --ds=...` on the command line still wins over it.
 addopts = "-v --ds=twicc.settings_test"
+# Seconds per test, fixtures included. A stuck test fails instead of running
+# forever. The slowest test takes about 10 s; see tests/conftest.py for the
+# opt-in integration tests and benchmarks, which have no limit.
+timeout = 120
 
 [dependency-groups]
 dev = [
@@ -204,4 +208,5 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-django>=4.14.0",
+    "pytest-timeout>=2.4.0",
 ]
