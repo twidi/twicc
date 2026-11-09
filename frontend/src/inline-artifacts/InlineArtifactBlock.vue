@@ -59,8 +59,9 @@ watch(() => props.suppressed, refresh, { flush: 'sync' })
 watch(() => entry.value?.inlineHeight, () => runtime.value?.geometry.schedule(), { flush: 'post' })
 onMounted(() => {
     if (typeof IntersectionObserver !== 'undefined') {
-        intersectionObserver = new IntersectionObserver(([item]) => {
-            intersecting.value = item.isIntersecting
+        intersectionObserver = new IntersectionObserver(items => {
+            // One delivery can hold several reports, oldest first: only the last one is current.
+            intersecting.value = items.at(-1).isIntersecting
             refresh()
         }, { root: props.clipEl || placeholder.value.closest('.virtual-scroller') })
         intersectionObserver.observe(placeholder.value)
