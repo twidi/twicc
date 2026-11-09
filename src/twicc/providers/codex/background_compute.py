@@ -30,7 +30,8 @@ Busy sessions (a live TwiCC agent, or Codex's ``skipped_busy`` because
 another process holds the writer lock) are deferred and retried on agent
 ``DEAD`` / a timer. A rollout Codex cannot read or convert, or one that is
 gone from disk, is flagged ``Session.unavailable_reason`` so the UI explains
-it. Bounded periodic retries re-read its source and database state.
+it. Missing rollouts wait for a source change. Other failures receive a bounded
+number of retries before waiting for a source change or provider restart.
 
 The coordinator stays alive for the whole provider lifetime — idle without a
 worker process between runs — because a rewrite can also happen at runtime
@@ -52,6 +53,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from itertools import count
+from math import inf, isfinite
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -76,7 +78,7 @@ from twicc.providers.background_compute_task import (
     stop_compute_worker,
 )
 from twicc.providers.compute_selection import (
-    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_retry_deadline,
+    COMPUTE_MAX_FAILURES, COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_retry_deadline,
 )
 from twicc.providers.db_writer import (
     ComputeApplied,
@@ -255,6 +257,7 @@ class CodexComputeCoordinator:
         self.failed_this_run: set[str] = set()
         self._retry_at: dict[str, float] = {}
         self._retry_delays: dict[str, float] = {}
+        self._failure_counts: dict[str, int] = {}
         self._process_delay = 1.0
         self._retired_run_ids: set[int] = set()
         self.failures: dict[str, FailedCandidate] = {}
@@ -590,6 +593,9 @@ class CodexComputeCoordinator:
                 self._release_lease(session_id, replay=False, outcome='cancelled', fallback_path=candidate.file_path)
             raise
         except _RolloutMissing as error:
+            if self._is_agent_active(session_id):
+                self._release_lease(session_id, replay=False)
+                return DeferredCandidate(session_id, "active")
             return await self._condemn(
                 session_id, phase, str(error), lease, reason=UNAVAILABLE_ROLLOUT_MISSING, path=candidate.file_path,
             )
@@ -833,7 +839,8 @@ class CodexComputeCoordinator:
         except Exception:
             logger.exception("Codex watcher replay failed for session %s", session_id)
 
-    async def _record_failure(self, failure: FailedCandidate) -> None:
+    async def _record_failure(self, failure: FailedCandidate, *, source_changed: bool = False) -> None:
+        missing = failure.unavailable_reason == UNAVAILABLE_ROLLOUT_MISSING
         self.failed_this_run.add(failure.session_id)
         if failure.unavailable_reason:
             self._unavailable_diagnoses[failure.session_id] = failure.unavailable_reason
@@ -849,15 +856,20 @@ class CodexComputeCoordinator:
         self._record_outcome(failure.session_id, "unavailable" if failure.unavailable_reason else "failed")
         delay = min(self._retry_delays.get(failure.session_id, 0.5) * 2, 60.0)
         self._retry_delays[failure.session_id] = delay
-        self._retry_at[failure.session_id] = compute_retry_deadline(delay)
+        if not source_changed:
+            self._failure_counts[failure.session_id] = self._failure_counts.get(failure.session_id, 0) + 1
+        paused = missing or self._failure_counts.get(failure.session_id, 0) >= COMPUTE_MAX_FAILURES
+        # Keep the existing source/root cooldowns; infinity means event-only recovery.
+        self._retry_at[failure.session_id] = inf if paused else compute_retry_deadline(delay)
         await self._classify_initial(failure.session_id)
         await self._classify_blocked_tree(failure.session_id)
         logger.error(
-            "Codex background compute failed: session=%s phase=%s error=%s%s",
+            "Codex background compute failed: session=%s phase=%s error=%s%s%s",
             failure.session_id,
             failure.phase,
             failure.error,
             f" (session flagged unavailable: {failure.unavailable_reason})" if failure.unavailable_reason else "",
+            " (paused until a source change or provider restart)" if paused else "",
         )
 
     async def _handle_worker_status(self, status: object) -> None:
@@ -917,7 +929,7 @@ class CodexComputeCoordinator:
         if session_id in self._unavailable_diagnoses and signal.outcome != "applied":
             await self._record_failure(FailedCandidate(
                 session_id, "metadata apply", f"diagnosed repair application returned {signal.outcome}",
-            ))
+            ), source_changed=signal.outcome == "superseded")
             return
         if signal.outcome == "superseded":
             outdated = await sync_to_async(lambda: Session.objects.filter(pk=session_id).exclude(
@@ -926,7 +938,7 @@ class CodexComputeCoordinator:
             if outdated:
                 await self._record_failure(FailedCandidate(
                     session_id, "metadata apply", "source revision superseded before publication",
-                ))
+                ), source_changed=True)
                 return
 
         if signal.outcome == "applied" and session_id in self._unavailable_diagnoses:
@@ -938,6 +950,7 @@ class CodexComputeCoordinator:
         self.failures.pop(session_id, None)
         self._retry_at.pop(session_id, None)
         self._retry_delays.pop(session_id, None)
+        self._failure_counts.pop(session_id, None)
         self._process_delay = 1.0
         if migrated and signal.outcome == "applied" and (
             self._prepared_rebuild_generation.get(session_id, 0) == self._rebuild_generation.get(session_id, 0)
@@ -962,6 +975,8 @@ class CodexComputeCoordinator:
 
     def _forget_deleted_recovery(self, session_id: str) -> None:
         """Drop repair intent only after database deletion is confirmed."""
+        # Deleting a member can unblock its native root.
+        self._blocked_roots.clear()
         self._release_lease(session_id, replay=False, outcome='cancelled')
         self.migrated_history.discard(session_id)
         self._active_diagnoses.discard(session_id)
@@ -970,6 +985,7 @@ class CodexComputeCoordinator:
         self.failed_this_run.discard(session_id)
         self._retry_at.pop(session_id, None)
         self._retry_delays.pop(session_id, None)
+        self._failure_counts.pop(session_id, None)
         self._forced_rebuild.discard(session_id)
         self._prepared.pop(session_id, None)
         self._prepared_rebuild_generation.pop(session_id, None)
@@ -1038,12 +1054,17 @@ class CodexComputeCoordinator:
     def _absorb_rebuild_requests(self) -> None:
         """Retain forced reconstruction intent and lift per-run exclusions."""
 
-        for session_id in take_rebuild_requests():
+        requests = take_rebuild_requests()
+        if requests:
+            self._blocked_roots.clear()
+        for session_id in requests:
             self._forced_rebuild.add(session_id)
             self._rebuild_generation[session_id] = self._rebuild_generation.get(session_id, 0) + 1
             self.failed_this_run.discard(session_id)
             self.failures.pop(session_id, None)
             self._retry_at.pop(session_id, None)
+            self._retry_delays.pop(session_id, None)
+            self._failure_counts.pop(session_id, None)
             self.deferred.discard(session_id)
 
     # ------------------------------------------------------------------
@@ -1232,7 +1253,7 @@ class CodexComputeCoordinator:
                 if deadline is not None:
                     deadlines.append(now + max(0, deadline - wall_now))
                 pending = bool(deadlines or outstanding or recovery_ids)
-                return None, recovery_ids, pending, min(deadlines, default=None)
+                return None, recovery_ids, pending, min((deadline for deadline in deadlines if isfinite(deadline)), default=None)
             root = self._active_root
             excluded = self.deferred | {sid for sid, deadline in self._retry_at.items() if deadline > now}
             if outstanding:
@@ -1397,8 +1418,6 @@ class CodexComputeCoordinator:
                     and len(self.submitted | self.computed_not_applied) < CODEX_MAX_OUTSTANDING
                     and candidate is not None
                 ):
-                    if not self.run_active:
-                        self._start_run()
                     prepared = await self.prepare_candidate(candidate)
                     if isinstance(prepared, DeferredCandidate):
                         self.deferred.add(prepared.session_id)
@@ -1436,6 +1455,8 @@ class CodexComputeCoordinator:
                         self.in_flight = None
                         await self._record_failure(FailedCandidate(prepared.session_id, "initialize", str(error)))
                         continue
+                    if not self.run_active:
+                        self._start_run()
                     from twicc.providers.compute_selection import tree_completion_context
 
                     context = await sync_to_async(lambda prepared=prepared, forced=forced: tree_completion_context(
@@ -1482,9 +1503,15 @@ class CodexComputeCoordinator:
                     await self._handle_applied(payload)
                 elif event_type in {"wake", "source"}:
                     self.deferred.clear()
-                    self._blocked_roots.clear()
                     if event_type == 'source':
+                        self._blocked_roots.clear()
                         self._retry_at.pop(payload, None)
+                        self._retry_delays.pop(payload, None)
+                        self._failure_counts.pop(payload, None)
+                    else:
+                        self._blocked_roots = {
+                            root: deadline for root, deadline in self._blocked_roots.items() if not isfinite(deadline)
+                        }
             except Exception:
                 logger.exception("Codex compute run failed; retiring before recovery")
                 faulty = self.in_flight

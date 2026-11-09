@@ -35,6 +35,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
+from math import inf, isfinite
 from typing import TYPE_CHECKING
 
 import orjson
@@ -42,7 +43,7 @@ from asgiref.sync import sync_to_async
 
 from twicc.providers.compute_ipc import ComputeResultStream, ComputeStatusSender, ComputeStopFlag
 from twicc.providers.compute_selection import (
-    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_retry_deadline,
+    COMPUTE_MAX_FAILURES, COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_retry_deadline,
 )
 from twicc.core.enums import Provider
 from twicc.logging_context import current_provider
@@ -625,6 +626,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
     awaiting_status: dict[str, None] = {}
     retry_at: dict[str, float] = {}
     retry_delays: dict[str, float] = {}
+    failure_counts: dict[str, int] = {}
     # Only blocked roots persist outside the currently admitted tree.
     deferred: dict[str, float] = {}
     member_root_failures: dict[str, int] = {}
@@ -656,10 +658,18 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
         if initial_done is not None and not unclassified:
             initial_done.set()
 
-    def failed(sid):
+    def failed(sid, *, source_changed=False):
         delay = min(retry_delays.get(sid, .5) * 2, 60.0)
         retry_delays[sid] = delay
-        retry_at[sid] = compute_retry_deadline(delay)
+        if not source_changed:
+            failure_counts[sid] = failure_counts.get(sid, 0) + 1
+        if failure_counts.get(sid, 0) >= COMPUTE_MAX_FAILURES:
+            # An infinite deadline parks this source until a committed change.
+            retry_at[sid] = inf
+            logger.error("Compute paused for session %s after %d failures; waiting for a source change or provider restart",
+                         sid, failure_counts[sid])
+        else:
+            retry_at[sid] = compute_retry_deadline(delay)
         classify(active_root)
 
     for sid, mtime in initial:
@@ -739,10 +749,11 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         ).exists()
                     )
                     if signal.outcome == "failed" or rejected_outdated:
-                        failed(sid)
+                        failed(sid, source_changed=signal.outcome == "superseded")
                     else:
                         retry_at.pop(sid, None)
                         retry_delays.pop(sid, None)
+                        failure_counts.pop(sid, None)
                         process_delay = 1.0
                         if signal.outcome == "applied":
                             from twicc.search_indexing_task import request_session_reindex
@@ -767,6 +778,10 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                 if notified:
                     changed_ids = list(notified)
                     notified.clear()
+                    for sid in changed_ids:
+                        retry_at.pop(sid, None)
+                        retry_delays.pop(sid, None)
+                        failure_counts.pop(sid, None)
                     roots = set()
                     for offset in range(0, len(changed_ids), 200):
                         batch = changed_ids[offset:offset + 200]
@@ -797,7 +812,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                 cutoff = time.time() - COMPUTE_MIN_SOURCE_AGE_SECONDS
                 outstanding = pending | awaiting_status.keys()
                 candidates = []
-                next_deadline = min(deferred.values(), default=None)
+                next_deadline = min((deadline for deadline in deferred.values() if isfinite(deadline)), default=None)
                 if len(outstanding) < 2:
                     while True:
                         if active_root is None:
@@ -863,7 +878,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         classify(active_root)
                         deferred[active_root] = min(deadlines, default=now + 60)
                         active_root = None
-                    next_deadline = min(deferred.values(), default=None)
+                    next_deadline = min((deadline for deadline in deferred.values() if isfinite(deadline)), default=None)
                     if not candidates and active_root is None:
                         root_deadline = await query(lambda cutoff=cutoff, deferred=deferred: next_root_eligibility(
                             ctx.provider, ctx.compute_version, cutoff=cutoff, excluded_root_ids=deferred,

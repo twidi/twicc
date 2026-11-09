@@ -314,15 +314,17 @@ def test_initial_candidate_read_recovers_and_stop_does_not_start_worker(monkeypa
     asyncio.run(run())
 
 
-def test_failure_cooldown_is_bounded_and_keeps_session_eligible():
+@pytest.mark.real_retry_delays
+def test_failure_cooldown_backs_off_then_waits_for_source_change():
     async def run():
         owner = coordinator()
-        for _ in range(10):
+        for delay in [1, 2, 4, 8]:
             before = background_compute.time.monotonic()
             await owner._record_failure(FailedCandidate('bad', 'compute', 'broken'))
             after = background_compute.time.monotonic()
-            assert 0 < owner._retry_at['bad'] - before <= 60 + after - before
-        assert owner._retry_delays['bad'] == 60
+            assert before + delay <= owner._retry_at['bad'] <= after + delay
+        await owner._record_failure(FailedCandidate('bad', 'compute', 'broken'))
+        assert owner._retry_at['bad'] == float('inf')
         assert not owner.failures['bad'].unavailable_reason
         assert not owner.migration_leases
     asyncio.run(run())
@@ -603,7 +605,8 @@ def test_missing_rollout_restored_without_rebuild_or_restart(codex_recovery_runt
             return db.execute("SELECT unavailable_reason FROM core_session WHERE id='faulty'").fetchone()[0]
     async def run():
         ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
-        owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        work_state = ComputeWorkState()
+        owner = CodexComputeCoordinator(ctx, asyncio.Event(), work_state=work_state)
         owner._is_agent_active = lambda sid: False
         def database_mode(sid):
             from twicc.core.models import SessionItem
@@ -636,6 +639,7 @@ def test_missing_rollout_restored_without_rebuild_or_restart(codex_recovery_runt
             }}) + b'\n')
             # Restored history is stable before its first replacement attempt.
             os.utime(rollout, (1, 1))
+            work_state.notify_source_changed(Provider.CODEX, 'faulty')
             try:
                 async with asyncio.timeout(8):
                     while versions(path)['faulty'] != 123 or owner.failures or not progress[-1][1]:
@@ -736,6 +740,7 @@ def test_deleted_cooling_diagnosis_releases_barrier_without_false_ready(monkeypa
         owner._unavailable_diagnoses[sid] = 'rollout_missing'
         owner.failures[sid] = FailedCandidate(sid, 'classify', 'missing', 'rollout_missing')
         owner._retry_at[sid] = background_compute.time.monotonic() + 60
+        owner._blocked_roots[sid] = float('inf')
         owner._forced_rebuild.add(sid)
         progress = []
         async def broadcast(*args, **kwargs):
@@ -744,6 +749,7 @@ def test_deleted_cooling_diagnosis_releases_barrier_without_false_ready(monkeypa
         await owner._prune_deleted_recovery(set())
         assert not owner._unavailable_diagnoses and not owner.failures
         assert not owner._retry_at and not owner._forced_rebuild
+        assert not owner._blocked_roots
         assert owner.initial_done.is_set() and progress == [False]
     asyncio.run(run())
 

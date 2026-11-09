@@ -440,6 +440,17 @@ def test_missing_rollout_is_flagged_unavailable(monkeypatch, tmp_path):
     asyncio.run(scenario())
 
 
+def test_active_session_with_temporarily_missing_rollout_defers(tmp_path):
+    async def scenario():
+        coordinator = _coordinator()
+        coordinator._is_agent_active = lambda sid: True
+        candidate = CodexComputeCandidate("active", tmp_path / "missing.jsonl", SessionType.SESSION)
+        result = await coordinator.prepare_candidate(candidate)
+        assert result == DeferredCandidate("active", "active")
+
+    asyncio.run(scenario())
+
+
 def test_truncated_rollout_forces_history_replacement(monkeypatch, tmp_path):
     """A file shorter than last_offset was rewritten: replace even when both modes agree."""
 
@@ -474,6 +485,9 @@ def test_rebuild_request_lifts_the_per_run_failure(monkeypatch):
     coordinator.failed_this_run.add("retry-me")
     coordinator.failures["retry-me"] = FailedCandidate("retry-me", "phase", "error")
     coordinator.deferred.add("retry-me")
+    coordinator._failure_counts["retry-me"] = 5
+    coordinator._retry_at["retry-me"] = float("inf")
+    coordinator._blocked_roots["retry-me"] = float("inf")
 
     request_rebuild("retry-me")
     coordinator._absorb_rebuild_requests()
@@ -481,6 +495,9 @@ def test_rebuild_request_lifts_the_per_run_failure(monkeypatch):
     assert "retry-me" not in coordinator.failed_this_run
     assert "retry-me" not in coordinator.failures
     assert "retry-me" not in coordinator.deferred
+    assert "retry-me" not in coordinator._failure_counts
+    assert "retry-me" not in coordinator._retry_at
+    assert not coordinator._blocked_roots
 
 
 def test_released_session_is_replayed_through_the_callback():

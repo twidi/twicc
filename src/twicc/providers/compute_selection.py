@@ -7,6 +7,7 @@ from typing import NamedTuple
 COMPUTE_MIN_SOURCE_AGE_SECONDS = 30.0
 COMPUTE_SELECTION_POLL_SECONDS = 1.0
 COMPUTE_STATUS_POLL_SECONDS = 0.05
+COMPUTE_MAX_FAILURES = 5
 
 
 def compute_retry_deadline(delay: float) -> float:
