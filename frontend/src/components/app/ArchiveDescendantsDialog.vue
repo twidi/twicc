@@ -157,7 +157,10 @@ function onWaHide(event) {
     if (props.open) emit('cancel')
 }
 
+// The buttons stay clickable during the hide animation. A late click must not
+// emit again, nor leave `closedByButton` set after wa-hide has already fired.
 function handlePrimary() {
+    if (!props.open) return
     closedByButton = true
     const { rows } = shown.value
     const checkedIds = rows.filter((row) => checked.value.has(row.id)).map((row) => row.id)
@@ -165,11 +168,13 @@ function handlePrimary() {
 }
 
 function handleSecondary() {
+    if (!props.open) return
     closedByButton = true
     emit('confirm', { checkedIds: [], targetOnly: true })
 }
 
 function handleCancel() {
+    if (!props.open) return
     closedByButton = true
     emit('cancel')
 }
