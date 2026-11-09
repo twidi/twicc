@@ -1854,6 +1854,35 @@ async def session_topology(request, project_id, session_id):
     return JsonResponse(data)
 
 
+async def session_archive_hidden_descendants(request, project_id, session_id):
+    """POST /api/projects/<id>/sessions/<session_id>/archive-hidden-descendants/
+
+    Archive the eligible hidden descendants of this session. The session
+    ``PATCH`` route refuses hidden sessions, and the frontend has no live state
+    for them, so the backend applies the rules itself.
+
+    Body: ``{"archived_ids": [str]}``, the listed sessions that the
+    confirmation archives. Response: ``{"archived": [str], "failed": [str]}``.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    session = await _resolve_session_or_404(session_id, project_id, None)
+
+    try:
+        data = orjson.loads(request.body)
+    except (orjson.JSONDecodeError, ValueError):
+        data = None
+    archived_ids = data.get("archived_ids") if isinstance(data, dict) else None
+    if not isinstance(archived_ids, list) or any(not isinstance(value, str) for value in archived_ids):
+        return JsonResponse(ui_error("archived_ids must be a list of strings", 'backend.sessions.archived_ids_invalid'), status=400)
+
+    from twicc.core.services.archive_descendants import archive_hidden_descendants
+
+    archived, failed = await archive_hidden_descendants(session.id, set(archived_ids))
+    return JsonResponse({"archived": archived, "failed": failed})
+
+
 async def session_workflows(request, project_id, session_id):
     """GET /api/projects/<id>/sessions/<session_id>/workflows/
 

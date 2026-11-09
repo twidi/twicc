@@ -4372,6 +4372,7 @@
     "backend.questions.invalid_session_ids": "session_ids invalides",
     "backend.questions.invalid_request_ids": "request_ids invalides",
     "backend.sessions.subagents_immutable": "Les sous-agents ne peuvent pas être modifiés",
+    "backend.sessions.archived_ids_invalid": "archived_ids doit être une liste de chaînes",
     "backend.sessions.archive.older_than_required": "older_than est obligatoire",
     "backend.request.invalid_scope": "Portée invalide",
     "backend.sessions.archive.project_required": "project_id est obligatoire pour scope=project",

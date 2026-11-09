@@ -131,6 +131,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:session_id>/subagents/", views.subagents_state),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/tool-states/", views.tool_states),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/topology/", views.session_topology),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/archive-hidden-descendants/", views.session_archive_hidden_descendants),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/workflows/", views.session_workflows),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/workflows/<str:run_id>/synthesis/", views.workflow_synthesis),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/workflow-links/", views.workflow_links),
