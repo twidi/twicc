@@ -1,5 +1,6 @@
 import { localUiError } from '../i18n/uiMessages.js'
 import { remoteUiError } from '../i18n/remoteMessages.js'
+import { markAndroidApp } from './androidEnvironment.js'
 
 const RESPONSE_CHANNEL = 'twicc.android.response'
 const REQUEST_CHANNEL = 'twicc.android.request'
@@ -12,7 +13,8 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     const stateListeners = new Set()
     const prefix = Math.random().toString(36).slice(2)
     let sequence = 0, closed = false, documentToken = null
-    const proxy = target.TwiccAndroid
+    const proxy = typeof target.TwiccAndroid?.postMessage === 'function' ? target.TwiccAndroid : null
+    if (proxy) markAndroidApp()
     function receive(response) {
         if (closed) return
         if (response?.protocol === 1 && response.event === 'stateChanged') {
@@ -22,6 +24,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         if (!response || response.protocol !== 1 || typeof response.id !== 'string') return
         const entry = pending.get(response.id)
         if (!entry || typeof response.ok !== 'boolean') return
+        markAndroidApp()
         pending.delete(response.id)
         clearTimeout(entry.timer)
         if (response.ok) entry.resolve(response.state ?? null)
@@ -36,6 +39,8 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     function fromWindow(event) {
         if (event.source !== target || event.origin !== target.location.origin) return
         if (event.data?.channel === RESPONSE_CHANNEL) receive(event.data.response)
+        if (event.data?.channel === 'twicc.android.environment' && event.data.protocol === 1
+            && typeof event.data.id === 'string' && pending.get(event.data.id)?.command === 'getState') markAndroidApp()
     }
     function fromProxy(event) {
         try { receive(JSON.parse(event.data)) } catch { /* Ignore malformed transport messages. */ }
@@ -76,7 +81,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
                     pending.delete(id)
                     reject(localUiError('common.android.errors.unreachable'))
                 }, timeoutMs)
-                pending.set(id, { resolve, reject, timer })
+                pending.set(id, { resolve, reject, timer, command })
                 try {
                     if (proxy) proxy.postMessage(encoded)
                     else target.postMessage({ channel: REQUEST_CHANNEL, request }, target.location.origin)

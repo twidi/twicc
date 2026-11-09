@@ -7,7 +7,7 @@ const { t } = useI18n()
 
 // NotificationSettings.vue - Notification settings section for the settings popover
 // Four notification types: User Turn, Pending Request, Extra Usage and Peer.
-// Each has a sound selector (with test button) and a browser notification toggle;
+// Each has native category settings on Android, or a web sound selector/preview;
 // User Turn also has its own in-app toast toggle.
 // Plus the external notification targets (Apprise URLs, pushed by the backend).
 
@@ -15,7 +15,7 @@ import { computed, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { generateUUID } from '../../utils/crypto'
 import { isAndroidApp, androidPushState } from '../../utils/androidEnvironment.js'
-import { requestAndroidPushPermission, retryAndroidPush } from '../../utils/androidPush.js'
+import { requestAndroidPushPermission, retryAndroidPush, openAndroidNotificationSoundSettings, prepareAndroidNotificationSounds } from '../../utils/androidPush.js'
 import { playNotificationSound, getAvailableSoundOptions, NOTIFICATION_SOUNDS } from '../../utils/notificationSounds'
 
 const store = useSettingsStore()
@@ -203,6 +203,24 @@ function getBrowserNotifPermission() {
     return Notification.permission
 }
 
+const androidSoundError = ref(null)
+const preparingSounds = ref(false)
+
+async function openSoundSettings(kind) {
+    androidSoundError.value = null
+    try { await openAndroidNotificationSoundSettings(kind) }
+    catch (error) { androidSoundError.value = error?.uiMessage || localUiMessage('common.android.errors.actionFailed') }
+}
+
+async function retrySoundPreparation() {
+    if (preparingSounds.value) return
+    androidSoundError.value = null
+    preparingSounds.value = true
+    try { await prepareAndroidNotificationSounds() }
+    catch (error) { androidSoundError.value = error?.uiMessage || localUiMessage('common.android.errors.actionFailed') }
+    finally { preparingSounds.value = false }
+}
+
 // Event handlers
 function onUserTurnSoundChange(event) {
     store.setNotifUserTurnSound(event.target.value)
@@ -312,10 +330,28 @@ defineExpose({ sync })
             >{{ $t('settings.notifications.browser.enable') }}</wa-button>
         </div>
 
+        <template v-if="isAndroidApp">
+            <p class="setting-group-hint">{{ $t('settings.notifications.android.soundsHint') }}</p>
+            <p v-if="androidPushState?.soundLibrary === 'preparing'" class="setting-group-hint">
+                {{ $t('settings.notifications.android.soundsPreparing') }}
+            </p>
+            <wa-callout v-else-if="androidPushState?.soundLibrary === 'error'" variant="warning" size="small">
+                {{ $t('settings.notifications.android.soundsError') }}
+                <wa-button size="small" appearance="outlined" :disabled="preparingSounds" @click="retrySoundPreparation">
+                    {{ $t('settings.notifications.android.retrySounds') }}
+                </wa-button>
+            </wa-callout>
+            <wa-callout v-if="androidSoundError" variant="danger" size="small">
+                {{ resolveUiMessage(androidSoundError) }}
+            </wa-callout>
+        </template>
+
         <!-- Agent finished working -->
         <div class="setting-group">
             <label class="setting-group-label">{{ $t('settings.notifications.finished.label') }}</label>
-            <wa-select
+            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
+                @click="openSoundSettings('user_turn')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
+            <wa-select v-else
                 :value.prop="userTurnSound"
                 @change="onUserTurnSoundChange"
                 size="small"
@@ -326,7 +362,7 @@ defineExpose({ sync })
                     :value="opt.value"
                 >{{ opt.label }}</wa-option>
             </wa-select>
-            <a v-if="userTurnSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testUserTurnSound">
+            <a v-if="!isAndroidApp && userTurnSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testUserTurnSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div class="notif-toast-row">
@@ -348,7 +384,9 @@ defineExpose({ sync })
         <!-- Agent needs your attention -->
         <div class="setting-group">
             <label class="setting-group-label">{{ $t('settings.notifications.attention.label') }}</label>
-            <wa-select
+            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
+                @click="openSoundSettings('pending_request')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
+            <wa-select v-else
                 :value.prop="pendingRequestSound"
                 @change="onPendingRequestSoundChange"
                 size="small"
@@ -359,7 +397,7 @@ defineExpose({ sync })
                     :value="opt.value"
                 >{{ opt.label }}</wa-option>
             </wa-select>
-            <a v-if="pendingRequestSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPendingRequestSound">
+            <a v-if="!isAndroidApp && pendingRequestSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPendingRequestSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div v-if="canChooseNotification" class="notif-browser-row">
@@ -379,7 +417,9 @@ defineExpose({ sync })
                 @change="onNotifyOnExtraUsageStartChange"
                 size="small"
             >{{ $t('settings.usage.extraUsageNotification.notify') }}</wa-switch>
-            <wa-select
+            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
+                @click="openSoundSettings('extra_usage')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
+            <wa-select v-else
                 :value.prop="extraUsageStartSound"
                 @change="onExtraUsageStartSoundChange"
                 size="small"
@@ -390,7 +430,7 @@ defineExpose({ sync })
                     :value="opt.value"
                 >{{ opt.label }}</wa-option>
             </wa-select>
-            <a v-if="extraUsageStartSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testExtraUsageStartSound">
+            <a v-if="!isAndroidApp && extraUsageStartSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testExtraUsageStartSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div v-if="canChooseNotification" class="notif-browser-row">
@@ -408,7 +448,9 @@ defineExpose({ sync })
         <!-- A peer needs you -->
         <div class="setting-group">
             <label class="setting-group-label">{{ $t('settings.notifications.peer.label') }}</label>
-            <wa-select
+            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
+                @click="openSoundSettings('peer')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
+            <wa-select v-else
                 :value.prop="peerSound"
                 @change="onPeerSoundChange"
                 size="small"
@@ -419,7 +461,7 @@ defineExpose({ sync })
                     :value="opt.value"
                 >{{ opt.label }}</wa-option>
             </wa-select>
-            <a v-if="peerSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPeerSound">
+            <a v-if="!isAndroidApp && peerSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPeerSound">
                 <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div v-if="canChooseNotification" class="notif-browser-row">

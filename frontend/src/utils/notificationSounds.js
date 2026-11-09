@@ -32,7 +32,7 @@ export const NOTIFICATION_SOUND_LABELS = {
  * @param {string} soundType - One of NOTIFICATION_SOUNDS values
  */
 export function playNotificationSound(soundType) {
-    if (soundType === NOTIFICATION_SOUNDS.NONE) {
+    if (isAndroidApp.value || soundType === NOTIFICATION_SOUNDS.NONE) {
         return
     }
 

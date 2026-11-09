@@ -96,6 +96,14 @@ export async function requestAndroidPushPermission() {
     const { getAndroidAppClient } = await import('./androidAppClient.js')
     displayState(await getAndroidAppClient().request('push.permission'))
 }
+export async function openAndroidNotificationSoundSettings(kind) {
+    const { getAndroidAppClient } = await import('./androidAppClient.js')
+    await getAndroidAppClient().request('push.soundSettings', { kind })
+}
+export async function prepareAndroidNotificationSounds() {
+    const { getAndroidAppClient } = await import('./androidAppClient.js')
+    observeAndroidPush(await getAndroidAppClient().request('push.prepareSounds'))
+}
 export async function retryAndroidPush() {
     if (active) {
         await active.stop()

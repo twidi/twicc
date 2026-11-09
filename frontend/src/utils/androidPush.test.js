@@ -152,3 +152,38 @@ test('old APK heartbeats preserve the app update instruction without scheduling 
         assert.equal(androidPushState.value.status, 'ready')
     } finally { androidPushState.value = null }
 })
+
+test('category settings and sound preparation use the existing native client and merge publication state', async () => {
+    const push = await import('./androidPush.js')
+    const { androidPushState } = await import('./androidEnvironment.js')
+    const { isAndroidApp } = await import('./androidEnvironment.js')
+    const originalWindow = globalThis.window
+    const calls = []
+    const native = { status: 'ready', permission: 'denied', payloadVersion: 2, soundLibrary: 'preparing' }
+    const target = { addEventListener() {}, removeEventListener() {}, dispatchEvent() {}, location: { origin: 'https://twicc.example' },
+        TwiccAndroid: { postMessage(encoded) {
+            const request = JSON.parse(encoded)
+            calls.push(request)
+            const rejected = request.kind === 'invalid'
+            this.onmessage({ data: JSON.stringify({ protocol: 1, id: request.id, ok: !rejected,
+                ...(rejected ? { ui_message: { key: 'common.android.errors.actionFailed', params: {} } } : { state: native }) }) })
+        } } }
+    globalThis.window = target
+    androidPushState.value = { ...native, status: 'server' }
+    try {
+        assert.equal(typeof push.openAndroidNotificationSoundSettings, 'function')
+        assert.equal(typeof push.prepareAndroidNotificationSounds, 'function')
+        for (const kind of ['user_turn', 'pending_request', 'extra_usage', 'peer']) await push.openAndroidNotificationSoundSettings(kind)
+        assert.deepEqual(calls.map(({ command, kind }) => [command, kind]), ['user_turn', 'pending_request', 'extra_usage', 'peer'].map(kind => ['push.soundSettings', kind]))
+        push.observeAndroidPush({ ...native, status: 'error' })
+        await push.prepareAndroidNotificationSounds()
+        assert.equal(calls.at(-1).command, 'push.prepareSounds')
+        assert.equal(androidPushState.value.soundLibrary, 'preparing')
+        assert.equal(androidPushState.value.status, 'error')
+        assert.equal(androidPushState.value.permission, 'denied')
+        assert.equal(androidPushState.value.payloadVersion, 2)
+        push.observeAndroidPush({ ...native, status: 'error', soundLibrary: 'ready' })
+        assert.equal(androidPushState.value.soundLibrary, 'ready')
+        await assert.rejects(push.openAndroidNotificationSoundSettings('invalid'), error => error.uiMessage.key === 'common.android.errors.actionFailed')
+    } finally { globalThis.window = originalWindow; androidPushState.value = null; isAndroidApp.value = false }
+})

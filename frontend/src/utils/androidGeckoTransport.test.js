@@ -18,8 +18,8 @@ test('Gecko transport decodes the native JSON string and ignores child-frame req
     assert.equal(sent, 0)
     await listener({ source: window, origin: 'https://twicc.example', data })
     assert.equal(sent, 1)
-    assert.equal(JSON.stringify(replies[0][0].response), JSON.stringify(response))
-    assert.equal(replies[0][1], 'https://twicc.example')
+    assert.equal(JSON.stringify(replies[1][0].response), JSON.stringify(response))
+    assert.equal(replies[1][1], 'https://twicc.example')
 })
 
 test('Gecko language reads bypass document registration and mutations wait for its committed identity', async () => {
@@ -54,4 +54,27 @@ test('Gecko language reads bypass document registration and mutations wait for i
     assert.match(sent[1].documentToken, /^[a-f0-9-]{36}$/)
     notifications[0]({ protocol: 1, event: 'stateChanged' })
     assert.equal(replies.at(-1).response.event, 'stateChanged')
+})
+
+test('Gecko acknowledges validated getState before awaiting a stalled native response', async () => {
+    let listener
+    const replies = [], sent = []
+    const never = new Promise(() => {})
+    const window = { addEventListener: (_, fn) => { listener = fn }, postMessage: (...args) => replies.push(args) }
+    runInNewContext(script, { crypto: globalThis.crypto, window, location: { origin: 'https://twicc.example' }, browser: { runtime: {
+        sendNativeMessage(app, request) { sent.push([app, request]); return never },
+    } } })
+    const request = { protocol: 1, id: 'probe', command: 'getState' }
+    const data = { channel: 'twicc.android.request', request }
+    for (const event of [
+        { source: {}, origin: 'https://twicc.example', data },
+        { source: window, origin: 'https://foreign.example', data },
+        { source: window, origin: 'https://twicc.example', data: { ...data, request: { ...request, protocol: 2 } } },
+        { source: window, origin: 'https://twicc.example', data: { ...data, request: { ...request, id: null } } },
+    ]) void listener(event)
+    assert.equal(replies.length, 0)
+    void listener({ source: window, origin: 'https://twicc.example', data })
+    assert.equal(replies.length, 1)
+    assert.equal(JSON.stringify(replies[0]), JSON.stringify([{ channel: 'twicc.android.environment', protocol: 1, id: 'probe' }, 'https://twicc.example']))
+    assert.equal(sent.at(-1)[1].command, 'getState')
 })

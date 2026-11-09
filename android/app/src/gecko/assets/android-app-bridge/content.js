@@ -15,7 +15,13 @@ const ttsDocumentReady = browser.runtime.sendNativeMessage('twicc_tts_document',
 window.addEventListener('message', async event => {
     if (event.source !== window || event.origin !== location.origin) return
     if (event.data?.channel !== 'twicc.android.request') return
-    const command = event.data.request?.command
+    const request = event.data.request
+    if (request?.protocol !== 1 || typeof request.id !== 'string') return
+    const command = request.command
+    // Transport evidence is available before native state or language reads complete.
+    if (command === 'getState') {
+        window.postMessage({ channel: 'twicc.android.environment', protocol: 1, id: request.id }, location.origin)
+    }
     // Language reads are available before document registration or speech attachment.
     if (command === 'locale.set' || typeof command === 'string' && command.startsWith('tts.')) await ttsDocumentReady
     try {

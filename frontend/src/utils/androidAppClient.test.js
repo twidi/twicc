@@ -19,7 +19,9 @@ function fixture(webview = false) {
     if (webview) window.TwiccAndroid.onmessage({ data: JSON.stringify(response) })
         else for (const fn of listeners) fn({ source, origin, data: { channel: 'twicc.android.response', response } })
     }
-    return { window, client, sent, reply }
+    return { window, client, sent, reply, environment(data, { source = window, origin = window.location.origin } = {}) {
+        for (const fn of listeners) fn({ source, origin, data })
+    } }
 }
 for (const webview of [false, true]) {
     test(`native state changes arrive without a request or heartbeat (${webview ? 'WebView' : 'Gecko'})`, () => {
@@ -192,4 +194,52 @@ for (const webview of [false, true]) test(`bridgeErrorsRemainReactive (${webview
             return true
         })
     } finally { i18n.global.locale.value = 'en'; f.client.close() }
+})
+
+test('WebView proxy marks Android before any request or native response', async () => {
+    const { isAndroidApp } = await import('./androidEnvironment.js')
+    isAndroidApp.value = false
+    const f = fixture(true)
+    try { assert.equal(isAndroidApp.value, true); assert.equal(f.sent.length, 0) }
+    finally { f.client.close(); isAndroidApp.value = false }
+})
+
+test('a matching native rejection marks Android independently of language or push readiness', async () => {
+    const { isAndroidApp } = await import('./androidEnvironment.js')
+    isAndroidApp.value = false
+    const f = fixture()
+    try {
+        const pending = f.client.request('getState')
+        f.reply({ protocol: 1, id: f.sent[0].id, ok: false })
+        await assert.rejects(pending)
+        assert.equal(isAndroidApp.value, true)
+    } finally { f.client.close(); isAndroidApp.value = false }
+})
+
+test('Gecko environment evidence requires matching getState, protocol, source, origin, and a pending ID', async () => {
+    const { isAndroidApp } = await import('./androidEnvironment.js')
+    isAndroidApp.value = false
+    const f = fixture()
+    function acknowledge(data, { source = f.window, origin = f.window.location.origin } = {}) {
+        // Exercise the registered document listener through the same fixture transport.
+        f.environment(data, { source, origin })
+    }
+    try {
+        const pending = f.client.request('getState'), other = f.client.request('locale.get')
+        const valid = { channel: 'twicc.android.environment', protocol: 1, id: f.sent[0].id }
+        acknowledge(valid, { source: {} })
+        acknowledge(valid, { origin: 'https://foreign.example' })
+        acknowledge({ ...valid, protocol: 2 })
+        acknowledge({ ...valid, id: 'unknown' })
+        acknowledge({ ...valid, id: f.sent[1].id })
+        assert.equal(isAndroidApp.value, false)
+        acknowledge(valid)
+        assert.equal(isAndroidApp.value, true)
+        f.reply({ protocol: 1, id: f.sent[0].id, ok: true, state: {} })
+        f.reply({ protocol: 1, id: f.sent[1].id, ok: true, state: {} })
+        await Promise.all([pending, other])
+        isAndroidApp.value = false
+        acknowledge(valid)
+        assert.equal(isAndroidApp.value, false)
+    } finally { f.client.close(); isAndroidApp.value = false }
 })

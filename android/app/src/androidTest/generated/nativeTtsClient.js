@@ -10481,6 +10481,11 @@ var yh = {
 	"settings.mcp.loadFailed": "Cannot load MCP connections.",
 	"settings.models.openrouterDescription": "Qwen3.8 27B on Cerebras",
 	"settings.notifications.android.openSettings": "Open Android settings",
+	"settings.notifications.android.soundSettings": "Sound and notification settings",
+	"settings.notifications.android.soundsHint": "Sound settings apply across this installation’s saved instances.",
+	"settings.notifications.android.soundsPreparing": "Preparing notification sounds…",
+	"settings.notifications.android.soundsError": "Could not prepare notification sounds. You can retry preparation.",
+	"settings.notifications.android.retrySounds": "Retry sound preparation",
 	"settings.notifications.attention.label": "Agent needs your attention",
 	"settings.notifications.browser.blocked": "Browser notifications blocked",
 	"settings.notifications.browser.enable": "Enable browser notifications",
@@ -15038,6 +15043,11 @@ var yh = {
 		"settings.mcp.loadFailed": "MCP-Verbindungen können nicht geladen werden.",
 		"settings.models.openrouterDescription": "Qwen3.8 27B auf Cerebras",
 		"settings.notifications.android.openSettings": "Android-Einstellungen öffnen",
+		"settings.notifications.android.soundSettings": "Ton- und Benachrichtigungseinstellungen",
+		"settings.notifications.android.soundsHint": "Die Toneinstellungen gelten für alle gespeicherten Instanzen dieser Installation.",
+		"settings.notifications.android.soundsPreparing": "Benachrichtigungstöne werden vorbereitet…",
+		"settings.notifications.android.soundsError": "Benachrichtigungstöne konnten nicht vorbereitet werden. Du kannst es erneut versuchen.",
+		"settings.notifications.android.retrySounds": "Tonvorbereitung erneut versuchen",
 		"settings.notifications.attention.label": "Agent braucht deine Aufmerksamkeit",
 		"settings.notifications.browser.blocked": "Browser-Benachrichtigungen blockiert",
 		"settings.notifications.browser.enable": "Browser-Benachrichtigungen aktivieren",
@@ -20054,6 +20064,11 @@ var Oh, kh, Ah, jh, Mh, Nh, Ph = o((() => {
 		"settings.mcp.loadFailed": "No se pueden cargar las conexiones MCP.",
 		"settings.models.openrouterDescription": "Qwen3.8 27B on Cerebras",
 		"settings.notifications.android.openSettings": "Abrir la configuración de Android",
+		"settings.notifications.android.soundSettings": "Ajustes de sonido y notificaciones",
+		"settings.notifications.android.soundsHint": "Los ajustes de sonido se aplican a todas las instancias guardadas en esta instalación.",
+		"settings.notifications.android.soundsPreparing": "Preparando sonidos de notificación…",
+		"settings.notifications.android.soundsError": "No se pudieron preparar los sonidos de notificación. Puedes volver a intentarlo.",
+		"settings.notifications.android.retrySounds": "Reintentar preparación de sonidos",
 		"settings.notifications.attention.label": "El agente necesita tu atención",
 		"settings.notifications.browser.blocked": "Notificaciones del navegador bloqueadas",
 		"settings.notifications.browser.enable": "Activar las notificaciones del navegador",
@@ -24695,6 +24710,11 @@ var Oh, kh, Ah, jh, Mh, Nh, Ph = o((() => {
 		"settings.mcp.loadFailed": "Impossible de charger les connexions MCP.",
 		"settings.models.openrouterDescription": "Qwen3.8 27B sur Cerebras",
 		"settings.notifications.android.openSettings": "Ouvrir les paramètres Android",
+		"settings.notifications.android.soundSettings": "Paramètres de son et de notification",
+		"settings.notifications.android.soundsHint": "Les paramètres de son s’appliquent à toutes les instances enregistrées dans cette installation.",
+		"settings.notifications.android.soundsPreparing": "Préparation des sons de notification…",
+		"settings.notifications.android.soundsError": "Impossible de préparer les sons de notification. Vous pouvez réessayer.",
+		"settings.notifications.android.retrySounds": "Réessayer la préparation des sons",
 		"settings.notifications.attention.label": "L'agent a besoin de votre attention",
 		"settings.notifications.browser.blocked": "Notifications du navigateur bloquées",
 		"settings.notifications.browser.enable": "Activer les notifications du navigateur",
@@ -29337,6 +29357,11 @@ var Oh, kh, Ah, jh, Mh, Nh, Ph = o((() => {
 		"settings.mcp.loadFailed": "Não é possível carregar as conexões MCP.",
 		"settings.models.openrouterDescription": "Qwen3.8 27B na Cerebras",
 		"settings.notifications.android.openSettings": "Abrir configurações do Android",
+		"settings.notifications.android.soundSettings": "Configurações de som e notificações",
+		"settings.notifications.android.soundsHint": "As configurações de som se aplicam a todas as instâncias salvas nesta instalação.",
+		"settings.notifications.android.soundsPreparing": "Preparando sons de notificação…",
+		"settings.notifications.android.soundsError": "Não foi possível preparar os sons de notificação. Você pode tentar novamente.",
+		"settings.notifications.android.retrySounds": "Tentar preparar os sons novamente",
 		"settings.notifications.attention.label": "O agente precisa da sua atenção",
 		"settings.notifications.browser.blocked": "Notificações do navegador bloqueadas",
 		"settings.notifications.browser.enable": "Ativar notificações do navegador",
@@ -31320,8 +31345,14 @@ function Lg(e, t = e?.error ?? e?.message ?? "") {
 	return e?.code !== void 0 && (r.code = e.code), e?.status !== void 0 && (r.status = e.status), r;
 }
 //#endregion
+//#region src/utils/androidEnvironment.js
+var Rg = /* @__PURE__ */ _a(!1);
+function zg() {
+	Rg.value || (Rg.value = !0, globalThis.window?.dispatchEvent(new Event("twicc:android-ready")));
+}
+//#endregion
 //#region src/utils/androidAppClient.js
-var Rg = "twicc.android.response", zg = "twicc.android.request", Bg = /* @__PURE__ */ new Set([
+var Bg = "twicc.android.response", Vg = "twicc.android.request", Hg = /* @__PURE__ */ new Set([
 	"tts.attach",
 	"tts.state",
 	"tts.acknowledge",
@@ -31331,9 +31362,10 @@ var Rg = "twicc.android.response", zg = "twicc.android.request", Bg = /* @__PURE
 	"tts.disable",
 	"tts.skip",
 	"tts.stop_all"
-]), Vg = /* @__PURE__ */ new Set([...Bg, "locale.set"]);
-function Hg(e, { timeoutMs: t = 1500 } = {}) {
-	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = e.TwiccAndroid;
+]), Ug = /* @__PURE__ */ new Set([...Hg, "locale.set"]);
+function Wg(e, { timeoutMs: t = 1500 } = {}) {
+	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = typeof e.TwiccAndroid?.postMessage == "function" ? e.TwiccAndroid : null;
+	c && zg();
 	function l(e) {
 		if (o) return;
 		if (e?.protocol === 1 && e.event === "stateChanged") {
@@ -31343,7 +31375,7 @@ function Hg(e, { timeoutMs: t = 1500 } = {}) {
 		if (!e || e.protocol !== 1 || typeof e.id != "string") return;
 		let t = n.get(e.id);
 		if (t && typeof e.ok == "boolean") {
-			if (n.delete(e.id), clearTimeout(t.timer), e.ok) t.resolve(e.state ?? null);
+			if (zg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.resolve(e.state ?? null);
 			else {
 				let n = e.ui_message || typeof e.error == "string" ? Lg(e, Fg("common.android.errors.actionFailed").message) : Fg("common.android.errors.actionFailed");
 				e.state !== void 0 && (n.state = e.state), t.reject(n);
@@ -31351,7 +31383,7 @@ function Hg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	}
 	function u(t) {
-		t.source === e && t.origin === e.location.origin && t.data?.channel === Rg && l(t.data.response);
+		t.source === e && t.origin === e.location.origin && (t.data?.channel === Bg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && zg());
 	}
 	function d(e) {
 		try {
@@ -31364,7 +31396,7 @@ function Hg(e, { timeoutMs: t = 1500 } = {}) {
 		},
 		async request(r, l = {}) {
 			if (o) return Promise.reject(Fg("common.android.errors.closed"));
-			if (c && Vg.has(r)) {
+			if (c && Ug.has(r)) {
 				let n = Date.now() + t;
 				for (; !s && !o;) {
 					let t = e.__twiccNativeTtsDocument;
@@ -31379,34 +31411,35 @@ function Hg(e, { timeoutMs: t = 1500 } = {}) {
 			}
 			let u = `${i}-${++a}`, d = {
 				...l,
-				...s && Vg.has(r) ? { documentToken: s } : {},
+				...s && Ug.has(r) ? { documentToken: s } : {},
 				protocol: 1,
 				id: u,
 				command: r
 			}, f;
 			try {
 				f = JSON.stringify(d);
-				let e = Bg.has(r) ? 12582912 : 16384;
+				let e = Hg.has(r) ? 12582912 : 16384;
 				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Fg("common.android.errors.tooLarge"));
 			} catch (e) {
 				return console.warn("Android request serialization failed", e), Promise.reject(Fg("common.android.errors.actionFailed"));
 			}
-			return new Promise((r, i) => {
-				let a = setTimeout(() => {
-					n.delete(u), i(Fg("common.android.errors.unreachable"));
+			return new Promise((i, a) => {
+				let o = setTimeout(() => {
+					n.delete(u), a(Fg("common.android.errors.unreachable"));
 				}, t);
 				n.set(u, {
-					resolve: r,
-					reject: i,
-					timer: a
+					resolve: i,
+					reject: a,
+					timer: o,
+					command: r
 				});
 				try {
 					c ? c.postMessage(f) : e.postMessage({
-						channel: zg,
+						channel: Vg,
 						request: d
 					}, e.location.origin);
 				} catch (e) {
-					clearTimeout(a), n.delete(u), console.warn("Android request transport failed", e), i(Fg("common.android.errors.unreachable"));
+					clearTimeout(o), n.delete(u), console.warn("Android request transport failed", e), a(Fg("common.android.errors.unreachable"));
 				}
 			});
 		},
@@ -31417,17 +31450,17 @@ function Hg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	};
 }
-var Ug;
-function Wg() {
-	return Ug ?? (Ug = Hg(window));
+var Gg;
+function Kg() {
+	return Gg ?? (Gg = Wg(window));
 }
 //#endregion
 //#region src/utils/nativeTtsClient.js
-var Gg = Object.freeze({
+var qg = Object.freeze({
 	ok: !1,
 	aborted: !0
-}), Kg = (e) => JSON.parse(JSON.stringify(e));
-function qg(e, t = "error") {
+}), Jg = (e) => JSON.parse(JSON.stringify(e));
+function Yg(e, t = "error") {
 	if (!e) return e;
 	let n = e.uiMessage ?? Ig(e, null);
 	return n ? {
@@ -31438,22 +31471,22 @@ function qg(e, t = "error") {
 		}
 	} : e;
 }
-function Jg(e) {
+function Xg(e) {
 	return {
 		...e,
-		error: qg(e.error, "message"),
+		error: Yg(e.error, "message"),
 		results: e.results?.map((e) => ({
 			...e,
-			start: qg(e.start),
-			ended: qg(e.ended)
+			start: Yg(e.start),
+			ended: Yg(e.ended)
 		}))
 	};
 }
-function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = (...e) => fetch(...e) }) {
+function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = (...e) => fetch(...e) }) {
 	let i = null, a = !1, o = null, s = null, c = -1, l = null, u = 0, d = 0, f = Math.random().toString(36).slice(2), p = /* @__PURE__ */ new Map(), m = /* @__PURE__ */ new Set(), h = /* @__PURE__ */ new Set();
 	function g(e, t = !1) {
 		if (e && e.version === 1 && Number.isSafeInteger(e.revision) && !(i && (e.instanceId !== i.instanceId || e.revision < i.revision || e.revision === i.revision && !t))) {
-			e = Jg(e), i = e;
+			e = Xg(e), i = e;
 			for (let [t, n] of p) {
 				let r = e.results?.find((e) => e.operationId === t);
 				if (r) {
@@ -31465,7 +31498,7 @@ function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				} else !n.started && e.playback?.operationId === t && e.playback.started ? (n.started = !0, n.resolve({
 					ok: !0,
 					ended: n.ended
-				})) : n.accepted && e.playback?.operationId !== t && !["starting", "reconnecting"].includes(e.sessionStatus) && (n.resolve(Gg), n.resolveEnded(Gg), p.delete(t));
+				})) : n.accepted && e.playback?.operationId !== t && !["starting", "reconnecting"].includes(e.sessionStatus) && (n.resolve(qg), n.resolveEnded(qg), p.delete(t));
 			}
 			for (let n of m) n(e, t);
 		}
@@ -31500,12 +31533,12 @@ function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 			let i = await e.request(`tts.${t}`, n);
 			return a && r === u && g(i?.snapshot), i?.error ? {
 				...i,
-				error: qg(i.error, "message")
+				error: Yg(i.error, "message")
 			} : i;
 		} catch (e) {
 			return {
 				accepted: !1,
-				error: qg({
+				error: Yg({
 					code: e.code,
 					status: e.status,
 					message: e.message,
@@ -31515,7 +31548,7 @@ function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		}
 	}
 	function x(e = () => !0) {
-		for (let [t, n] of p) e(t) && (n.resolve(Gg), n.resolveEnded(Gg), p.delete(t));
+		for (let [t, n] of p) e(t) && (n.resolve(qg), n.resolveEnded(qg), p.delete(t));
 	}
 	return {
 		attach() {
@@ -31553,7 +31586,7 @@ function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		},
 		acknowledge: (e) => b("acknowledge", { revision: e }),
 		manual(e) {
-			if (!a) return Promise.resolve(qg({
+			if (!a) return Promise.resolve(Yg({
 				ok: !1,
 				uiMessage: Ng("session.speech.errors.unavailable")
 			}));
@@ -31564,7 +31597,7 @@ function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				n = e;
 			}), o = new Promise((e) => {
 				r = e;
-			}), s = Kg(e);
+			}), s = Jg(e);
 			return p.set(t, {
 				resolve: n,
 				ended: o,
@@ -31576,15 +31609,15 @@ function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				request: s
 			}).then((e) => {
 				let n = p.get(t);
-				n && (e?.accepted ? n.accepted = !0 : (p.delete(t), n.resolve(qg({
+				n && (e?.accepted ? n.accepted = !0 : (p.delete(t), n.resolve(Yg({
 					...e?.error,
 					ok: !1,
 					error: e?.error?.message,
 					uiMessage: e?.error?.uiMessage ?? (e?.error?.message ? void 0 : Ng("session.speech.errors.startFailed"))
-				})), n.resolveEnded(Gg)));
+				})), n.resolveEnded(qg)));
 			}), Object.assign(i, { operationId: t });
 		},
-		listen: (e) => b("listen", Kg(e)),
+		listen: (e) => b("listen", Jg(e)),
 		setMuted: (e) => b("set_muted", {
 			activationId: i?.listening?.activationId,
 			includeMuted: e
@@ -31605,12 +31638,12 @@ function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		}
 	};
 }
-var Xg;
-function Zg() {
-	return Xg ?? (Xg = Yg({
-		appClient: Wg(),
+var Qg;
+function $g() {
+	return Qg ?? (Qg = Zg({
+		appClient: Kg(),
 		document
 	}));
 }
 //#endregion
-export { Yg as createNativeTtsClient, Zg as getNativeTtsClient };
+export { Zg as createNativeTtsClient, $g as getNativeTtsClient };
