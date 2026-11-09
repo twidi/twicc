@@ -2794,7 +2794,7 @@
     "session.tools.verbs.using": "usando {tool}",
     "session.tools.verbs.usingSkill": "usando uma skill",
     "session.tools.verbs.viewing": "visualizando",
-    "session.tools.verbs.writing": "gravando",
+    "session.tools.verbs.writing": "escrevendo",
     "session.tools.viewAgent": "Ver agente",
     "session.tools.viewInFiles": "Ver na aba Arquivos",
     "session.tools.viewWorkflow": "Ver workflow",
