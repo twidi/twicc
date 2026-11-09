@@ -44,7 +44,7 @@ export const DISPLAY_MODE = {
     CONVERSATION: 'conversation',
 }
 
-export const DEFAULT_DISPLAY_MODE = DISPLAY_MODE.NORMAL
+export const DEFAULT_DISPLAY_MODE = DISPLAY_MODE.SIMPLIFIED
 
 /**
  * Color scheme values.

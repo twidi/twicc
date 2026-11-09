@@ -65,7 +65,7 @@ export const SETTINGS_SCHEMA = {
     // Local to the device: cuts movement and costly effects (glass blur, filters). Local-only.
     reduceEffects: false,
     showAllArtifacts: false,
-    showMessageTimestamps: false,
+    showMessageTimestamps: true,
     showArchivedSessions: false,
     showArchivedProjects: false,
     showArchivedWorkspaces: false,
