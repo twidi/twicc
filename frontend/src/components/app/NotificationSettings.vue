@@ -620,7 +620,9 @@ defineExpose({ sync })
 .notif-browser-row {
     display: flex;
     align-items: center;
-    gap: var(--wa-space-s);
+    flex-wrap: wrap;
+    column-gap: var(--wa-space-s);
+    row-gap: var(--wa-space-3xs);
 
     wa-switch {
         flex-shrink: 0;
@@ -629,7 +631,9 @@ defineExpose({ sync })
 
 .notif-android-sound-settings {
     margin-left: auto;
+    flex-shrink: 0;
     min-width: 0;
+    max-width: 100%;
     background: none;
     border: none;
     padding: 0;
@@ -638,6 +642,7 @@ defineExpose({ sync })
     font-size: var(--wa-font-size-xs);
     line-height: 1.2;
     text-align: right;
+    white-space: normal;
     color: var(--wa-color-brand-60);
 
     &:hover {
