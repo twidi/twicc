@@ -24,14 +24,7 @@ import org.json.JSONObject
 /** Control URIs identify the session and listening activation. Extras do not distinguish PendingIntents. */
 class TtsNotification(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
-    init { refreshChannel() }
-    private fun refreshChannel() {
-        val channel = manager.getNotificationChannel(CHANNEL)
-            ?: NotificationChannel(CHANNEL, NativeMessages.text(context, UiMessage("android.speech.channel")), NotificationManager.IMPORTANCE_LOW)
-        // Reuse the channel and update only its label. Keep Android user settings.
-        channel.name = NativeMessages.text(context, UiMessage("android.speech.channel"))
-        manager.createNotificationChannel(channel)
-    }
+    init { refreshChannel(context) }
     fun error(): TtsActionError? {
         val permission = Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         // Android's public permissionToOp omits this notification operation on API 35.
@@ -41,7 +34,7 @@ class TtsNotification(private val context: Context) {
             TtsActionError("notifications_blocked", "Enable speech notifications to use background Skip and Stop all controls. Then start speech again.", "notification_settings", ttsUiMessage("android.speech.notificationsRequired")) else null
     }
     fun build(snapshot: NativeTtsSnapshot, epoch: String, name: String): Notification {
-        refreshChannel()
+        refreshChannel(context)
         val status = when {
             snapshot.sessionStatus == "reconnecting" -> "android.speech.reconnecting"
             snapshot.playback.phase in setOf("playing", "settling") -> "android.speech.reading"
@@ -81,6 +74,15 @@ class TtsNotification(private val context: Context) {
             .putExtra(EXTRA_EPOCH, epoch).putExtra(EXTRA_ACTIVATION, activationId), PendingIntent.FLAG_IMMUTABLE)
 
     companion object {
+        fun refreshChannel(context: Context) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            val channel = manager.getNotificationChannel(CHANNEL)
+                ?: NotificationChannel(CHANNEL, NativeMessages.text(context, UiMessage("android.speech.channel")), NotificationManager.IMPORTANCE_LOW)
+            // Reuse the channel and update only its label. Keep Android user settings.
+            channel.name = NativeMessages.text(context, UiMessage("android.speech.channel"))
+            manager.createNotificationChannel(channel)
+        }
+
         const val CHANNEL = "tts_playback"
         const val ID = 1001
         const val ACTION_SKIP = "com.twidi.twicc.tts.SKIP"

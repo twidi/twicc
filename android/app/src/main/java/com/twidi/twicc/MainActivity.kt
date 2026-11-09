@@ -45,6 +45,7 @@ class MainActivity : Activity() {
         languageObserver = AndroidLanguageStore(this).observe {
             ownerHandler.post {
                 if (languageObserver != null && !isFinishing && !isDestroyed) {
+                    NotificationChannels.refresh(this)
                     NotificationSounds.publishAsync(this)
                     ui.refreshMessages()
                     sheet?.window?.decorView?.refreshNativeMessages()
@@ -118,6 +119,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        NotificationChannels.refresh(this)
         NotificationSounds.publishAsync(this)
         AndroidPush.reconcilePayloadSupport(this)
         render()

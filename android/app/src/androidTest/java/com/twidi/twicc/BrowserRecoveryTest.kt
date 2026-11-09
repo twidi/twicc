@@ -158,6 +158,33 @@ class BrowserRecoveryTest {
         } }
     }
 
+    @Test fun idleSpeechCategoryFollowsBrowserLanguageChangesWithoutAFrontendHandshake() {
+        val language = AndroidLanguageStore(context)
+        val original = language.read().locale
+        val manager = context.getSystemService(android.app.NotificationManager::class.java)
+        try {
+            assertTrue(language.select("fr", language.read().revision).accepted)
+            com.twidi.twicc.tts.TtsNotification(context)
+            val before = manager.getNotificationChannel("tts_playback")
+            val active = manager.activeNotifications.map { it.key }.toSet()
+            assertTrue(language.select("en", language.read().revision).accepted)
+            Site().use { site -> withBrowser(site) { scenario ->
+                waitFor { site.ready.size == 1 }
+                assertEquals("Timeline speech", manager.getNotificationChannel("tts_playback").name.toString())
+                for ((locale, name) in listOf("fr" to "Lecture de la chronologie", "en" to "Timeline speech")) {
+                    assertTrue(language.select(locale, language.read().revision).accepted)
+                    instrumentation.waitForIdleSync()
+                    assertEquals(name, manager.getNotificationChannel("tts_playback").name.toString())
+                    val after = manager.getNotificationChannel("tts_playback")
+                    assertEquals(before.sound, after.sound)
+                    assertEquals(before.importance, after.importance)
+                    assertEquals(active, manager.activeNotifications.map { it.key }.toSet())
+                }
+                assertEquals(1, site.requests.size)
+            } }
+        } finally { language.select(original, language.read().revision) }
+    }
+
     @Test fun engineFailuresUseDescriptors() {
         Site().use { site -> withBrowser(site) { scenario ->
             waitFor { site.ready.size == 1 }

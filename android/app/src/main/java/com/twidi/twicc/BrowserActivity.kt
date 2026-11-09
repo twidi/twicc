@@ -121,6 +121,7 @@ class BrowserActivity : Activity() {
             // Store observers hold a shared lock. Post without waiting for the activity thread.
             ownerHandler.post {
                 if (languageObserver != null && !isFinishing && !isDestroyed) {
+                    NotificationChannels.refresh(this)
                     NotificationSounds.publishAsync(this)
                     refreshNativeUi()
                     browser?.notifyAppStateChanged()
@@ -509,6 +510,7 @@ class BrowserActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        NotificationChannels.refresh(this)
         NotificationSounds.publishAsync(this)
         AndroidPush.reconcilePayloadSupport(this)
         foreground = true
