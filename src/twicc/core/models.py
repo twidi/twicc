@@ -1838,13 +1838,23 @@ class SessionCron(models.Model):
         them back (which is what :func:`~twicc.providers.claude_code.cron_restart._build_restart_message`
         asks for).
 
-        Same predicate as :meth:`active_for_session`, evaluated on one row.
+        Same predicate as :meth:`active_q`, evaluated on one row.
         """
         if now is None:
             now = datetime.now(tz=UTC)
         if self.recurring:
             return self.created_at > now - self.CLAUDE_RECURRING_MAX_AGE
         return self.next_fire > now
+
+    @classmethod
+    def active_q(cls, now: datetime) -> Q:
+        """Return the filter that keeps the crons not expired at ``now``."""
+        return (
+            # Recurring: created less than 7 days ago
+            Q(recurring=True, created_at__gt=now - cls.CLAUDE_RECURRING_MAX_AGE)
+            # One-shot: fire time not yet passed
+            | Q(recurring=False, next_fire__gt=now)
+        )
 
     @classmethod
     def has_active_for_session(cls, session_id: str, provider: Provider) -> bool:
@@ -1857,12 +1867,7 @@ class SessionCron(models.Model):
         return cls.objects.filter(
             session_id=session_id,
             provider=provider.value,
-        ).filter(
-            # Recurring: created less than 7 days ago
-            Q(recurring=True, created_at__gt=now - cls.CLAUDE_RECURRING_MAX_AGE)
-            # One-shot: fire time not yet passed
-            | Q(recurring=False, next_fire__gt=now)
-        ).exists()
+        ).filter(cls.active_q(now)).exists()
 
     @classmethod
     def active_for_session(cls, session_id: str, provider: Provider) -> models.QuerySet:
@@ -1871,10 +1876,7 @@ class SessionCron(models.Model):
         return cls.objects.filter(
             session_id=session_id,
             provider=provider.value,
-        ).filter(
-            Q(recurring=True, created_at__gt=now - cls.CLAUDE_RECURRING_MAX_AGE)
-            | Q(recurring=False, next_fire__gt=now)
-        )
+        ).filter(cls.active_q(now))
 
 
 class Command(models.Model):
