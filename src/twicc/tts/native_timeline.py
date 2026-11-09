@@ -116,8 +116,33 @@ class TimelineListener:
         kind = command['type']
         if kind == 'listen':
             await self.disable()
+            if command.get('fresh'):
+                command = {**command, 'boundary': format_occurred_at(self.clock())}
             self._activate(command)
-            self._spawn(self._initialize(self.active))
+            active = self.active
+            # Reserve the notice before initialization can offer fresh messages.
+            notice = command.get('notice')
+            if notice:
+                accepted = False
+                try:
+                    policy = await sync_to_async(_read_policy)()
+                    if self.active is active and policy['entry'] is not None:
+                        entry = policy['entry']
+                        speech = {'text': notice['text'], 'cache': True}
+                        if entry['kind'] == 'script':
+                            speech.update(kind='script', script_id=entry['id'])
+                        else:
+                            speech.update({field: entry.get(field) for field in SPEECH_FIELDS})
+                        accepted = await self.session.select_reading(notice, {'kind': 'text', 'speech': speech},
+                            {'identity': None, 'text': notice['text'], 'source': 'recovery', 'config_id': entry['id']},
+                            policy={**policy, 'adapt': 'off'})
+                except Exception:
+                    logger.exception('Native recovery notice could not start')
+                if not accepted and self.active is active:
+                    await self.session.fail('speech_failed', ui_message_text('Text-to-speech failed', 'backend.tts.failed'),
+                        reading_id=notice['reading_id'], generation=notice['generation'])
+            if self.active is active:
+                self._spawn(self._initialize(active))
         elif kind == 'set_muted':
             if self.active and self.active['activation_id'] == command['activation_id']:
                 self.active['include_muted'] = command['include_muted']
@@ -159,7 +184,7 @@ class TimelineListener:
         self.active = {key: activation[key] for key in ('activation_id', 'page_id', 'scope', 'boundary', 'include_muted')}
         self.session.listening = self.active.copy()
         self.session.error = None
-        self.pending, self.seen, self.boundaries, self.shown = [], set(), {}, {}
+        self.pending, self.seen, self.boundaries, self.shown = [], set(activation.get('excluded_event_ids', [])), {}, {}
         self.cursor, self.watermark, self.context = 0, None, None
         self._caught_up = False
         self._epoch += 1
@@ -291,8 +316,11 @@ class TimelineListener:
             if self.active is not active:
                 return
             if body['truncated']:
-                await self._stop('catchup_incomplete', ui_message_text('Some messages could not be loaded. Turn timeline reading on again.', 'backend.tts.catchupIncomplete'))
-                return
+                # The HTTP incremental cap does not limit native recovery. Bootstrap
+                # reads the complete activation range through one captured high-water ID.
+                body = await sync_to_async(fetch_click_boundary)(self._request(), min(self.boundaries.values()))
+                if self.active is not active:
+                    return
             self.cursor = max(self.cursor, body['latest_id'] or 0)
             self._consume(body)
             table = await sync_to_async(build_sessions_table)({e['session_id'] for e in self.pending})
@@ -407,7 +435,8 @@ class TimelineListener:
         identity = ({'sourceKey': descriptor['source_key'], 'sourceHash': descriptor['source_hash'], 'variant': 'summary'}
                     if descriptor.get('eligible') and not descriptor.get('error') else None)
         await self.session.offer_candidate({'activation_id': self.active['activation_id'], 'event_id': event['id'],
-                                            'identity': identity, 'text': event['data']['text']})
+                                            'identity': identity, 'text': event['data']['text'],
+                                            'occurred_at': event['occurred_at']})
 
     async def select(self, event_id: int, reading_id: str, generation: int, *, silence_reset=False):
         completed = False

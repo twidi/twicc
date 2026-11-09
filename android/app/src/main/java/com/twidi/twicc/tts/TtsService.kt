@@ -61,7 +61,9 @@ class TtsService : Service() {
             override fun enqueue(block: () -> Unit) { handler.post(block) }
             override fun after(delayMillis: Long, block: () -> Unit) { handler.postDelayed(block, delayMillis) }
             override fun worker(block: () -> Unit) { workers.execute(block) }
-        }, outputFactory = { TtsPlayer(this) }, cache = cache, elapsedMs = android.os.SystemClock::elapsedRealtime)
+        }, outputFactory = { TtsPlayer(this) }, cache = cache, elapsedMs = android.os.SystemClock::elapsedRealtime,
+            recoveryAnnouncement = { com.twidi.twicc.i18n.NativeMessages.text(this,
+                com.twidi.twicc.i18n.UiMessage("android.speech.recoveryAnnouncement")) })
         current = this
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

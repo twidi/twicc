@@ -126,7 +126,8 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     private val transportFactory: (TtsCredentials) -> TtsTransport = ::NativeTtsTransport,
     private val outputFactory: () -> TtsPlaybackOutput = ::UnavailableTtsOutput,
     private val cache: TtsSnapshotCache = TtsSnapshotCache(),
-    private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val recoveryAnnouncement: () -> String = { "Connection restored. Messages received during the interruption will not be read. Automatic reading resumes." }) {
     private var controller: TtsController? = null
     private var source: TtsActivationSource? = null
     private var instanceId = ""
@@ -146,7 +147,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     fun configure(value: TtsActivationSource): Boolean {
         if (active && instanceId != value.instanceId) return false
         if (instanceId != value.instanceId || controller == null) {
-            controller = TtsController(value.instanceId, elapsedMs = elapsedMs); instanceId = value.instanceId; document = null
+            controller = TtsController(value.instanceId, elapsedMs = elapsedMs, recoveryAnnouncement = recoveryAnnouncement); instanceId = value.instanceId; document = null
         }
         source = value; instanceName = value.name
         return true
@@ -166,7 +167,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     fun dispatch(command: TtsCommand): Acceptance {
         if (command is TtsCommand.SwitchInstance && command.instanceId != instanceId) {
             if (active) internal(TtsCommand.AuthorizationLost("The active instance changed.", uiMessage = ttsUiMessage("android.speech.errors.instanceChanged")))
-            controller = TtsController(command.instanceId, elapsedMs = elapsedMs); instanceId = command.instanceId
+            controller = TtsController(command.instanceId, elapsedMs = elapsedMs, recoveryAnnouncement = recoveryAnnouncement); instanceId = command.instanceId
             source = null; document = null
             cache.publish(controller!!.snapshot(), mirrorOnly = true)
             return Acceptance(true)
@@ -296,7 +297,11 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     }
     private fun connect(handshake: TtsFrame) {
         val existing = transport
-        if (existing != null) { connectionId = existing.connect(handshake); return }
+        if (existing != null) {
+            connectionId = existing.connect(handshake)
+            internal(TtsCommand.TransportOpened(connectionId!!))
+            return
+        }
         if (exporting || terminal) return
         val activation = source ?: run { internal(TtsCommand.AuthorizationLost("Reopen this instance and start speech again.", uiMessage = ttsUiMessage("android.speech.errors.credentialsUnavailable"))); return }
         source = null // Never retain an Activity/browser through the service lifetime.
@@ -312,6 +317,8 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
                     transport = socket
                     socket.event = { event -> platform.enqueue { onEvent(socket, epoch, event) } }
                     connectionId = socket.connect(handshake)
+                    // Register attempt ownership even if TLS fails before onOpen.
+                    internal(TtsCommand.TransportOpened(connectionId!!))
                 } catch (error: Exception) {
                     Logger.getLogger("TwiCC.TtsServiceOwner").log(Level.WARNING, "Speech connection failed", error)
                     internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again.", uiMessage = ttsUiMessage("session.speech.errors.startFailed")))

@@ -4,7 +4,8 @@ import java.util.UUID
 
 /** All calls run on the service's single state owner. Nothing survives process death. */
 class TtsController(private var instanceId: String, private val newId: () -> String = { UUID.randomUUID().toString() },
-    private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val recoveryAnnouncement: () -> String = { "Connection restored. Messages received during the interruption will not be read. Automatic reading resumes." }) {
     // Preserve the original trailing newId lambda constructor.
     constructor(instanceId: String, newId: () -> String) : this(instanceId, newId, { System.nanoTime() / 1_000_000 })
     private val clientId = newId()
@@ -30,6 +31,15 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     private var playback = NativePlayback()
     private var audibleEndedAt: Long? = null
     private var listening: NativeListening? = null
+    private var outageAt: Long? = null
+    private var recoverySeq: Long? = null
+    private var recoveryLostAt: Long? = null
+    private var noticeDue = false
+    private var longPolicyApplied = false
+    private var checkpointReset = false
+    private var checkpoint: String? = null
+    private val checkpointEvents = linkedMapOf<Long, java.time.Instant>()
+    private var playbackEvent: Pair<Long, String>? = null
     private var pendingCount = 0
     private var error: TtsFrame? = null
     private var configuration: Boolean? = null
@@ -63,6 +73,60 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         for ((sequence, value) in retained) {
             if (sequence > sentSeq) { effects += TtsEffect.Send(value); sentSeq = sequence }
         }
+    }
+    private fun listenFields(current: NativeListening): TtsFrame = mapOf(
+        "activation_id" to current.activationId, "scope" to current.scope.wire(), "page_id" to current.pageId,
+        "include_muted" to current.includeMuted, "boundary" to (checkpoint ?: current.boundary),
+        "excluded_event_ids" to checkpointEvents.keys.toList())
+    private fun longOutage() = outageAt?.let { elapsedMs() - it >= 120000L } == true
+    private fun recoverTimeline(fresh: Boolean = true) {
+        val current = listening ?: return
+        if (current.paused || stopSeq != null) return
+        recoveryLostAt = null
+        cancel(sendSkip = true)
+        val next = current.copy(activationId = newId())
+        listening = next; pendingCount = 0
+        if (fresh) { checkpoint = null; checkpointEvents.clear() }
+        val notice = if (noticeDue) {
+            reserve(null, null, "recovery", recoveryAnnouncement(), null, true)
+            readingFields() + mapOf("text" to playback.text)
+        } else null
+        recoverySeq = queue("listen", listenFields(next) + mapOf("fresh" to fresh, "notice" to notice))
+        deferred.clear()
+    }
+    private fun reconciled(state: TtsFrame) {
+        if (stopSeq != null) return
+        val reset = recoverySeq
+        if (reset != null) {
+            if (ack >= reset && (state["listening"] as? Map<*, *>)?.get("activation_id") == listening?.activationId) {
+                recoverySeq = null
+                val serverBoundary = (state["listening"] as? Map<*, *>)?.get("boundary") as? String
+                if (serverBoundary != null) listening = listening?.copy(boundary = serverBoundary)
+                val nextLongOutage = recoveryLostAt?.let { elapsedMs() - it >= 120000L } == true
+                if (longOutage() && !longPolicyApplied || nextLongOutage) {
+                    noticeDue = true; longPolicyApplied = true; recoverTimeline()
+                } else if (noticeDue && playback.source != "recovery" && listening?.paused == false) {
+                    // Retain the already accepted boundary when only notice playback needs recovery.
+                    recoverTimeline(fresh = false)
+                } else { outageAt = null; longPolicyApplied = false; checkpointReset = false; status = "connected" }
+            }
+        } else if (outageAt != null) {
+            val fresh = longOutage()
+            if (fresh && !longPolicyApplied) { noticeDue = true; longPolicyApplied = true }
+            if (listening?.paused == false && (fresh || checkpointReset || noticeDue)) recoverTimeline(fresh)
+            else if (!fresh) outageAt = null
+        }
+        if (recoverySeq != null) status = "reconnecting"
+    }
+    private fun reopenSession() {
+        // Session retention is independent of listening intent and outage duration.
+        if (!active || stopSeq != null || listening == null) return
+        if (outageAt == null) outageAt = elapsedMs()
+        cancel(); retained.clear(); deferred.clear(); recoverySeq = null; checkpointReset = true
+        sessionId = null; secret = null; openingFrame = null; serverRevision = -1
+        ack = 0; ready = false
+        connect()
+        listening?.takeUnless { it.paused }?.let { queue("listen", listenFields(it)) }
     }
     private fun readingFields(p: NativePlayback = playback): TtsFrame = mapOf("reading_id" to p.readingId, "generation" to p.generation)
     private fun connect() {
@@ -107,13 +171,14 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             resource?.let { effects += TtsEffect.Release(it) }; resource = null
             finish(false, failure, aborted = failure == null, details = failureDetails)
         }
-        playback = NativePlayback(generation = generation)
+        playback = NativePlayback(generation = generation); playbackEvent = null
     }
     private fun errorOwner(value: NativePlayback): TtsFrame = if (value.readingId == null) emptyMap() else
         mapOf("automatic" to value.automatic, "operation_id" to value.operationId, "reading_id" to value.readingId, "generation" to value.generation)
     private fun terminate(code: String, message: String, details: TtsFrame = emptyMap()) {
         val failedOwner = errorOwner(playback)
         cancel(failure = message, failureDetails = details); listening = null; pendingCount = 0; ready = false; active = false
+        outageAt = null; recoverySeq = null; noticeDue = false
         retained.clear(); deferred.clear(); sessionId = null; secret = null; connectionId = null; serverRevision = -1
         stopSeq = null; stopEpoch = null; status = "error"; error = mapOf("code" to code, "message" to message) + details + failedOwner
         effects += TtsEffect.CloseConnection; effects += TtsEffect.StopService
@@ -154,9 +219,9 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 activate()
                 listening?.let { queue("disable", mapOf("activation_id" to it.activationId)); if (playback.automatic) cancel() }
                 val next = NativeListening(newId(), command.pageId, command.scope, command.boundary, command.includeMuted)
-                listening = next; pendingCount = 0
-                queue("listen", mapOf("activation_id" to next.activationId, "scope" to next.scope.wire(),
-                    "page_id" to next.pageId, "include_muted" to next.includeMuted, "boundary" to next.boundary))
+                listening = next; pendingCount = 0; checkpoint = null; checkpointEvents.clear()
+                outageAt = if (!ready) elapsedMs() else null; recoverySeq = null; noticeDue = false; longPolicyApplied = false
+                queue("listen", listenFields(next))
             }
             is TtsCommand.SetMuted -> {
                 if (!valid(command.owner) || listening?.activationId != command.activationId) return emptyList()
@@ -166,7 +231,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             }
             is TtsCommand.Disable -> {
                 if (!valid(command.owner) || listening?.activationId != command.activationId) return emptyList()
-                listening = null; pendingCount = 0
+                listening = null; pendingCount = 0; outageAt = null; noticeDue = false; recoverySeq = null
                 if (playback.automatic) cancel()
                 queue("disable", mapOf("activation_id" to command.activationId))
             }
@@ -174,7 +239,10 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 if (!valid(command.owner) || playback.readingId != command.readingId || playback.identity != command.identity) return emptyList()
                 cancel(sendSkip = true)
             }
-            TtsCommand.Skip -> cancel(sendSkip = true)
+            TtsCommand.Skip -> {
+                if (playback.source == "recovery") noticeDue = false
+                cancel(sendSkip = true)
+            }
             is TtsCommand.PauseTimeline -> {
                 val current = listening ?: return emptyList()
                 if (stopSeq != null || current.paused || current.activationId != command.activationId) return emptyList()
@@ -186,12 +254,13 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 val current = listening ?: return emptyList()
                 if (stopSeq != null || !current.paused || current.activationId != command.activationId) return emptyList()
                 val next = current.copy(activationId = newId(), boundary = command.boundary, paused = false)
-                listening = next; pendingCount = 0
-                queue("listen", mapOf("activation_id" to next.activationId, "scope" to next.scope.wire(),
-                    "page_id" to next.pageId, "include_muted" to next.includeMuted, "boundary" to next.boundary))
+                listening = next; pendingCount = 0; checkpoint = null; checkpointEvents.clear()
+                if (longOutage()) noticeDue = true
+                if (ready && noticeDue) { longPolicyApplied = true; recoverTimeline() }
+                else queue("listen", listenFields(next))
             }
             TtsCommand.StopAll -> {
-                listening = null; pendingCount = 0; generation++; cancel()
+                listening = null; pendingCount = 0; outageAt = null; noticeDue = false; recoverySeq = null; generation++; cancel()
                 status = "stopped"
                 if (active && stopSeq == null) {
                     stopSeq = queue("stop_all"); stopEpoch = newId()
@@ -209,7 +278,14 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             is TtsCommand.TransportOpened -> { if (!active) return emptyList(); connectionId = command.connectionId }
             is TtsCommand.TransportLost -> {
                 if (command.connectionId != connectionId) return emptyList()
-                connectionId = null; ready = false; if (active) status = "reconnecting"
+                if (recoverySeq != null && recoveryLostAt == null) recoveryLostAt = elapsedMs()
+                connectionId = null; ready = false
+                if (active) { if (outageAt == null) outageAt = elapsedMs(); status = "reconnecting" }
+                // A streaming resource cannot seek. Cancel it instead of waiting on a stalled read.
+                if (listening?.paused == false && (playback.automatic || resource != null)) {
+                    checkpointReset = playback.automatic
+                    cancel(sendSkip = true)
+                }
             }
             is TtsCommand.ServerFrame -> {
                 if (command.connectionId != connectionId || command.frame["protocol"] != 1 && command.frame["protocol"] != 1L) return emptyList()
@@ -229,7 +305,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     "opened_session" -> {
                         sessionId = f["session_id"] as? String; secret = f["resume_secret"] as? String
                         if (sessionId == null || secret == null) terminate("invalid_protocol", "Speech could not start. Reload the page and try again.", mapOf("ui_message" to ttsUiMessage("session.speech.errors.startFailed")))
-                        else { ready = true; status = "connected"; flushPending() }
+                        else { ready = true; status = "connected"; flushPending(); reconciled(f) }
                     }
                     "state" -> {
                         val incoming = (f["revision"] as? Number)?.toLong() ?: -1
@@ -239,6 +315,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                                 ready = true
                                 if (stopSeq == null) status = "connected"
                                 flushPending()
+                                reconciled(f)
                             }
                             // Update backend metadata after acknowledgement. Listening intent follows commands and owned errors.
                             // A null backend listener can precede its activation and cannot clear that intent.
@@ -257,8 +334,11 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     }
                     "selection_rejected" -> if (matches(f) && playback.automatic && playback.phase == "loading" &&
                         playback.audioId == null && resource == null) cancel()
-                    "candidate" -> if (ready && stopSeq == null && playback.readingId == null && listening?.paused == false && listening?.activationId == f["activation_id"]) {
+                    "candidate" -> if (ready && recoverySeq == null && stopSeq == null && playback.readingId == null && listening?.paused == false && listening?.activationId == f["activation_id"]) {
                         reserve(null, f["identity"] as? TtsFrame, "message", f["text"] as? String ?: "", null, true)
+                        playbackEvent = (f["event_id"] as? Number)?.toLong()?.let { id ->
+                            (f["occurred_at"] as? String)?.let { id to it }
+                        }
                         queue("select", readingFields() + mapOf("event_id" to f["event_id"],
                             "silence_reset" to (audibleEndedAt?.let { elapsedMs() - it > 180000L } ?: false)))
                     }
@@ -282,7 +362,19 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 if (command.readingId != playback.readingId || command.generation != playback.generation) return emptyList()
                 when (val signal = command.signal) {
                     PlayerSignal.Buffering -> playback = playback.copy(phase = "buffering", status = "loading")
-                    PlayerSignal.Started -> if (!playback.started) { playback = playback.copy(started = true, phase = "playing", status = "playing"); queue("started", readingFields()) }
+                    PlayerSignal.Started -> if (!playback.started) {
+                        playback = playback.copy(started = true, phase = "playing", status = "playing")
+                        if (playback.source == "recovery") noticeDue = false
+                        playbackEvent?.let { (id, occurred) ->
+                            checkpointEvents[id] = java.time.Instant.parse(occurred)
+                            val latest = checkpointEvents.values.maxOrNull()!!
+                            // The listener admits late arrivals within five seconds of its watermark.
+                            val floor = maxOf(latest.minusSeconds(5).minusNanos(1000), java.time.Instant.parse(listening!!.boundary))
+                            checkpoint = java.time.format.DateTimeFormatterBuilder().appendInstant(6).toFormatter().format(floor)
+                            checkpointEvents.entries.removeAll { it.value <= floor }
+                        }
+                        queue("started", readingFields())
+                    }
                     PlayerSignal.Resumed -> if (playback.started) playback = playback.copy(phase = "playing", status = "playing")
                     PlayerSignal.Settling -> {
                         if (playback.started && playback.phase != "settling") audibleEndedAt = elapsedMs()
@@ -290,6 +382,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     }
                     PlayerSignal.AuthorizationLost -> terminate("unauthorized", "Authentication expired. Open TwiCC and sign in again.", mapOf("ui_message" to ttsUiMessage("backend.tts.authenticationExpired")))
                     is PlayerSignal.Ended -> {
+                        if (playback.source == "recovery") noticeDue = false
                         finish(signal.ok, signal.error, details = signal.uiMessage?.let { mapOf("ui_message" to it) } ?: emptyMap())
                         queue("finished", readingFields() + mapOf("outcome" to if (signal.ok) "complete" else "failed", "error" to signal.error))
                         resource?.let { effects += TtsEffect.Release(it) }; resource = null
@@ -330,11 +423,13 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         val message = f["message"] as? String ?: "Speech failed"
         val presentation = f["ui_message"]?.let { mapOf("ui_message" to it) }
             ?: if (f["message"] !is String) mapOf("ui_message" to ttsUiMessage("android.speech.errors.failed")) else emptyMap()
-        if (code in setOf("unauthorized", "session_lost")) terminate(code, message, presentation)
+        if (code == "session_lost" && sessionId != null && active && listening != null && stopSeq == null) reopenSession()
+        else if (code in setOf("unauthorized", "session_lost", "invalid_command", "invalid_protocol")) terminate(code, message, presentation)
         else if (code in setOf("catchup_incomplete", "scope_unavailable", "tts_unavailable")) {
             listening?.let { queue("disable", mapOf("activation_id" to it.activationId)) }
             listening = null; pendingCount = 0; if (playback.automatic) cancel(); error = mapOf("code" to code, "message" to message) + presentation
         } else if (f["reading_id"] == null || matches(f)) {
+            if (playback.source == "recovery") noticeDue = false
             val failedOwner = errorOwner(playback)
             val details = (if (f["summary_changed"] == true) mapOf("summaryChanged" to true, "savedId" to f["saved_id"]) else emptyMap()) + presentation
             if (playback.readingId != null) { finish(false, message, details = details); playback = playback.copy(operationId = null, automatic = false); cancel() }

@@ -269,7 +269,7 @@ watch(layout, () => {
 
 // The count appearing or disappearing changes the content, not the line box: a recorded width would be stale, so
 // measure again from the first level.
-watch([count, locale], () => {
+watch([count, locale, () => speech.suspended], () => {
     if (layout.value === 'line') measure()
     else setLayout('line')
 }, { flush: 'post' })
@@ -320,6 +320,14 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                     :disabled="!tts.available && !listening"
                     @click="toggleSpeech"
                 ><wa-icon name="volume-up" aria-hidden="true"></wa-icon></button>
+                <button
+                    v-if="listening && speech.suspended"
+                    type="button"
+                    class="timeline-speech-resume"
+                    :aria-label="$t('timeline.speech.resumeReading')"
+                    :disabled="!tts.available"
+                    @click="speech.resume()"
+                >{{ $t('timeline.speech.resumeReading') }}</button>
             </div>
             <div ref="controlsRef" class="timeline-filter-controls">
                 <SegmentedControl
@@ -441,6 +449,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 
 .timeline-filter-heading {
     display: flex;
+    flex-wrap: wrap;
     flex: none;
     align-items: center;
     gap: var(--wa-space-xs);
@@ -465,6 +474,28 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 .timeline-speech-toggle:focus-visible {
     outline: var(--wa-focus-ring);
     outline-offset: var(--wa-focus-ring-offset);
+}
+
+.timeline-speech-resume {
+    max-width: 100%;
+    border: 1px solid var(--wa-color-brand-border-normal);
+    border-radius: var(--wa-border-radius-m);
+    background: var(--wa-color-brand-fill-quiet);
+    color: var(--wa-color-text-normal);
+    padding: var(--wa-space-xs) var(--wa-space-s);
+    font: inherit;
+    font-size: var(--wa-font-size-s);
+    cursor: pointer;
+}
+
+.timeline-speech-resume:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+}
+
+.timeline-speech-resume:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .timeline-speech-toggle:hover:not(:disabled) {

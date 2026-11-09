@@ -189,7 +189,7 @@ async def test_membership_changes_use_current_boundary_and_empty_scope_stops(har
     await h.registry.shutdown()
 
 
-async def test_disconnection_catchup_never_replays_truncated_history(harness):
+async def test_disconnection_catchup_crosses_incremental_cap_without_stopping(harness):
     h = harness
     await h.listener.enable(activation())
     h.session.disconnect()
@@ -199,8 +199,8 @@ async def test_disconnection_catchup_never_replays_truncated_history(harness):
     await h.listener.refresh()
     state = h.session.snapshot()
     played_event_ids = [body.get('text') for body, _ in h.opened]
-    assert state['listening'] is None
-    assert state['error']['code'] == 'catchup_incomplete'
+    assert state['listening'] is not None
+    assert state['error'] is None
     assert played_event_ids == []
     await h.registry.shutdown()
 
@@ -572,9 +572,9 @@ async def test_resume_reconciles_missed_invalidations_before_offering_pending_wo
     # No updates notification is delivered. The socket resume itself must catch up.
     if h.listener._refresh_task:
         await h.listener._refresh_task
-    assert h.session.listening is None
-    assert h.session.error['code'] == 'catchup_incomplete'
-    assert not any(frame['type'] == 'candidate' for frame in h.session._frames)
+    assert h.session.listening is not None
+    assert h.session.error is None
+    assert h.session._candidate['event_id'] == h.listener.pending[0]['id']
     assert h.opened == []
     await h.registry.shutdown()
 
@@ -962,3 +962,147 @@ async def test_old_selection_stop_cannot_fail_new_activation_during_reader_clean
     assert not any(f['type'] == 'error' for f in h.session._frames)
     assert h.session.playback is None and h.opened == []
     await h.registry.shutdown()
+
+
+async def test_short_replacement_checkpoint_keeps_unread_equal_timestamp(harness):
+    h = harness
+    started = await event(1)
+    unread = await event(1, text='Unread at the same time')
+    later = await event(2)
+    activation_command = activation()
+    activation_command.update(boundary=format_occurred_at(CLICK + timedelta(seconds=1, microseconds=-1)),
+                              excluded_event_ids=[started.id])
+    try:
+        await h.listener.enable(activation_command)
+        assert [item['id'] for item in h.listener.pending] == [unread.id, later.id]
+    finally:
+        await h.registry.shutdown()
+
+
+async def test_long_recovery_uses_server_boundary_and_announces_before_fresh_message(harness):
+    h = harness
+    old = await event(10)
+    fresh = await event(51)
+    h.policy['adapt'] = 'haiku'
+    notice = {'reading_id': str(uuid4()), 'generation': 1, 'text': 'Localized connection notice'}
+    listen = {**activation(), 'protocol': 1, 'seq': 1, 'type': 'listen', 'fresh': True, 'notice': notice}
+    try:
+        await h.session.apply(listen)
+        await h.session.preparation
+        assert h.session.playback['source'] == 'recovery'
+        assert h.opened[0][0]['text'] == notice['text']
+        assert h.opened[0][1]['_policy']['adapt'] == 'off'
+        # Initialization can finish while the notice plays, but cannot offer a candidate.
+        await h.listener._initialize(h.listener.active)
+        assert h.listener.active['boundary'] == format_occurred_at(CLICK + timedelta(seconds=50))
+        assert [item['id'] for item in h.listener.pending] == [fresh.id]
+        assert old.id not in [item['id'] for item in h.listener.pending]
+        assert h.session._candidate is None
+        await h.session.apply({'protocol': 1, 'seq': 2, 'type': 'finished',
+            'reading_id': notice['reading_id'], 'generation': 1, 'outcome': 'complete'})
+        await h.listener.refresh()
+        assert h.session._candidate['event_id'] == fresh.id
+    finally:
+        await h.registry.shutdown()
+
+
+async def test_recovery_notice_failure_releases_fresh_timeline(harness, monkeypatch):
+    h = harness
+    fresh = await event(51)
+    failed = asyncio.Event()
+
+    async def fail_notice(*args, **kwargs):
+        failed.set()
+        raise native_sessions.SpeechError('Configured voice failed', 424)
+
+    monkeypatch.setattr(native_sessions, 'open_speech', fail_notice)
+    notice = {'reading_id': str(uuid4()), 'generation': 1, 'text': 'Localized notice'}
+    try:
+        await h.session.apply({**activation(), 'protocol': 1, 'seq': 1, 'type': 'listen',
+                               'fresh': True, 'notice': notice})
+        await failed.wait()
+        await asyncio.gather(*tuple(h.session._tasks))
+        await h.listener._initialize(h.listener.active)
+        await h.listener.refresh()
+        assert h.session.playback is None
+        assert h.listener.active is not None
+        assert h.session._candidate['event_id'] == fresh.id
+    finally:
+        await h.registry.shutdown()
+
+
+async def test_notice_policy_exception_does_not_strand_reserved_native_reading(harness, monkeypatch):
+    h = harness
+    fresh = await event(51)
+    calls = 0
+
+    def read_policy():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError('Temporary configuration read failure')
+        return h.policy.copy()
+
+    monkeypatch.setattr(native_timeline, '_read_policy', read_policy)
+    notice = {'reading_id': str(uuid4()), 'generation': 1, 'text': 'Localized notice'}
+    try:
+        await h.session.apply({**activation(), 'protocol': 1, 'seq': 1, 'type': 'listen',
+                               'fresh': True, 'notice': notice})
+        errors = [frame for frame in h.session._frames if frame['type'] == 'error']
+        assert errors[-1]['reading_id'] == notice['reading_id']
+        assert errors[-1]['code'] == 'speech_failed'
+        await h.listener._initialize(h.listener.active)
+        await h.listener.refresh()
+        assert h.session.playback is None
+        assert h.session._candidate['event_id'] == fresh.id
+    finally:
+        await h.registry.shutdown()
+
+
+async def test_busy_short_recovery_keeps_all_eligible_messages_in_order_without_replay(harness):
+    h = harness
+    first = await event(1)
+    await h.listener.enable(activation())
+    reading = await select(h, first)
+    await h.session.apply({'protocol': 1, 'seq': 1, 'type': 'started', 'reading_id': reading, 'generation': 1})
+    await h.session.apply({'protocol': 1, 'seq': 2, 'type': 'finished', 'reading_id': reading,
+                           'generation': 1, 'outcome': 'complete'})
+    h.session.disconnect()
+    for index in range(AFTER_ID_CAP + 1):
+        await event(2, kind='turn.started')
+    next_row = await event(3)
+    last = await event(4)
+    try:
+        await h.session.reconcile([], None)
+        if h.listener._refresh_task:
+            await h.listener._refresh_task
+        assert h.session.error is None
+        assert h.session.listening is not None
+        assert [item['id'] for item in h.listener.pending] == [next_row.id, last.id]
+        assert first.id in h.listener.seen
+        assert h.session._candidate['event_id'] == next_row.id
+    finally:
+        await h.registry.shutdown()
+
+
+async def test_notice_retry_after_short_flap_retains_accepted_boundary(harness):
+    h = harness
+    fresh = await event(51)
+    first = {'reading_id': str(uuid4()), 'generation': 1, 'text': 'Localized notice'}
+    try:
+        await h.session.apply({**activation(), 'protocol': 1, 'seq': 1, 'type': 'listen',
+                               'fresh': True, 'notice': first})
+        await h.session.preparation
+        accepted_boundary = h.listener.active['boundary']
+        await h.listener._initialize(h.listener.active)
+        h.listener.clock = lambda: CLICK + timedelta(seconds=52)
+        retry = {'reading_id': str(uuid4()), 'generation': 2, 'text': first['text']}
+        await h.session.apply({**activation(), 'boundary': accepted_boundary,
+                               'protocol': 1, 'seq': 2, 'type': 'listen', 'fresh': False, 'notice': retry})
+        await h.session.preparation
+        await h.listener._initialize(h.listener.active)
+        assert h.listener.active['boundary'] == accepted_boundary
+        assert h.session.playback['source'] == 'recovery'
+        assert [item['id'] for item in h.listener.pending] == [fresh.id]
+    finally:
+        await h.registry.shutdown()

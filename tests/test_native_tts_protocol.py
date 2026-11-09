@@ -124,3 +124,15 @@ def test_selection_accepts_frozen_native_silence_fact(silence_reset):
 def test_selection_rejects_non_boolean_silence_fact(silence_reset):
     with pytest.raises(ValueError):
         parse_native_command(frame('select', event_id=1, reading_id=str(uuid4()), generation=1, silence_reset=silence_reset))
+
+
+@pytest.mark.parametrize('fields', [
+    {'fresh': 'yes'}, {'excluded_event_ids': [True]}, {'excluded_event_ids': '1'},
+    {'fresh': True, 'notice': {'reading_id': str(uuid4()), 'generation': 1, 'text': ''}},
+    {'fresh': False, 'notice': {'reading_id': str(uuid4()), 'generation': 0, 'text': 'Notice'}},
+])
+def test_rejects_invalid_recovery_options(fields):
+    with pytest.raises(ValueError):
+        parse_native_command(frame('listen', activation_id=str(uuid4()), page_id='page',
+            scope={'kind': 'global', 'id': None}, include_muted=False,
+            boundary='2026-11-05T12:00:00.000000Z', **fields))

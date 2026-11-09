@@ -17,7 +17,7 @@ _COMMON = {'protocol', 'type', 'seq'}
 _FIELDS = {
     'open': {'client_id'},
     'resume': {'session_id', 'resume_secret', 'ack_seq', 'commands', 'current'},
-    'listen': {'activation_id', 'scope', 'page_id', 'include_muted', 'boundary'},
+    'listen': {'activation_id', 'scope', 'page_id', 'include_muted', 'boundary', 'fresh', 'notice', 'excluded_event_ids'},
     'set_muted': {'activation_id', 'include_muted'},
     'disable': {'activation_id'},
     'manual': {'reading_id', 'generation', 'request'},
@@ -162,6 +162,19 @@ def parse_native_command(data: object) -> dict:
         else:
             _string(scope['id'], 'scope id')
         _string(data.get('page_id'), 'page_id')
+        if 'fresh' in data and type(data['fresh']) is not bool:
+            raise ValueError('fresh must be boolean')
+        excluded = data.get('excluded_event_ids', [])
+        if not isinstance(excluded, list):
+            raise ValueError('excluded_event_ids must be an array')
+        for event_id in excluded:
+            _integer(event_id, 'excluded event id')
+        notice = data.get('notice')
+        if notice is not None:
+            if not isinstance(notice, dict) or set(notice) != {'reading_id', 'generation', 'text'}:
+                raise ValueError('Invalid recovery notice')
+            _reading(notice)
+            _string(notice['text'], 'notice text', 4096)
         boundary = data.get('boundary')
         if not isinstance(boundary, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z', boundary):
             raise ValueError('boundary must be UTC with six fractional digits')

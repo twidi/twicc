@@ -203,7 +203,7 @@ Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
 
 The selected output directory is `android/dist/<engine>/<profile>/<mode>/`, where
-`<mode>` is `release` or `debug`. It contains `app-<engine>-<profile>-v<versionName>-<versionCode>-<mode>.apk`
+`<mode>` is `release` or `debug`. It contains `twicc-<engine>-<profile>-v<versionName>-<mode>.apk`
 and `SHA256SUMS` for that APK only. Engines, profiles, and modes have separate
 directories. The script copies the current APK by its exact name;
 it does not collect stale APKs from previous Gradle builds.
@@ -217,9 +217,9 @@ the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/64/release/app-gecko-64-v0.5.19-30-release.apk
+adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.19-release.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/64/release/app-webview-64-v0.5.19-30-release.apk
+adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.19-release.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to
@@ -518,14 +518,14 @@ Timeline reading paused, Reconnecting, or Stopping. Its controls work without
 an Activity or page execution:
 
 - **Skip** cancels the current reading. It preserves enabled listening and later work.
-- **Pause timeline** appears before Stop all while timeline listening is enabled.
+- **Pause** appears before Stop while timeline listening is enabled.
   It skips the current reading, including a manual reading, and suspends automatic
   speech. The notification stays present. New manual readings still work.
-- **Resume timeline** replaces Pause timeline during pause. It keeps the listening
+- **Resume** replaces Pause during pause. It keeps the listening
   scope and muted-session choice. Only messages after the Resume click are eligible;
   messages received during pause are never replayed. Pause disables the backend
   listener while retaining native intent, so it generates no automatic audio.
-- **Stop all** cancels the current reading, clears queued work, and disables listening.
+- **Stop** cancels the current reading, clears queued work, and disables listening.
   Local cancellation and wake-lock release occur immediately, including offline.
   Foreground cleanup has a five-second bound while cancellation reconciles.
 - Tapping the notification opens the current instance when that session still exists.
@@ -539,16 +539,36 @@ Manual speech has priority over automatic preparation. Disabling timeline
 listening preserves unrelated manual speech. Each installation has one active
 instance and listening scope. A second device has independent ownership.
 
-The service reconnects after a temporary network loss. Retained cancellations
-reconcile before resumed work, so reconnect cannot replay cancelled speech.
-Backend resources expire after 120 disconnected seconds. Network reachability,
-tunnels, OEM power rules, and explicit Android service stops can still end speech.
+The service retains enabled timeline listening during network loss. Its notification
+stays visible while reconnecting. Backend resources expire after 120 disconnected
+seconds, but the service replaces an expired session automatically.
+
+An interruption shorter than 120 seconds catches up eligible missed messages in
+order. Already-started readings do not replay. The interrupted audio stream is
+cancelled; it does not restart from byte zero.
+
+An interruption of 120 seconds or longer drops the old automatic queue and starts
+from successful recovery. One announcement explains that messages received during
+the interruption will not be read. It uses the installation language and configured
+TTS, without summary adaptation. The messages remain available in the timeline.
+Pause remains paused; Stop prevents recovery. Network flapping and failed recovery
+attempts do not reset the interruption duration merely because a socket opens.
 
 Logout, changed credentials, authorization expiry, interactive tunnel challenges,
-and backend-session loss stop native ownership. Sign in when needed, then activate
-again. Instance switch/removal also stops the previous instance. Process death,
-reboot, and explicit Android stop never automatically restore playback or listening.
+and unavailable listening scopes can still stop native ownership. Sign in when
+needed, then activate again. Instance switch/removal also stops the previous
+instance. Process death, reboot, and explicit Android stop never automatically
+restore playback or listening.
 Native TTS does not make the app-wide WebSocket permanently reliable.
+
+### Ordinary mobile browsers
+
+The web coordinator uses the same 120-second catch-up policy while the page stays
+visible. A long interruption shows an informational message when recovery succeeds.
+It does not promise screen-off or background speech. A hidden page or `pagehide`
+suspends automatic speech and keeps its scope and filters. Returning to the page
+does not start audio: use **Resume automatic reading**. Resume primes browser audio
+and applies the short/long interruption policy. **Stop** removes that listening intent.
 
 ## Phone smoke test
 
@@ -567,5 +587,13 @@ Native TTS does not make the app-wide WebSocket permanently reliable.
 9. Test foreground normal/streaming TTS, scrolling, and keyboard transitions.
 10. Stop the tunnel and retry. Check invalid certificates cannot be bypassed.
 11. Rename/change/remove an instance. Switch engines and check cleanup behavior.
+12. Enable timeline speech, lock the screen, and interrupt the network for one minute.
+    Send messages from another client. Restore the network and check ordered catch-up,
+    a persistent notification, and no replay of an already-started reading.
+13. Repeat with ten- and thirty-minute interruptions. Check one localized recovery
+    announcement, no old backlog playback, and automatic speech for fresh messages.
+    Repeat while paused, then with Stop. Check neither action permits an automatic restart.
+14. In an ordinary mobile browser, hide the page during timeline speech. Restore the
+    page and network. Check audio stays suspended until **Resume automatic reading**.
 
 Run these checks on a physical phone to validate fluidity and TwiCC streaming TTS.

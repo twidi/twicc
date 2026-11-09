@@ -60,6 +60,7 @@
     "android.speech.reading": {},
     "android.speech.waiting": {},
     "android.speech.reconnecting": {},
+    "android.speech.recoveryAnnouncement": {},
     "android.speech.stopping": {},
     "android.speech.skip": {},
     "android.speech.stopAll": {},

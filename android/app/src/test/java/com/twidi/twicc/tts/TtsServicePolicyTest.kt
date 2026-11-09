@@ -27,6 +27,7 @@ class TtsServicePolicyTest {
     }
 
     private class Harness(val cache: TtsSnapshotCache = TtsSnapshotCache()) {
+        var now = 0L
         val events = mutableListOf<String>()
         var blocked: TtsActionError? = null
         var wake = false
@@ -51,7 +52,7 @@ class TtsServicePolicyTest {
                 override fun play(readingId: String, generation: Long) {}
                 override fun cancel(readingId: String, generation: Long) { events += "cancel" }
                 override fun close() {}
-            } }, cache)
+            } }, cache, elapsedMs = { now })
         val document = DocumentOwner("instance", "page", 1)
         fun configure() {
             owner.configure(TtsActivationSource("instance", "Test", "https://example.test") { _, callback ->
@@ -81,6 +82,39 @@ class TtsServicePolicyTest {
         override fun release(resource: AudioResource) {}
         override fun close() { closed = true }
         override val connection: TtsConnection? = null
+    }
+    @Test fun firstTlsFailureKeepsForegroundAndLongRecoveryAnnounces() {
+        val h = Harness(); assertTrue(h.listen().accepted)
+        h.exported!!(Result.success(emptyList()))
+        // TLS fails before the WebSocket Opened callback.
+        h.socket.event(TtsConnectionEvent.Lost("connection", 1000))
+        assertTrue(h.foreground); assertTrue(h.wake); assertFalse(h.stopped)
+        h.now = 1800000
+        h.timers.last().second()
+        h.socket.event(TtsConnectionEvent.Opened("connection"))
+        h.socket.event(TtsConnectionEvent.Frame("connection", mapOf("protocol" to 1, "type" to "opened_session",
+            "session_id" to "new", "resume_secret" to "secret", "ack_seq" to 1)))
+        val recovery = h.socket.sent.single { it["type"] == "listen" && it["fresh"] == true }
+        assertNotNull(recovery["notice"])
+        assertTrue(h.foreground); assertFalse(h.stopped)
+    }
+    @Test fun expiredServerSessionKeepsForegroundAndOpensReplacement() {
+        for (duration in listOf(60000L, 600000L, 1800000L)) {
+            val h = Harness(); h.listen(); h.connect()
+            h.socket.event(TtsConnectionEvent.Lost("connection", 1000))
+            h.now = duration; h.timers.last().second()
+            h.socket.event(TtsConnectionEvent.Opened("connection"))
+            h.socket.event(TtsConnectionEvent.Frame("connection", mapOf("protocol" to 1, "type" to "error", "code" to "session_lost")))
+            assertEquals("open", h.socket.sent.last()["type"])
+            assertTrue(h.foreground); assertFalse(h.stopped)
+            h.socket.event(TtsConnectionEvent.Opened("connection"))
+            h.socket.event(TtsConnectionEvent.Frame("connection", mapOf("protocol" to 1, "type" to "opened_session",
+                "session_id" to "new", "resume_secret" to "secret", "ack_seq" to h.socket.sent.last()["seq"])))
+            assertNotNull(h.owner.snapshot().listening)
+            val recovery = h.socket.sent.filter { it["type"] == "listen" && it.containsKey("fresh") }.single()
+            assertEquals(duration >= 120000, recovery["fresh"])
+            assertEquals(duration >= 120000, recovery["notice"] != null)
+        }
     }
     @Test fun blockedNotificationChannelRejectsActivation() {
         val h = Harness(); h.blocked = TtsActionError("notifications_blocked", "Enable speech notifications", "notification_settings")

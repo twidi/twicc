@@ -152,6 +152,7 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     const speech = Vue.reactive({ activePageId,
         enable(...args) { speechActions.push(['enable', ...args]); this.activePageId = args[0] },
         disable(...args) { speechActions.push(['disable', ...args]); this.activePageId = null },
+        resume(...args) { speechActions.push(['resume', ...args]); this.suspended = false; this.paused = false },
     })
     store.$onAction(({ name, args }) => { if (name !== 'filtersFor' && name !== 'ensure') actions.push([name, ...args]) })
     const Band = compileComponent(new URL('./TimelineFilterBand.vue', import.meta.url), {
@@ -325,6 +326,7 @@ test('paused timeline toggle identifies pause and disables listening instead of 
     const [button] = byClass(root, 'timeline-speech-toggle')
     assert.equal(button.props['aria-pressed'], true)
     assert.equal(button.props.title, 'Timeline reading paused. Stop timeline listening')
+    assert.equal(byClass(root, 'timeline-speech-resume').length, 0, 'native pause has no web resume action')
     button.props.onClick()
     assert.deepEqual(speechActions.at(-1), ['disable'])
 })
@@ -968,4 +970,22 @@ test('the panel layout: two columns when there is room, small-caps group titles,
     const hint = declarationsOf(STYLE, '.timeline-filter-option-hint')
     assert.deepEqual([hint.get('font-size'), hint.get('color')], ['var(--wa-font-size-xs)', 'var(--wa-color-text-quiet)'])
     assert.equal(declarationsOf(STYLE, '.timeline-filter-panel-actions').get('border-block-start'), '1px solid var(--wa-color-surface-border)')
+})
+
+
+test('suspended web listening has a translated explicit resume action beside Stop', async (t) => {
+    const { root, speech, speechActions } = await mount(t, { activePageId: 'p1' })
+    speech.suspended = true
+    speech.paused = true
+    await flush()
+    const [resume] = byClass(root, 'timeline-speech-resume')
+    assert.ok(resume)
+    assert.equal(resume.props.type, 'button')
+    assert.equal(resume.props['aria-label'], 'Resume automatic reading')
+    const [stop] = byClass(root, 'timeline-speech-toggle')
+    assert.equal(stop.props['aria-pressed'], true)
+    resume.props.onClick()
+    assert.deepEqual(speechActions, [['resume']])
+    await flush()
+    assert.equal(byClass(root, 'timeline-speech-resume').length, 0)
 })

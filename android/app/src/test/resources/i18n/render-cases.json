@@ -920,6 +920,21 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "android.speech.recoveryAnnouncement": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Connection restored. Messages received during the interruption will not be read. Automatic reading resumes."
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
         "android.speech.stopping": {
           "forms": [
             {
@@ -5814,6 +5829,21 @@
                 {
                   "type": "text",
                   "value": "Verbindung wird wiederhergestellt"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.speech.recoveryAnnouncement": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Verbindung wiederhergestellt. Nachrichten aus der Unterbrechung werden nicht vorgelesen. Das automatische Vorlesen wird fortgesetzt."
                 }
               ],
               "parameters": []
@@ -10732,6 +10762,21 @@
                 {
                   "type": "text",
                   "value": "Reconectando"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.speech.recoveryAnnouncement": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Conexión restablecida. Los mensajes recibidos durante la interrupción no se leerán. La lectura automática se reanuda."
                 }
               ],
               "parameters": []
@@ -15678,6 +15723,21 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "android.speech.recoveryAnnouncement": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Connexion rétablie. Les messages reçus pendant la coupure ne seront pas lus. La lecture automatique reprend."
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
         "android.speech.stopping": {
           "forms": [
             {
@@ -20592,6 +20652,21 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "android.speech.recoveryAnnouncement": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Conexão restabelecida. As mensagens recebidas durante a interrupção não serão lidas. A leitura automática será retomada."
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
         "android.speech.stopping": {
           "forms": [
             {
@@ -25041,6 +25116,14 @@
     {
       "locale": "en",
       "message": {
+        "key": "android.speech.recoveryAnnouncement",
+        "params": {}
+      },
+      "expected": "Connection restored. Messages received during the interruption will not be read. Automatic reading resumes."
+    },
+    {
+      "locale": "en",
+      "message": {
         "key": "android.speech.stopping",
         "params": {}
       },
@@ -27609,6 +27692,14 @@
         "params": {}
       },
       "expected": "Verbindung wird wiederhergestellt"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "android.speech.recoveryAnnouncement",
+        "params": {}
+      },
+      "expected": "Verbindung wiederhergestellt. Nachrichten aus der Unterbrechung werden nicht vorgelesen. Das automatische Vorlesen wird fortgesetzt."
     },
     {
       "locale": "de",
@@ -30185,6 +30276,14 @@
     {
       "locale": "es",
       "message": {
+        "key": "android.speech.recoveryAnnouncement",
+        "params": {}
+      },
+      "expected": "Conexión restablecida. Los mensajes recibidos durante la interrupción no se leerán. La lectura automática se reanuda."
+    },
+    {
+      "locale": "es",
+      "message": {
         "key": "android.speech.stopping",
         "params": {}
       },
@@ -32753,6 +32852,14 @@
         "params": {}
       },
       "expected": "Reconnexion"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "android.speech.recoveryAnnouncement",
+        "params": {}
+      },
+      "expected": "Connexion rétablie. Les messages reçus pendant la coupure ne seront pas lus. La lecture automatique reprend."
     },
     {
       "locale": "fr",
@@ -35729,6 +35836,14 @@
         "params": {}
       },
       "expected": "Reconectando"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "android.speech.recoveryAnnouncement",
+        "params": {}
+      },
+      "expected": "Conexão restabelecida. As mensagens recebidas durante a interrupção não serão lidas. A leitura automática será retomada."
     },
     {
       "locale": "pt-BR",

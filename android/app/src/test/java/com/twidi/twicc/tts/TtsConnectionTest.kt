@@ -55,6 +55,28 @@ class TtsConnectionTest {
         assertTrue(c.send(mapOf("protocol" to 1, "type" to "ping", "seq" to 11)))
         assertEquals("ping", TtsJson.decode(received.poll(5, TimeUnit.SECONDS)!!)["type"])
     }
+    @Test fun unreconciledWebsocketHasDeadlineEvenWithoutHeartbeatAcknowledgements() {
+        var now = 0L
+        fixture(clockMillis = { now }) { server, c, creds ->
+            server.enqueue(MockResponse().withWebSocketUpgrade(object: WebSocketListener() {}))
+            val events = LinkedBlockingQueue<TtsConnectionEvent>(); c.onEvent = { events.offer(it) }
+            val id = c.connect(creds, mapOf("protocol" to 1, "type" to "open", "seq" to 1))
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Opened)
+            now = 20000
+            c.heartbeat(id)
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Lost)
+        }
+    }
+    @Test fun unsupportedProtocolProducesTerminalProtocolError() = fixture { server, c, creds ->
+        server.enqueue(MockResponse().withWebSocketUpgrade(object: WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) { webSocket.send("{\"protocol\":2,\"type\":\"state\"}") }
+        }))
+        val events = LinkedBlockingQueue<TtsConnectionEvent>(); c.onEvent = { events.offer(it) }
+        c.connect(creds, mapOf("protocol" to 1, "type" to "open", "seq" to 1))
+        assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Opened)
+        val event = events.poll(5, TimeUnit.SECONDS) as TtsConnectionEvent.Frame
+        assertEquals("invalid_protocol", event.frame["code"])
+    }
     @Test fun audioUsesSecretRejectsRedirectAndHtmlAndNeverRetriesStream() = fixture { server, c, _ ->
         server.enqueue(MockResponse().setBody("audio bytes").addHeader("Content-Type", "audio/mpeg"))
         c.openAudio(resource()).use { assertEquals("audio bytes", it.input.readBytes().toString(Charsets.UTF_8)) }
@@ -140,6 +162,7 @@ class TtsConnectionTest {
             val id = c.connect(creds, mapOf("protocol" to 1, "type" to "open", "seq" to 1))
             assertNotNull(received.poll(5, TimeUnit.SECONDS))
             assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Opened)
+            c.reconciled(id)
             // A due callback alone is not a sent heartbeat and cannot start its deadline.
             now = 100_000L; c.heartbeat(id)
             assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.HeartbeatDue)

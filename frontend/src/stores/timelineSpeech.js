@@ -20,6 +20,7 @@ function showError(store, message) {
 }
 
 const coordinators = new WeakMap()
+const RECOVERY_CUTOFF_MS = 120_000
 // After this much silence the listener may have lost track of where they are: announce the full context again.
 const CONTEXT_SILENCE_MS = 3 * 60 * 1000
 const wireTime = milliseconds => new Date(milliseconds).toISOString().replace('Z', '000Z')
@@ -128,6 +129,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     const summaries = useSummariesStore()
     const summaryEnabled = () => settingsStore?.timelineSummaryEnabled !== false
     let active = null
+    const pageDocument = eventTarget.document
+    const pageHidden = () => pageDocument?.visibilityState === 'hidden'
     const current = activation => active === activation
     const count = activation => { store.pendingCount = activation.pending.length }
 
@@ -184,7 +187,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     }
 
     function prepare(activation) {
-        if (!current(activation)) return
+        if (!current(activation) || store.suspended) return
         const pendingIds = new Set(activation.pending.map(event => event.id))
         for (const id of activation.preparations.keys()) {
             if (activation.reading?.id !== id && (!summaryEnabled() || !pendingIds.has(id))) releasePreparation(activation, id)
@@ -239,6 +242,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         store.activePageId = null
         store.activeLabel = ''
         store.pendingCount = 0
+        store.suspended = false
+        store.paused = false
         if (previous) tts.stop({ owner: previous.token })
     }
 
@@ -250,6 +255,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     function rememberStart(activation) {
         const event = activation.reading
         if (!event) return
+        activation.readingStarted = true
         if (!activation.watermark || event.occurred_at > activation.watermark) activation.watermark = event.occurred_at
         activation.context = { project: spokenProjectId(event.project_id), session: event.session_id, endedAt: null }
     }
@@ -265,7 +271,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     }
 
     async function drain(activation) {
-        if (!current(activation) || activation.processing || activation.bootstrap || !activation.caughtUp
+        if (!current(activation) || store.suspended || pageHidden() || activation.processing || activation.bootstrap || !activation.caughtUp
             || connectionStatus.value !== 'OPEN' || !tts.available || tts.status !== 'idle') return
         const next = activation.pending[0]
         if (!next) return
@@ -274,6 +280,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         const event = activation.pending.shift()
         activation.processing = true
         activation.reading = event
+        activation.readingStarted = false
         count(activation)
         try {
             let result
@@ -322,11 +329,23 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     }
 
     function consume(activation, feed, responseEpoch, { phase, body }) {
-        if (!current(activation) || activation.feed !== feed || phase === 'backfill') return
+        if (!current(activation) || store.suspended || activation.feed !== feed || phase === 'backfill') return
+        if (activation.outageSince !== null && responseEpoch === activation.connectionEpoch
+            && connectionStatus.value === 'OPEN' && (phase === 'live' || phase === 'first')) {
+            if (store._now() - activation.outageSince >= RECOVERY_CUTOFF_MS) {
+                restartFresh(activation)
+                return
+            }
+            activation.outageSince = null
+        }
         if (phase === 'live' && body.truncated) {
-            showError(store, localUiMessage('session.timelineSpeech.loadFailed'))
-            // The feed checks disposal immediately after this callback, before its display-history reset.
-            disable()
+            // A busy feed can exceed the live cap during a short outage. Reload history through the
+            // listening boundary, retaining pending/seen messages and any reading already in progress.
+            activation.bootstrap = true
+            activation.replaceFeed = true
+            activation.caughtUp = responseEpoch === activation.connectionEpoch && connectionStatus.value === 'OPEN'
+            // Replacement disposes this feed before its generic display-history reset can run.
+            replaceScope(scopeOf())
             return
         }
         if (phase === 'before' && !activation.bootstrap) return
@@ -368,8 +387,10 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             return
         }
         store.activeLabel = scope.label
+        if (store.suspended) return
         const key = [...scope.members].sort().join('\u0000')
-        if (key === activation.scopeKey) return
+        if (key === activation.scopeKey && !activation.replaceFeed) return
+        activation.replaceFeed = false
         const joinedAt = activation.scopeKey === null ? activation.boundary : wireTime(store._now())
         const boundaries = new Map()
         for (const id of scope.members) boundaries.set(id, activation.boundaries.get(id) ?? joinedAt)
@@ -394,14 +415,14 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         if (afterId !== null) activation.caughtUp = false
         activation.unbind = bindTimelineEvents(eventTarget, {
             notifyLatest(id) {
-                if (!current(activation) || activation.feed !== feed) return
+                if (!current(activation) || store.suspended || activation.feed !== feed) return
                 if (activation.bootstrap && feed.state.loadError) feed.retry()
                 // A failed reconnection refresh must retry even if this invalidation names the same cursor.
                 if (!activation.caughtUp) feed.refresh()
                 else feed.notifyLatest(id)
             },
             refresh() {
-                if (!current(activation) || activation.feed !== feed) return
+                if (!current(activation) || store.suspended || activation.feed !== feed) return
                 if (activation.bootstrap && feed.state.loadError) feed.retry()
                 feed.refresh()
             },
@@ -434,6 +455,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             if (!active) return
             active.caughtUp = false
             active.connectionEpoch += 1
+            if (status !== 'OPEN' && active.outageSince === null) active.outageSince = store._now()
+            if (store.suspended) return
             if (status === 'OPEN') {
                 if (active.bootstrap && active.feed.state.loadError) active.feed.retry()
                 active.feed.refresh()
@@ -448,8 +471,56 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             }) ?? []]
         }, () => { if (active) purge(active) }, { flush: 'sync' }),
     ]
-    const onPageHide = () => disable()
+    // Replace the activation before cancelling work. Old audio, summary and feed promises lose ownership together.
+    function renew(activation, { fresh = false } = {}) {
+        const boundary = fresh ? wireTime(store._now()) : activation.boundary
+        const pending = fresh ? [] : [...activation.pending]
+        if (!fresh && activation.reading && !activation.readingStarted) pending.push(activation.reading)
+        pending.sort((a, b) => compareNewestFirst(b, a))
+        const next = { ...activation, token: Symbol('timeline-speech'), boundary,
+            boundaries: fresh ? new Map([...activation.boundaries.keys()].map(id => [id, boundary])) : activation.boundaries,
+            pending, preparations: new Map(), processing: false, reading: null, readingStarted: false,
+            context: null, watermark: fresh ? null : activation.watermark,
+            bootstrap: fresh || activation.bootstrap, caughtUp: false, replaceFeed: true,
+            outageSince: fresh ? null : activation.outageSince,
+        }
+        active = next
+        activation.unbind?.()
+        activation.feed?.dispose()
+        next.unbind = null
+        for (const id of activation.preparations.keys()) releasePreparation(activation, id)
+        tts.stop({ owner: activation.token })
+        count(next)
+        return next
+    }
+
+    function restartFresh(activation) {
+        const next = renew(activation, { fresh: true })
+        next.caughtUp = connectionStatus.value === 'OPEN'
+        replaceScope(scopeOf())
+        void store._showInfo(localUiMessage('session.timelineSpeech.backlogSkipped'))
+    }
+
+    function suspend() {
+        if (!active || store.suspended) return
+        store.suspended = true
+        store.paused = true
+        if (active.outageSince === null) active.outageSince = store._now()
+        renew(active)
+    }
+
+    function resume() {
+        if (!active || !store.suspended || pageHidden() || !tts.available) return
+        tts.prime()
+        store.suspended = false
+        store.paused = false
+        replaceScope(scopeOf())
+    }
+
+    const onPageHide = () => suspend()
+    const onVisibilityChange = () => { if (pageHidden()) suspend() }
     eventTarget.addEventListener('pagehide', onPageHide)
+    pageDocument?.addEventListener('visibilitychange', onVisibilityChange)
     return {
         enable(pageId) {
             const boundary = wireTime(store._now())
@@ -460,21 +531,25 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 token: Symbol('timeline-speech'), boundary, boundaries: new Map(), scopeKey: null,
                 seen: new Set(), shown: new Map(), hidden: new Set(), pending: [], preparations: new Map(), reading: null,
                 bootstrap: true, caughtUp: connectionStatus.value === 'OPEN', processing: false, context: null, watermark: null,
-                feed: null, unbind: null, connectionEpoch: 0,
+                feed: null, unbind: null, connectionEpoch: 0, readingStarted: false,
+                outageSince: connectionStatus.value === 'OPEN' ? null : store._now(),
             }
             store.activePageId = pageId
+            if (pageHidden()) suspend()
         },
+        resume,
         disable,
         dispose() {
             disable()
             for (const unsubscribe of subscriptions) unsubscribe()
             eventTarget.removeEventListener('pagehide', onPageHide)
+            pageDocument?.removeEventListener('visibilitychange', onVisibilityChange)
         },
     }
 }
 
 export const useTimelineSpeechStore = defineStore('timelineSpeech', {
-    state: () => ({ activePageId: null, activeLabel: '', pendingCount: 0, paused: false }),
+    state: () => ({ activePageId: null, activeLabel: '', pendingCount: 0, paused: false, suspended: false }),
     actions: {
         initialize({ dataStore, workspacesStore, connectionStatus, eventTarget = window, settingsStore = null }) {
             if (coordinators.has(this)) return
@@ -483,6 +558,7 @@ export const useTimelineSpeechStore = defineStore('timelineSpeech', {
         },
         enable(pageId) { coordinators.get(this)?.enable(pageId) },
         disable() { coordinators.get(this)?.disable() },
+        resume() { coordinators.get(this)?.resume?.() },
         dispose() {
             coordinators.get(this)?.dispose()
             coordinators.delete(this)
@@ -491,6 +567,10 @@ export const useTimelineSpeechStore = defineStore('timelineSpeech', {
         async _fetchPage(params) {
             const { fetchTimelinePage } = await import('../composables/useTimelineFeed.js')
             return fetchTimelinePage(params)
+        },
+        async _showInfo(messageDescriptor) {
+            const { toast } = await import('../composables/useToast.js')
+            toast.info(messageDescriptor)
         },
         async _showError(message, messageDescriptor = null) {
             const { toast } = await import('../composables/useToast.js')

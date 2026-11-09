@@ -81,6 +81,8 @@ function setup() {
         getAllProjectIds(id) { return this.workspaces[id]?.ids ?? [] },
     })
     const status = ref('OPEN'), target = new ListenerTarget(), store = useTimelineSpeechStore()
+    target.document = new ListenerTarget()
+    target.document.visibilityState = 'visible'
     const filters = useTimelineFiltersStore()
     const settings = reactive({ timelineSummaryEnabled: true, summaryModel: 'auto' })
     const summaries = useSummariesStore(), summaryCalls = [], summaryStreams = new Map(), summaryDeletes = []
@@ -107,6 +109,8 @@ function setup() {
         const reply = replies.shift() ?? page()
         return typeof reply === 'function' ? reply(params) : Promise.resolve(reply)
     }
+    const infos = []
+    store._showInfo = message => infos.push(message)
     store._showError = error => errors.push(error)
     store.initialize({ dataStore: data, workspacesStore: workspaces, connectionStatus: status, eventTarget: target, settingsStore: settings })
     const emit = (name, latestId) => {
@@ -117,7 +121,8 @@ function setup() {
     cleanups.push(() => { store.dispose(); tts.stop(); store.$dispose(); tts.$dispose() })
     return {
         store, filters, tts, data, workspaces, status, target, opens, requests, replies, errors, emit,
-        settings, summaries, summaryCalls, summaryDeletes, acquisitions,
+        settings, summaries, summaryCalls, summaryDeletes, acquisitions, infos,
+        visibility(value) { target.document.visibilityState = value; target.document.dispatchEvent(new Event('visibilitychange')) },
         summariesEnabled() { eligible = true },
         async summary(id, state = 'complete', error = null) {
             summaryStreams.get(id).enqueue(new TextEncoder().encode(JSON.stringify({ revision: 1, state,
@@ -475,7 +480,7 @@ test('bootstrap load failure retries on next invalidation', async () => {
     assert.equal(h.store.pendingCount, 1)
 })
 
-test('scope invalidation availability loss and truncation disable listening', async () => {
+test('scope invalidation and availability loss disable listening', async () => {
     const h = setup()
     await h.enable([message(2), message(1)], 'ws:w')
     h.workspaces.workspaces.w.ids = []; await settle()
@@ -485,14 +490,6 @@ test('scope invalidation availability loss and truncation disable listening', as
     await h.enable([message(3)])
     h.tts.deactivateConfig(); await settle()
     assert.equal(h.store.activePageId, null)
-    h.tts.activateConfig('voice')
-    await h.enable([message(4)])
-    const count = h.requests.length
-    await h.live([], { truncated: true, latest_id: 50 })
-    assert.equal(h.store.activePageId, null)
-    assert.equal(h.requests.length, count + 1)
-    assert.equal(h.errors.length, 1)
-    assert.match(h.errors[0], /messages could not be loaded/i)
 })
 
 test('stopping the current reading keeps listening and reads the next message', async () => {
@@ -534,7 +531,8 @@ test('reload pagehide logout and disposal cannot restart speech', async () => {
         else h.store[operation]()
         held.resolve(page([message(1)])); await settle()
         h.emit('twicc:timeline-changed', 20); h.emit('twicc:ws-reconnected'); await settle()
-        assert.equal(h.store.activePageId, null)
+        assert.equal(h.store.activePageId, operation === 'pagehide' ? 'p' : null)
+        if (operation === 'pagehide') assert.equal(h.store.suspended, true)
         assert.equal(h.opens.length, 0)
         assert.equal(h.requests.length, 1)
     }
@@ -842,4 +840,203 @@ test('shared native policy fixtures preserve Web boundary and deterministic orde
         assert.deepEqual(played, fixture.expected, fixture.name)
         h.store.disable()
     }
+})
+
+
+test('hidden page suspends owned audio and feed until explicit foreground resume', async () => {
+    const h = setup()
+    await h.enable([message(2), message(1)], 'ws:w')
+    await h.start()
+    h.visibility('hidden'); await settle()
+    assert.equal(h.store.activePageId, 'ws:w')
+    assert.equal(h.store.suspended, true)
+    assert.equal(h.tts.status, 'idle')
+    const requests = h.requests.length
+    h.status.value = 'CLOSED'; h.status.value = 'OPEN'
+    h.emit('twicc:timeline-changed', 4)
+    h.store.resume(); await settle()
+    assert.equal(h.requests.length, requests)
+    h.visibility('visible'); await settle()
+    assert.equal(h.opens.length, 1)
+    h.replies.push(page([message(3), message(1)]))
+    const primes = h.primes
+    h.store.resume()
+    assert.equal(h.primes, primes + 1)
+    await settle()
+    assert.equal(h.store.suspended, false)
+    assert.equal(h.store.activePageId, 'ws:w')
+    assert.equal(h.opens.at(-1).text, 'Message 2')
+    await h.start(); await h.end()
+    assert.equal(h.opens.at(-1).text, 'Message 3')
+})
+
+test('120-second network outage drops old pending and catch-up backlog at successful recovery', async () => {
+    const h = setup(), reconnect = deferred()
+    await h.enable([message(2), message(1)])
+    await h.start()
+    h.status.value = 'CLOSED'; await h.end()
+    h.now(CLICK + 119_000)
+    h.replies.push(() => reconnect.promise)
+    h.status.value = 'OPEN'; await settle()
+    h.now(CLICK + 120_000)
+    reconnect.resolve(page([message(3)])); await settle()
+    assert.equal(h.opens.length, 1)
+    assert.equal(h.store.pendingCount, 0)
+    assert.equal(h.infos.length, 1)
+    await h.live([{ ...message(4), occurred_at: new Date(CLICK + 121_000).toISOString().replace('Z', '000Z') }])
+    assert.equal(h.opens.at(-1).text, 'Message 4')
+})
+
+test('long visibility suspension skips backlog without needing a socket event', async () => {
+    const h = setup()
+    await h.enable([message(1)])
+    await h.start()
+    h.visibility('hidden')
+    h.now(CLICK + 120_000)
+    h.visibility('visible'); await settle()
+    assert.equal(h.opens.length, 1)
+    h.replies.push(page([message(2)]))
+    h.store.resume(); await settle()
+    assert.equal(h.store.pendingCount, 0)
+    assert.equal(h.opens.length, 1)
+    assert.equal(h.infos.length, 1)
+})
+
+test('suspension cancels delayed summary audio without stopping manual speech', async () => {
+    const h = setup(), held = deferred(); h.summariesEnabled(); h.acquisitions.set(1, held)
+    await h.enable([message(1)])
+    h.visibility('hidden')
+    held.resolve(); await settle()
+    assert.equal(h.opens.length, 0)
+    const manual = h.tts.play('Manual')
+    await settle(); await h.start(); await manual
+    h.target.dispatchEvent(new Event('pagehide')); await settle()
+    assert.equal(h.tts.playback.owner, null)
+    assert.equal(h.tts.status, 'playing')
+    h.store.disable()
+    h.visibility('visible'); h.store.resume(); await settle()
+    assert.equal(h.store.activePageId, null)
+    assert.equal(h.opens.length, 1)
+})
+
+test('long resume waits for successful recovery before dropping backlog and reporting it', async () => {
+    const h = setup()
+    await h.enable([message(2), message(1)])
+    await h.start()
+    h.visibility('hidden')
+    h.now(CLICK + 120_000)
+    h.visibility('visible')
+    h.replies.push(() => Promise.reject(new Error('still offline')))
+    h.store.resume(); await settle()
+    assert.equal(h.infos.length, 0)
+    assert.equal(h.opens.length, 1)
+    h.now(CLICK + 150_000)
+    await h.live([message(3)])
+    assert.equal(h.infos.length, 1)
+    assert.equal(h.store.pendingCount, 0)
+    assert.equal(h.opens.length, 1)
+})
+
+test('new workspace members during suspension start at their admission time', async () => {
+    const h = setup()
+    await h.enable([], 'ws:w')
+    h.visibility('hidden')
+    h.now(CLICK + 10_000)
+    h.workspaces.workspaces.w.ids = ['p', 'q']; await settle()
+    h.visibility('visible')
+    h.replies.push(page([message(2, 2, 'q'), message(3, 3, 'p')]))
+    h.store.resume(); await settle()
+    assert.equal(h.opens.length, 1)
+    assert.equal(h.opens[0].text, 'Message 3')
+    assert.equal(h.store.pendingCount, 0)
+})
+
+test('119999-millisecond outage catches up once in order without replaying started audio', async () => {
+    const h = setup()
+    await h.enable([message(2), message(1)])
+    await h.start()
+    h.status.value = 'CLOSED'; await h.end()
+    h.now(CLICK + 119_999)
+    h.replies.push(page([message(3), message(1)]))
+    h.status.value = 'OPEN'; await settle()
+    assert.equal(h.opens.at(-1).text, 'Message 2')
+    await h.start(); await h.end()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1', 'Message 2', 'Message 3'])
+    assert.equal(h.infos.length, 0)
+})
+
+test('failed reconnect and overlapping suspension retain the first interruption time', async () => {
+    const h = setup()
+    await h.enable([message(2), message(1)])
+    await h.start()
+    h.status.value = 'CLOSED'; await h.end()
+    h.now(CLICK + 90_000)
+    h.replies.push(() => Promise.reject(new Error('offline')))
+    h.status.value = 'OPEN'; await settle()
+    h.visibility('hidden')
+    h.now(CLICK + 100_000)
+    h.status.value = 'CLOSED'; h.status.value = 'OPEN'
+    h.now(CLICK + 120_000)
+    h.visibility('visible')
+    h.replies.push(page([message(3)]))
+    h.store.resume(); await settle()
+    assert.equal(h.opens.length, 1)
+    assert.equal(h.infos.length, 1)
+    assert.equal(h.store.pendingCount, 0)
+})
+
+test('initially disconnected activation skips backlog after 120 seconds and keeps manual audio', async () => {
+    const h = setup()
+    h.status.value = 'CLOSED'
+    await h.enable([message(1)])
+    const manual = h.tts.play('Manual')
+    await settle(); await h.start(); await manual
+    h.now(CLICK + 120_000)
+    h.replies.push(page([message(2)]))
+    h.status.value = 'OPEN'; await settle()
+    assert.equal(h.store.activePageId, 'p')
+    assert.equal(h.infos.length, 1)
+    assert.equal(h.tts.status, 'playing')
+    assert.equal(h.tts.playback.owner, null)
+    await h.end()
+    assert.deepEqual(h.opens.map(body => body.text), ['Manual'])
+})
+
+test('suspension ignores stale feed responses and Stop prevents recovery feedback', async () => {
+    const h = setup(), stale = deferred(), resumed = deferred()
+    await h.enable([])
+    h.replies.push(() => stale.promise)
+    h.emit('twicc:timeline-changed', 2); await settle()
+    h.visibility('hidden')
+    h.now(CLICK + 120_000)
+    h.visibility('visible')
+    h.replies.push(() => resumed.promise)
+    h.store.resume(); await settle()
+    stale.resolve(page([message(1)])); await settle()
+    assert.equal(h.opens.length, 0)
+    h.store.disable()
+    resumed.resolve(page([message(2)])); await settle()
+    assert.equal(h.opens.length, 0)
+    assert.equal(h.infos.length, 0)
+    assert.equal(h.store.activePageId, null)
+})
+
+
+test('short truncated catch-up paginates missed messages and preserves listening without duplicates', async () => {
+    const h = setup()
+    await h.enable([message(2), message(1)])
+    await h.start()
+    h.status.value = 'CLOSED'; await h.end()
+    h.now(CLICK + 30_000)
+    h.replies.push(page([message(5)], { truncated: true, latest_id: 1000 }),
+        page([message(5), message(4)], { has_more: true, latest_id: 1000 }),
+        page([message(3), message(2), message(1), message(0)]))
+    h.status.value = 'OPEN'; await settle()
+    assert.equal(h.store.activePageId, 'p')
+    assert.equal(h.opens.at(-1).text, 'Message 2')
+    assert.ok(h.requests.some(request => request.before !== null))
+    for (let i = 0; i < 3; i++) { await h.start(); await h.end() }
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1', 'Message 2', 'Message 3', 'Message 4', 'Message 5'])
+    assert.equal(h.errors.length, 0)
+    assert.equal(h.infos.length, 0)
 })
