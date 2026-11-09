@@ -349,9 +349,7 @@ defineExpose({ sync })
         <!-- Agent finished working -->
         <div class="setting-group">
             <label class="setting-group-label">{{ $t('settings.notifications.finished.label') }}</label>
-            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
-                @click="openSoundSettings('user_turn')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
-            <wa-select v-else
+            <wa-select v-if="!isAndroidApp"
                 :value.prop="userTurnSound"
                 @change="onUserTurnSoundChange"
                 size="small"
@@ -378,15 +376,15 @@ defineExpose({ sync })
                     @change="onUserTurnBrowserChange"
                     size="small"
                 >{{ notificationLabel }}</wa-switch>
+                <button v-if="isAndroidApp" type="button" class="notif-android-sound-settings"
+                    @click="openSoundSettings('user_turn')">{{ $t('settings.notifications.android.soundSettings') }}</button>
             </div>
         </div>
 
         <!-- Agent needs your attention -->
         <div class="setting-group">
             <label class="setting-group-label">{{ $t('settings.notifications.attention.label') }}</label>
-            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
-                @click="openSoundSettings('pending_request')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
-            <wa-select v-else
+            <wa-select v-if="!isAndroidApp"
                 :value.prop="pendingRequestSound"
                 @change="onPendingRequestSoundChange"
                 size="small"
@@ -406,6 +404,8 @@ defineExpose({ sync })
                     @change="onPendingRequestBrowserChange"
                     size="small"
                 >{{ notificationLabel }}</wa-switch>
+                <button v-if="isAndroidApp" type="button" class="notif-android-sound-settings"
+                    @click="openSoundSettings('pending_request')">{{ $t('settings.notifications.android.soundSettings') }}</button>
             </div>
         </div>
 
@@ -417,9 +417,7 @@ defineExpose({ sync })
                 @change="onNotifyOnExtraUsageStartChange"
                 size="small"
             >{{ $t('settings.usage.extraUsageNotification.notify') }}</wa-switch>
-            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
-                @click="openSoundSettings('extra_usage')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
-            <wa-select v-else
+            <wa-select v-if="!isAndroidApp"
                 :value.prop="extraUsageStartSound"
                 @change="onExtraUsageStartSoundChange"
                 size="small"
@@ -439,6 +437,8 @@ defineExpose({ sync })
                     @change="onExtraUsageStartBrowserChange"
                     size="small"
                 >{{ notificationLabel }}</wa-switch>
+                <button v-if="isAndroidApp" type="button" class="notif-android-sound-settings"
+                    @click="openSoundSettings('extra_usage')">{{ $t('settings.notifications.android.soundSettings') }}</button>
             </div>
             <p class="setting-group-hint">
                 {{ $t('settings.notifications.extraUsage.hint') }}
@@ -448,9 +448,7 @@ defineExpose({ sync })
         <!-- A peer needs you -->
         <div class="setting-group">
             <label class="setting-group-label">{{ $t('settings.notifications.peer.label') }}</label>
-            <wa-button v-if="isAndroidApp" class="notif-android-sound-settings" size="small" appearance="outlined"
-                @click="openSoundSettings('peer')">{{ $t('settings.notifications.android.soundSettings') }}</wa-button>
-            <wa-select v-else
+            <wa-select v-if="!isAndroidApp"
                 :value.prop="peerSound"
                 @change="onPeerSoundChange"
                 size="small"
@@ -470,6 +468,8 @@ defineExpose({ sync })
                     @change="onPeerBrowserChange"
                     size="small"
                 >{{ notificationLabel }}</wa-switch>
+                <button v-if="isAndroidApp" type="button" class="notif-android-sound-settings"
+                    @click="openSoundSettings('peer')">{{ $t('settings.notifications.android.soundSettings') }}</button>
             </div>
             <p class="setting-group-hint">
                 {{ $t('settings.notifications.peer.hint') }}
@@ -615,6 +615,34 @@ defineExpose({ sync })
 
 .notif-permission-row {
     padding-bottom: var(--wa-space-2xs);
+}
+
+.notif-browser-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+
+    wa-switch {
+        flex-shrink: 0;
+    }
+}
+
+.notif-android-sound-settings {
+    margin-left: auto;
+    min-width: 0;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--wa-font-size-xs);
+    line-height: 1.2;
+    text-align: right;
+    color: var(--wa-color-brand-60);
+
+    &:hover {
+        text-decoration: underline;
+    }
 }
 
 .notif-browser-row,
