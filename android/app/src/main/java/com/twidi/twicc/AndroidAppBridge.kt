@@ -43,7 +43,7 @@ class AndroidAppBridge(
                 return reply(state = selection.state.bridgeState(), uiMessage = selection.error)
             }
             if (wire in TTS_COMMANDS) return nativeTts?.let { reply(state = it(wire, request)) } ?: reply(uiMessage = UiMessage("android.speech.errors.updateRequired"))
-            if (wire in setOf("push.state", "push.preferences", "push.configure", "push.permission", "push.remove")) return androidPush?.let { reply(state = it(wire, request)) }
+            if (wire in setOf("push.state", "push.preferences", "push.configure", "push.permission", "push.remove", "push.soundSettings", "push.prepareSounds")) return androidPush?.let { reply(state = it(wire, request)) }
                 ?: reply(uiMessage = UiMessage("android.push.errors.updateApp"))
             if (wire == "navigation.acknowledge") {
                 val navigationId = request.opt("navigationId") as? String ?: return invalid("Missing navigation ID")

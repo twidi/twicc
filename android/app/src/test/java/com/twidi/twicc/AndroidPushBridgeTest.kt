@@ -31,23 +31,50 @@ class AndroidPushBridgeTest {
             assertEquals("key", request.getString("vapid"))
             JSONObject().put("status", "registering")
         })
-        for (command in listOf("push.configure", "push.state", "push.preferences", "push.permission", "push.remove", "push.unknown")) {
+        for (command in listOf("push.configure", "push.state", "push.preferences", "push.permission", "push.remove", "push.soundSettings", "push.prepareSounds", "push.unknown")) {
             val result = JSONObject(bridge.receive(JSONObject().put("protocol", 1).put("id", "request")
                 .put("command", command).put("vapid", "key").toString()))
             assertEquals(command != "push.unknown", result.getBoolean("ok"))
             if (result.getBoolean("ok")) assertEquals("registering", result.getJSONObject("state").getString("status"))
         }
-        assertEquals(listOf("push.configure", "push.state", "push.preferences", "push.permission", "push.remove"), received)
+        assertEquals(listOf("push.configure", "push.state", "push.preferences", "push.permission", "push.remove", "push.soundSettings", "push.prepareSounds"), received)
     }
 
     @Test fun payloadCapabilityStaysSeparateFromBridgeProtocol() {
-        val bridge = AndroidAppBridge({ JSONObject().put("push", JSONObject().put("payloadVersion", 2).put("status", "update_server")) },
+        val bridge = AndroidAppBridge({ JSONObject().put("push", JSONObject().put("payloadVersion", 2).put("status", "update_server").put("soundLibrary", "preparing")) },
             { _, _ -> }, { _, _ -> null })
         val reply = JSONObject(bridge.receive("""{"protocol":1,"id":"state","command":"getState"}"""))
         assertTrue(reply.getBoolean("ok"))
         assertEquals(1, reply.getInt("protocol"))
         assertEquals(2, reply.getJSONObject("state").getJSONObject("push").getInt("payloadVersion"))
         assertEquals("update_server", reply.getJSONObject("state").getJSONObject("push").getString("status"))
+        assertEquals("preparing", reply.getJSONObject("state").getJSONObject("push").getString("soundLibrary"))
+    }
+
+
+    @Test fun soundCommandsWithoutNativePushSupportReturnLocalizedErrors() {
+        val bridge = AndroidAppBridge({ JSONObject() }, { _, _ -> }, { _, _ -> null })
+        for (command in listOf("push.soundSettings", "push.prepareSounds")) {
+            val reply = JSONObject(bridge.receive(JSONObject().put("protocol", 1).put("id", "sounds")
+                .put("command", command).toString()))
+            assertFalse(reply.getBoolean("ok"))
+            assertEquals("android.push.errors.updateApp", reply.getJSONObject("ui_message").getString("key"))
+        }
+    }
+
+    @Test fun heartbeatCarriesSoundPublicationStateWithoutChangingThePushStatus() {
+        for (soundLibrary in listOf("preparing", "ready", "error")) {
+            val bridge = AndroidAppBridge({ JSONObject().put("push", JSONObject().put("payloadVersion", 2)
+                .put("status", "idle").put("permission", "denied").put("soundLibrary", soundLibrary)) },
+                { _, _ -> }, { _, _ -> null })
+            val reply = JSONObject(bridge.receive("""{"protocol":1,"id":"heartbeat","command":"menuVisibility","owner":"menu","visible":true}"""))
+            assertEquals(1, reply.getInt("protocol"))
+            val push = reply.getJSONObject("state").getJSONObject("push")
+            assertEquals(2, push.getInt("payloadVersion"))
+            assertEquals("idle", push.getString("status"))
+            assertEquals("denied", push.getString("permission"))
+            assertEquals(soundLibrary, push.getString("soundLibrary"))
+        }
     }
 
     @Test fun probeCannotUseTheLargeSpeechFrameAllowance() {

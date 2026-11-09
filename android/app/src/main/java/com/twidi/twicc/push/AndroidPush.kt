@@ -13,6 +13,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -149,17 +150,30 @@ object AndroidPush {
             .setBackoffCriteria(30_000, JobInfo.BACKOFF_POLICY_EXPONENTIAL).setMinimumLatency(delayMillis).setPersisted(true).build())
     }
     fun channel(kind: String) = "twicc-$kind"
+    private val categories = mapOf(
+        "user_turn" to ("android.push.channels.finished" to "chime"),
+        "pending_request" to ("android.push.channels.attention" to "signal"),
+        "extra_usage" to ("settings.notifications.targets.extraUsage" to "sweep"),
+        "peer" to ("android.push.channels.peer" to "ripple"),
+    )
+    /** Build defaults only for a category that does not exist yet. Never persist over an existing channel. */
+    internal fun newNotificationChannel(context: Context, kind: String): NotificationChannel {
+        val (key, sound) = categories.getValue(kind)
+        return NotificationChannel(channel(kind), NativeMessages.text(context, UiMessage(key)),
+            NotificationManager.IMPORTANCE_DEFAULT).apply {
+            setSound(NotificationSounds.uri(context, sound), AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION).build())
+        }
+    }
     fun manager(context: Context): NotificationManager = context.getSystemService(NotificationManager::class.java).apply {
-        mapOf("user_turn" to "android.push.channels.finished", "pending_request" to "android.push.channels.attention",
-            "extra_usage" to "settings.notifications.targets.extraUsage", "peer" to "android.push.channels.peer").forEach { (kind, key) ->
+        categories.forEach { (kind, definition) ->
             val existing = getNotificationChannel(channel(kind))
             if (existing != null) {
                 // Reuse the channel object so its importance and user settings stay intact.
-                existing.name = NativeMessages.text(context, UiMessage(key))
+                existing.name = NativeMessages.text(context, UiMessage(definition.first))
                 createNotificationChannel(existing)
             } else {
-                createNotificationChannel(NotificationChannel(channel(kind), NativeMessages.text(context, UiMessage(key)),
-                    NotificationManager.IMPORTANCE_DEFAULT))
+                createNotificationChannel(newNotificationChannel(context, kind))
             }
         }
         // Remove the temporary channel from installations that ran the transport probe.
@@ -185,7 +199,7 @@ object AndroidPush {
             if (it == "ready" && value.optInt("notification_payload_version") != 2) "update_server" else it
         }
         return JSONObject().put("payloadVersion", 2).put("device_id", instance.id).put("name", "${Build.MODEL} · ${instance.name}".take(160))
-            .put("permission", permission(context)).put("status", status)
+            .put("permission", permission(context)).put("status", status).put("soundLibrary", NotificationSounds.state())
     }
     fun choices(value: JSONObject): JSONObject {
         require(value.keys().asSequence().toSet() == PushPayload.kinds && value.keys().asSequence().toSet().all { value.opt(it) is Boolean })
@@ -216,6 +230,8 @@ object AndroidPush {
     fun receive(activity: Activity, instance: Instance, command: String, request: JSONObject): JSONObject {
         when (command) {
             "push.state" -> Unit
+            "push.soundSettings" -> NotificationSettingsLauncher.open(activity, request.getString("kind"))
+            "push.prepareSounds" -> NotificationSounds.publishAsync(activity)
             "push.permission" -> {
                 if (permission(activity) == "default" && Build.VERSION.SDK_INT >= 33) {
                     preferences(activity).edit().putBoolean("permissionAsked", true).commit()
