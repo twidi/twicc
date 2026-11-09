@@ -13,50 +13,7 @@ There are two kinds of configs:
 
 ## Read new timeline messages
 
-Use the **speaker button beside Timeline** to read new assistant messages
-automatically. An available text-to-speech config is required. The pressed
-button means that this timeline listens for new messages.
-
-- Listening uses the timeline's scope: all projects, a workspace, a project,
-  or one worktree. Muted sessions are hidden and skipped by default. Select
-  **Filters → Show muted sessions** to display and read them in that timeline.
-  Other display filters, including the selected view and session filter, do
-  not affect listening.
-- Turning off **Show muted sessions** removes their queued messages. The
-  reading already selected can finish. Turning it on does not replay messages
-  skipped while it was off. Manual reading remains available in muted sessions.
-- Listening continues when you navigate to another page, switch application
-  tabs, or open a session. Only one timeline listens per browser tab.
-- The timeline button in the rail shows a small speaker while listening is
-  enabled. Its label identifies the listening timeline. Click it to open
-  that timeline without changing listening.
-- Messages must have a native message date **strictly after the activation
-  click**. Existing history does not play when you enable listening.
-- Late arrivals remain eligible up to **five seconds** behind the latest
-  message whose reading starts. Exactly five seconds remains eligible.
-  Accepted messages stay queued until their turn.
-- Manual reading has priority. Automatic reading waits while a manual request
-  or playback runs. The rail's timeline speaker stays visible during this wait
-  and between messages.
-- Click the pressed timeline speaker to disable listening and clear its queue.
-  This stops its automatic reading and leaves unrelated manual reading running.
-  Enabling another timeline clears the previous timeline's queue.
-- The existing rail **Stop reading aloud** button and the message's **Stop
-  reading** button stop the current reading. During automatic reading, they
-  also disable listening and clear its queue.
-- Listening and its queue stay in memory. A page reload clears them.
-
-Automatic reading uses the active text-to-speech config. In **Settings →
-Summaries**, **Read summaries in timeline speech** controls automatic summaries.
-It is on by default. Eligible messages contain at least **1,000 content
-characters**. Shorter messages use the existing text adaptation setting.
-Project and session announcements keep their usual wording.
-
-TwiCC prepares up to two queued text summaries while another reading plays.
-It generates audio only when a message reaches its turn. A selected reading
-keeps its settings until it finishes. Turning the switch off releases unneeded
-preparation and makes pending messages use their originals. A failed summary
-shows an error and skips that message. Listening continues with the next message.
+The **speaker button beside Timeline** reads new assistant messages aloud as they arrive. Scope, queue, summaries, and what happens when you leave the page or the app are on their own page: [Timeline reading](help/timeline-speech).
 
 ## Summarize a message or selection
 

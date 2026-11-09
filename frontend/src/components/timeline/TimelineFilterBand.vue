@@ -20,6 +20,7 @@ import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { getProviderHelpers } from '../../providers'
 import { AUTHORS, FAMILIES, PROVIDERS, VIEWS, activeCount, groupPills } from '../../utils/timeline/filters'
 import { createPanelController, panelMaxHeight } from '../../utils/timeline/panelController'
+import HelpIconButton from '../help/HelpIconButton.vue'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
@@ -320,6 +321,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                     :disabled="!tts.available && !listening"
                     @click="toggleSpeech"
                 ><wa-icon name="volume-up" aria-hidden="true"></wa-icon></button>
+                <HelpIconButton help-key="timeline-speech" :label="$t('help.timelineSpeech')" />
                 <button
                     v-if="listening && speech.suspended"
                     type="button"

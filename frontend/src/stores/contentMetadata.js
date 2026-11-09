@@ -30,6 +30,9 @@ const CONTENT_METADATA = {
         "text-to-speech": {
             "titleKey": "help.entries.textToSpeech.title"
         },
+        "timeline-speech": {
+            "titleKey": "help.entries.timelineSpeech.title"
+        },
         "what-are-artifacts": {
             "titleKey": "help.entries.whatAreArtifacts.title"
         },

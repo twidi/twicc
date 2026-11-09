@@ -18,6 +18,7 @@ const SegmentedControl = compileComponent(new URL('../ui/SegmentedControl.vue', 
 })
 
 // Claude Code names itself; the other provider has no helpers: its raw key is its label.
+const HelpIconButton = { props: ['helpKey', 'label'], setup: (props) => () => Vue.h('button', { class: 'help-icon-button', 'data-help-key': props.helpKey, 'aria-label': props.label }) }
 const ProviderIcon = { props: ['provider'], setup: (props) => () => Vue.h('i', { 'data-provider': props.provider }) }
 const providers = { getProviderHelpers: (provider) => (provider === 'claude_code' ? { constructor: { serviceProductLabel: 'Claude Code' } } : null) }
 
@@ -164,6 +165,7 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
         '../../utils/timeline/panelController': spiedController,
         '../ui/SegmentedControl.vue': SegmentedControl,
         '../ui/ProviderIcon.vue': ProviderIcon,
+        '../help/HelpIconButton.vue': HelpIconButton,
     })
     const focusLog = []
     const blurLog = []
@@ -296,6 +298,15 @@ test('the native speech toggle follows the title and exposes its action and pres
     speech.activePageId = 'p2'
     await flush()
     assert.equal(button.props['aria-pressed'], false, 'another timeline listens independently')
+})
+
+test('the timeline speech help button sits right after the speech toggle', async (t) => {
+    const { root } = await mount(t)
+    const [heading] = byClass(root, 'timeline-filter-heading')
+    const [, toggle, help] = elementsOf(heading)
+    assert.equal(classesOf(toggle), 'timeline-speech-toggle')
+    assert.equal(help.props['data-help-key'], 'timeline-speech')
+    assert.equal(help.props['aria-label'], 'How does timeline reading work?')
 })
 
 test('speech activation calls enable synchronously with only pageId and ignores all display filters', async (t) => {
