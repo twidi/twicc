@@ -347,13 +347,23 @@ def test_topology_node_reports_active_cron_count(project):
         assert nodes["B"]["active_cron_count"] == 0
 
 
-def test_topology_cron_count_ignores_expired(project):
+def test_topology_cron_count_keeps_recurring_past_the_cli_window(project):
     root = make_session(project, "A", title="Root")
     make_recurring_cron(
-        "cron-expired",
+        "cron-old",
         "A",
         created_at=timezone.now() - SessionCron.CLAUDE_RECURRING_MAX_AGE - timedelta(hours=1),
     )
+
+    data = build_topology(root, include_processes=False)
+
+    assert data["nodes"][0]["active_cron_count"] == 1
+
+
+def test_topology_cron_count_ignores_one_shot_past_its_fire_time(project):
+    root = make_session(project, "A", title="Root")
+    cron = make_recurring_cron("cron-one-shot", "A", created_at=timezone.now() - timedelta(hours=2))
+    SessionCron.objects.filter(pk=cron.pk).update(recurring=False, next_fire=timezone.now() - timedelta(hours=1))
 
     data = build_topology(root, include_processes=False)
 

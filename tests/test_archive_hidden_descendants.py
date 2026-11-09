@@ -217,10 +217,10 @@ def test_process_row_of_another_backend_is_not_barrier(project, target):
     assert select_hidden_descendants(target.id, set()) == ["stale"]
 
 
-def test_expired_cron_is_not_barrier(project, target):
-    with_cron = hidden(project, "expired", target)
+def test_recurring_cron_past_the_cli_window_is_barrier(project, target):
+    with_cron = hidden(project, "old-cron", target)
     make_cron(with_cron, created_at=timezone.now() - SessionCron.CLAUDE_RECURRING_MAX_AGE - timedelta(days=1))
-    assert select_hidden_descendants(target.id, set()) == ["expired"]
+    assert select_hidden_descendants(target.id, set()) == []
 
 
 # --- Walk robustness.

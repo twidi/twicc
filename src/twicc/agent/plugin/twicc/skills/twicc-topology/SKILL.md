@@ -129,7 +129,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 - `nodes[].id` — same value as `nodes[].session.id`, exposed for direct indexing.
 - `nodes[].session` — slim session payload by default (fields shown above); pass `--full` to get the full serializer payload for every node — agent settings as stored, `artifacts_dir` as the serializer reports it (always the session's artifacts folder, even while empty), none of the CLI-added keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, `question_widget`) — minus its `process` block, which lives at `nodes[].process` here. With `--full`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
 - `nodes[].session.directory` — resolved working directory: `git_directory` when known, else `cwd`. Slim payload only.
-- `nodes[].active_cron_count` — non-expired crons of this session, `0` when it has none. Always present, with or without `--no-processes`.
+- `nodes[].active_cron_count` — crons of this session that are still alive for TwiCC, `0` when it has none: every recurring cron at any age (TwiCC recreates it past the 7-day window), and one-shot crons before their fire time. Always present, with or without `--no-processes`.
 - `nodes[].direct_child_count` — immediate spawned children.
 - `nodes[].descendant_count` — spawned descendants across all levels.
 - `nodes[].subtree_total_cost` — sum of `session.total_cost` for this node and all descendants, or `null` when none has cost.
