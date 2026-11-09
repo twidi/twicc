@@ -99,6 +99,8 @@ class NotificationSoundsTest {
         val before = rows()
         assertEquals(10, before.size)
         assertCatalog("en", before)
+        val beforeChime = before.single { it.relativePath == "Notifications/TwiCC/chime/" }
+        val beforeChimeBytes = resolver.openInputStream(beforeChime.uri)!!.use { it.readBytes() }
         // Queue more language changes while the first reconciliation can still be running.
         for (locale in listOf("de", "es", "fr")) {
             select(locale)
@@ -108,6 +110,13 @@ class NotificationSoundsTest {
         val localized = rows()
         assertEquals(before.map { it.uri }, localized.map { it.uri })
         assertCatalog("fr", localized)
+        val localizedChime = localized.single { it.relativePath == beforeChime.relativePath }
+        assertNotEquals(beforeChime.name, localizedChime.name)
+        assertNotEquals(beforeChime.title, localizedChime.title)
+        assertEquals(NotificationSounds.title(context, "chime", "fr"), localizedChime.title)
+        assertEquals(beforeChime.uri, localizedChime.uri)
+        assertArrayEquals(beforeChimeBytes, resolver.openInputStream(localizedChime.uri)!!.use { it.readBytes() })
+        assertEquals("ready", NotificationSounds.state())
         // An explicit scanner pass must not restore an old, embedded WAV title.
         localized.forEach { row ->
             val done = CountDownLatch(1)

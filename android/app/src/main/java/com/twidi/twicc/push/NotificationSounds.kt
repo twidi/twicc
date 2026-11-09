@@ -152,10 +152,16 @@ internal class NotificationSoundPublisher(
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }) ?: throw IOException("Cannot insert sound row")
         val rewrite = existing == null || existing.pending || !matchesAsset(target, sound)
-        if (rewrite) {
-            update(target, ContentValues(values).apply { put(MediaStore.MediaColumns.IS_PENDING, 1) })
-            writeAsset(sound.id, target)
-            check(matchesAsset(target, sound)) { "Incomplete sound write" }
+        val refresh = rewrite || existing.name != name || existing.title != name.removeSuffix(".wav")
+        if (refresh) {
+            update(target, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 1) })
+            if (rewrite) {
+                writeAsset(sound.id, target)
+                check(matchesAsset(target, sound)) { "Incomplete sound write" }
+            }
+            // API 29 permits scanner-owned metadata changes only after the row is already pending.
+            // Invalidate cached mtime so a same-size rename cannot skip the next scan.
+            update(target, ContentValues(values).apply { putNull(MediaStore.MediaColumns.DATE_MODIFIED) })
             update(target, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) })
         } else {
             update(target, values)
