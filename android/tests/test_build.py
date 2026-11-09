@@ -38,6 +38,9 @@ class BuildScriptTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.project = self.root / "android project"
         self.project.mkdir()
+        (self.project / "app").mkdir()
+        (self.project / "app/build.gradle.kts").write_text(
+            'versionCode = 30\nversionName = "0.5.19"\n')
         shutil.copyfile(BUILD_SCRIPT, self.project / "build.sh")
         (self.project / "gradlew").write_text(GRADLE_STUB)
         (self.project / "gradlew").chmod(0o755)
@@ -72,7 +75,7 @@ class BuildScriptTest(unittest.TestCase):
                         result = self.run_build(engine, profile, *flags)
                         self.assertEqual(result.returncode, 0, result.stderr)
                         output = self.project / f"dist/{engine}/{profile}/{mode}"
-                        apk = output / f"app-{engine}-{profile}-{mode}.apk"
+                        apk = output / f"app-{engine}-{profile}-v0.5.19-30-{mode}.apk"
                         self.assertEqual(apk.read_text(), f"{engine}/{profile}/{mode}")
                         self.assertEqual(list(output.glob("*.apk")), [apk])
                         digest = hashlib.sha256(apk.read_bytes()).hexdigest()
@@ -89,6 +92,33 @@ class BuildScriptTest(unittest.TestCase):
         for apk in apks:
             digest = hashlib.sha256(apk.read_bytes()).hexdigest()
             self.assertEqual((apk.parent / "SHA256SUMS").read_text(), f"{digest}  {apk.name}\n")
+
+    def test_success_removes_old_apks_only_in_selected_output(self):
+        output = self.project / "dist/gecko/64/release"
+        output.mkdir(parents=True)
+        for name in ("app-gecko-64-release.apk", "app-gecko-64-v0.5.18-29-release.apk"):
+            (output / name).write_bytes(b"old APK")
+        note = output / "notes.txt"
+        note.write_text("keep")
+        other = self.project / "dist/gecko/32/release/old.apk"
+        other.parent.mkdir(parents=True)
+        other.write_bytes(b"other profile")
+        result = self.run_build("gecko", "64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([p.name for p in output.glob("*.apk")],
+                         ["app-gecko-64-v0.5.19-30-release.apk"])
+        self.assertEqual(note.read_text(), "keep")
+        self.assertEqual(other.read_bytes(), b"other profile")
+
+    def test_failed_build_keeps_previously_published_apk(self):
+        output = self.project / "dist/gecko/64/release"
+        output.mkdir(parents=True)
+        old = output / "app-gecko-64-v0.5.18-29-release.apk"
+        old.write_bytes(b"previous release")
+        self.environment["FAIL_BUILD"] = "1"
+        result = self.run_build("gecko", "64")
+        self.assertEqual(result.returncode, 17)
+        self.assertEqual(old.read_bytes(), b"previous release")
 
     def test_missing_invalid_or_removed_arguments_fail_before_gradle(self):
         for arguments in [(), ("gecko",), ("other", "64"), ("gecko", "arm64-v8a"),

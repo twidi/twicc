@@ -203,19 +203,23 @@ Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
 
 The selected output directory is `android/dist/<engine>/<profile>/<mode>/`, where
-`<mode>` is `release` or `debug`. It contains `app-<engine>-<profile>-<mode>.apk`
+`<mode>` is `release` or `debug`. It contains `app-<engine>-<profile>-v<versionName>-<versionCode>-<mode>.apk`
 and `SHA256SUMS` for that APK only. Engines, profiles, and modes have separate
 directories. The script copies the current APK by its exact name;
 it does not collect stale APKs from previous Gradle builds.
+The version comes from `app/build.gradle.kts`. After successful publication,
+the script removes older APK files from the selected output directory only.
+A failed build keeps the previous publication. Other targets and session
+artifacts are not cleaned by this script.
 
 Gecko APKs are much larger because they include the browser engine. Transfer
 the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/64/release/app-gecko-64-release.apk
+adb install -r android/dist/gecko/64/release/app-gecko-64-v0.5.19-30-release.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/64/release/app-webview-64-release.apk
+adb install -r android/dist/webview/64/release/app-webview-64-v0.5.19-30-release.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to

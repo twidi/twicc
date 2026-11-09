@@ -43,9 +43,17 @@ mkdir -p -- "$ANDROID_USER_HOME"
 chmod 700 "$ANDROID_USER_HOME"
 ./gradlew --no-daemon "-PtargetProfile=$profile" :app:verifyAndroidI18n :policy:test ":app:test${variant}${build_type}UnitTest" ":app:lint${variant}${build_type}" ":app:assemble${variant}${build_type}"
 output="$project_dir/dist/$engine/$profile/$mode"
-apk_name="app-$engine-$profile-$mode.apk"
+version_name=$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)"[[:space:]]*$/\1/p' app/build.gradle.kts)
+version_code=$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+)[[:space:]]*$/\1/p' app/build.gradle.kts)
+if [[ ! $version_name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || ! $version_code =~ ^[0-9]+$ ]]; then
+    echo 'Cannot read a safe versionName and versionCode from app/build.gradle.kts.' >&2
+    exit 1
+fi
+apk_name="app-$engine-$profile-v$version_name-$version_code-$mode.apk"
 mkdir -p -- "$output"
 cp -- "$project_dir/app/build/outputs/apk/$engine/$mode/app-$engine-$mode.apk" "$output/$apk_name"
 (cd -- "$output" && sha256sum -- "$apk_name" > SHA256SUMS)
+# Remove older publications only after the new APK and checksum exist.
+find "$output" -maxdepth 1 -type f -name '*.apk' ! -name "$apk_name" -delete
 if [[ -f "$ANDROID_USER_HOME/debug.keystore" ]]; then chmod 600 "$ANDROID_USER_HOME/debug.keystore"; fi
 printf '\nAPK: %s/%s\nChecksums: %s/SHA256SUMS\n' "$output" "$apk_name" "$output"
