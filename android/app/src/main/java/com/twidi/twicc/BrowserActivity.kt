@@ -40,6 +40,7 @@ import com.twidi.twicc.platform.DownloadSource
 import com.twidi.twicc.platform.ExternalLinks
 import com.twidi.twicc.platform.NativeRequests
 import com.twidi.twicc.push.AndroidPush
+import com.twidi.twicc.push.NotificationSounds
 
 /** Remote web client with a small, origin-scoped app command bridge. */
 class BrowserActivity : Activity() {
@@ -120,6 +121,7 @@ class BrowserActivity : Activity() {
             // Store observers hold a shared lock. Post without waiting for the activity thread.
             ownerHandler.post {
                 if (languageObserver != null && !isFinishing && !isDestroyed) {
+                    NotificationSounds.publishAsync(this)
                     refreshNativeUi()
                     browser?.notifyAppStateChanged()
                 }
@@ -507,6 +509,7 @@ class BrowserActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        NotificationSounds.publishAsync(this)
         AndroidPush.reconcilePayloadSupport(this)
         foreground = true
         refreshNativeUi()

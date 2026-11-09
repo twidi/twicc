@@ -4528,6 +4528,7 @@
     "android.speech.errors.audioRequest": "TTS-Anfrage fehlgeschlagen ({status})",
     "android.speech.errors.audioEmpty": "TTS-Audio ist leer",
     "android.speech.errors.audioFormat": "Nicht unterstütztes Audioformat für Sprachausgabe",
+    "android.push.soundTitle": "TwiCC — {sound}",
     "android.push.channels.finished": "Abgeschlossene Arbeit",
     "android.push.channels.attention": "Fragen und Genehmigungen",
     "android.push.channels.peer": "Peer-Nachrichten und -Anfragen",

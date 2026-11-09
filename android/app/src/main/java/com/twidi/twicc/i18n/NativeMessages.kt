@@ -11,8 +11,8 @@ object NativeMessages {
     @Volatile var localeProvider: (Context) -> String = { AndroidLanguageStore(it).read().locale }
     @Volatile private var packagedRenderer: MessageRenderer? = null
 
-    fun text(context: Context, message: UiMessage): String =
-        text(renderer(context), localeProvider(context), message)
+    fun text(context: Context, message: UiMessage, locale: String = localeProvider(context)): String =
+        text(renderer(context), locale, message)
 
     /** Nullable rendering lets a caller fall back an entire presentation together. */
     fun render(context: Context, message: UiMessage): String? =

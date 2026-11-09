@@ -4,6 +4,7 @@ import com.twidi.twicc.browser.EngineProvider
 import com.twidi.twicc.tts.TtsService
 import com.twidi.twicc.tts.TtsNotification
 import com.twidi.twicc.push.AndroidPush
+import com.twidi.twicc.push.NotificationSounds
 import android.app.Activity
 import android.app.Dialog
 import android.content.Intent
@@ -44,6 +45,7 @@ class MainActivity : Activity() {
         languageObserver = AndroidLanguageStore(this).observe {
             ownerHandler.post {
                 if (languageObserver != null && !isFinishing && !isDestroyed) {
+                    NotificationSounds.publishAsync(this)
                     ui.refreshMessages()
                     sheet?.window?.decorView?.refreshNativeMessages()
                 }
@@ -116,6 +118,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        NotificationSounds.publishAsync(this)
         AndroidPush.reconcilePayloadSupport(this)
         render()
         sheet?.window?.decorView?.refreshNativeMessages()

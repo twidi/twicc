@@ -22,6 +22,10 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
+        <provider
+            android:name=".push.NotificationSoundProvider"
+            android:authorities="${applicationId}.notification-sounds"
+            android:exported="true" />
         <service android:name=".push.PushRegistrationJob" android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE" />
         <service android:name=".push.AndroidPushService" android:exported="false">
             <intent-filter>

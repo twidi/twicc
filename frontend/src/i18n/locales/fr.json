@@ -4528,6 +4528,7 @@
     "android.speech.errors.audioRequest": "Échec de la requête TTS ({status})",
     "android.speech.errors.audioEmpty": "L’audio TTS est vide",
     "android.speech.errors.audioFormat": "Format audio de lecture non pris en charge",
+    "android.push.soundTitle": "TwiCC — {sound}",
     "android.push.channels.finished": "Travail terminé",
     "android.push.channels.attention": "Questions et approbations",
     "android.push.channels.peer": "Messages et demandes des pairs",

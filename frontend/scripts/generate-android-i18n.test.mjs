@@ -7,6 +7,21 @@ const locales = ['en', 'de', 'es', 'fr', 'pt-BR']
 const manifest = (messages = { 'sample.message': {} }) => ({ format: 1, locales, messages })
 const catalogs = source => Object.fromEntries(locales.map(locale => [locale, { 'sample.message': source }]))
 
+test('packagesEveryNotificationSoundLabelAndLocalizedTitle', () => {
+    const selected = JSON.parse(readFileSync(new URL('../../android/i18n/messages.json', import.meta.url)))
+    const sounds = JSON.parse(readFileSync(new URL('../../android/app/src/main/assets/notification-sounds/manifest.json', import.meta.url)))
+    const shared = Object.fromEntries(locales.map(locale => [locale,
+        JSON.parse(readFileSync(new URL(`../src/i18n/locales/${locale}.json`, import.meta.url), 'utf8'))]))
+    for (const key of ['android.push.soundTitle', ...sounds.entries.map(({ id }) => `settings.notifications.sounds.${id}`)]) {
+        assert.ok(Object.hasOwn(selected.messages, key), `Missing native sound message: ${key}`)
+    }
+    const compiled = compileAndroidCatalog(shared, selected)
+    for (const locale of locales) {
+        assert.deepEqual(compiled.locales[locale]['android.push.soundTitle'].parameters, ['sound'])
+        assert.equal(shared[locale]['android.push.soundTitle'], 'TwiCC — {sound}')
+    }
+})
+
 test('compilesLiteralPipesAndNamedValues', () => {
     const source = `"{provider}" isn't {'|'} {'@'} {'{'} {'}'}\ncafé 😀 {'a\\'b'}`
     const input = catalogs(source)

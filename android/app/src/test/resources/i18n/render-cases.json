@@ -1487,6 +1487,179 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "android.push.soundTitle": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "TwiCC — "
+                },
+                {
+                  "type": "named",
+                  "name": "sound"
+                }
+              ],
+              "parameters": [
+                "sound"
+              ]
+            }
+          ],
+          "parameters": [
+            "sound"
+          ],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.beep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Beep"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.chime": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Chime"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ping": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ping"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.pop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Pop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.bloop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Bloop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.tink": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Tink"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.knock": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Knock"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.sweep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Sweep"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.signal": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Signal"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ripple": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ripple"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
         "android.push.channels.finished": {
           "forms": [
             {
@@ -6396,6 +6569,179 @@
                 {
                   "type": "text",
                   "value": "Nicht unterstütztes Audioformat für Sprachausgabe"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.push.soundTitle": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "TwiCC — "
+                },
+                {
+                  "type": "named",
+                  "name": "sound"
+                }
+              ],
+              "parameters": [
+                "sound"
+              ]
+            }
+          ],
+          "parameters": [
+            "sound"
+          ],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.beep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Beep"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.chime": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Glockenspiel"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ping": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ping"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.pop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Pop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.bloop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Bloop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.tink": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Tink"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.knock": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Klopfen"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.sweep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Sweep"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.signal": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Signal"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ripple": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Wellen"
                 }
               ],
               "parameters": []
@@ -11329,6 +11675,179 @@
                 {
                   "type": "text",
                   "value": "Formato de audio de lectura no compatible"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.push.soundTitle": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "TwiCC — "
+                },
+                {
+                  "type": "named",
+                  "name": "sound"
+                }
+              ],
+              "parameters": [
+                "sound"
+              ]
+            }
+          ],
+          "parameters": [
+            "sound"
+          ],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.beep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Beep"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.chime": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Chime"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ping": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ping"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.pop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Pop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.bloop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Bloop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.tink": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Tink"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.knock": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Knock"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.sweep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Sweep"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.signal": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Signal"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ripple": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ripple"
                 }
               ],
               "parameters": []
@@ -16290,6 +16809,179 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "android.push.soundTitle": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "TwiCC — "
+                },
+                {
+                  "type": "named",
+                  "name": "sound"
+                }
+              ],
+              "parameters": [
+                "sound"
+              ]
+            }
+          ],
+          "parameters": [
+            "sound"
+          ],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.beep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Beep"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.chime": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Carillon"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ping": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ping"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.pop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Pop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.bloop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Bloop"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.tink": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Tintement"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.knock": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Toc-toc"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.sweep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Balayage"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.signal": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Signal"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ripple": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ondulation"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
         "android.push.channels.finished": {
           "forms": [
             {
@@ -21219,6 +21911,179 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "android.push.soundTitle": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "TwiCC — "
+                },
+                {
+                  "type": "named",
+                  "name": "sound"
+                }
+              ],
+              "parameters": [
+                "sound"
+              ]
+            }
+          ],
+          "parameters": [
+            "sound"
+          ],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.beep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Bipe"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.chime": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Sino"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ping": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ping"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.pop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Estalo"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.bloop": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Bolha"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.tink": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Tilintar"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.knock": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Batida"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.sweep": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Varredura"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.signal": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Sinal"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "settings.notifications.sounds.ripple": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Ondulação"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
         "android.push.channels.finished": {
           "forms": [
             {
@@ -25414,6 +26279,96 @@
     {
       "locale": "en",
       "message": {
+        "key": "android.push.soundTitle",
+        "params": {
+          "sound": "sound: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "TwiCC — sound: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.beep",
+        "params": {}
+      },
+      "expected": "Beep"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.chime",
+        "params": {}
+      },
+      "expected": "Chime"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.ping",
+        "params": {}
+      },
+      "expected": "Ping"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.pop",
+        "params": {}
+      },
+      "expected": "Pop"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.bloop",
+        "params": {}
+      },
+      "expected": "Bloop"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.tink",
+        "params": {}
+      },
+      "expected": "Tink"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.knock",
+        "params": {}
+      },
+      "expected": "Knock"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.sweep",
+        "params": {}
+      },
+      "expected": "Sweep"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.signal",
+        "params": {}
+      },
+      "expected": "Signal"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "settings.notifications.sounds.ripple",
+        "params": {}
+      },
+      "expected": "Ripple"
+    },
+    {
+      "locale": "en",
+      "message": {
         "key": "android.push.channels.finished",
         "params": {}
       },
@@ -27990,6 +28945,96 @@
         "params": {}
       },
       "expected": "Nicht unterstütztes Audioformat für Sprachausgabe"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "android.push.soundTitle",
+        "params": {
+          "sound": "sound: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "TwiCC — sound: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.beep",
+        "params": {}
+      },
+      "expected": "Beep"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.chime",
+        "params": {}
+      },
+      "expected": "Glockenspiel"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.ping",
+        "params": {}
+      },
+      "expected": "Ping"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.pop",
+        "params": {}
+      },
+      "expected": "Pop"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.bloop",
+        "params": {}
+      },
+      "expected": "Bloop"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.tink",
+        "params": {}
+      },
+      "expected": "Tink"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.knock",
+        "params": {}
+      },
+      "expected": "Klopfen"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.sweep",
+        "params": {}
+      },
+      "expected": "Sweep"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.signal",
+        "params": {}
+      },
+      "expected": "Signal"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "settings.notifications.sounds.ripple",
+        "params": {}
+      },
+      "expected": "Wellen"
     },
     {
       "locale": "de",
@@ -30574,6 +31619,96 @@
     {
       "locale": "es",
       "message": {
+        "key": "android.push.soundTitle",
+        "params": {
+          "sound": "sound: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "TwiCC — sound: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.beep",
+        "params": {}
+      },
+      "expected": "Beep"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.chime",
+        "params": {}
+      },
+      "expected": "Chime"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.ping",
+        "params": {}
+      },
+      "expected": "Ping"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.pop",
+        "params": {}
+      },
+      "expected": "Pop"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.bloop",
+        "params": {}
+      },
+      "expected": "Bloop"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.tink",
+        "params": {}
+      },
+      "expected": "Tink"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.knock",
+        "params": {}
+      },
+      "expected": "Knock"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.sweep",
+        "params": {}
+      },
+      "expected": "Sweep"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.signal",
+        "params": {}
+      },
+      "expected": "Signal"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "settings.notifications.sounds.ripple",
+        "params": {}
+      },
+      "expected": "Ripple"
+    },
+    {
+      "locale": "es",
+      "message": {
         "key": "android.push.channels.finished",
         "params": {}
       },
@@ -33150,6 +34285,96 @@
         "params": {}
       },
       "expected": "Format audio de lecture non pris en charge"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "android.push.soundTitle",
+        "params": {
+          "sound": "sound: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "TwiCC — sound: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.beep",
+        "params": {}
+      },
+      "expected": "Beep"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.chime",
+        "params": {}
+      },
+      "expected": "Carillon"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.ping",
+        "params": {}
+      },
+      "expected": "Ping"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.pop",
+        "params": {}
+      },
+      "expected": "Pop"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.bloop",
+        "params": {}
+      },
+      "expected": "Bloop"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.tink",
+        "params": {}
+      },
+      "expected": "Tintement"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.knock",
+        "params": {}
+      },
+      "expected": "Toc-toc"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.sweep",
+        "params": {}
+      },
+      "expected": "Balayage"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.signal",
+        "params": {}
+      },
+      "expected": "Signal"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "settings.notifications.sounds.ripple",
+        "params": {}
+      },
+      "expected": "Ondulation"
     },
     {
       "locale": "fr",
@@ -36134,6 +37359,96 @@
         "params": {}
       },
       "expected": "Formato de áudio de leitura não compatível"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "android.push.soundTitle",
+        "params": {
+          "sound": "sound: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "TwiCC — sound: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.beep",
+        "params": {}
+      },
+      "expected": "Bipe"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.chime",
+        "params": {}
+      },
+      "expected": "Sino"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.ping",
+        "params": {}
+      },
+      "expected": "Ping"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.pop",
+        "params": {}
+      },
+      "expected": "Estalo"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.bloop",
+        "params": {}
+      },
+      "expected": "Bolha"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.tink",
+        "params": {}
+      },
+      "expected": "Tilintar"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.knock",
+        "params": {}
+      },
+      "expected": "Batida"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.sweep",
+        "params": {}
+      },
+      "expected": "Varredura"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.signal",
+        "params": {}
+      },
+      "expected": "Sinal"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "settings.notifications.sounds.ripple",
+        "params": {}
+      },
+      "expected": "Ondulação"
     },
     {
       "locale": "pt-BR",
