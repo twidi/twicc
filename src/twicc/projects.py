@@ -278,6 +278,28 @@ async def reresolve_project_git_root(project_id: str) -> tuple[bool, str | None]
     return (True, new)
 
 
+def project_directory_status(directory: str | None) -> str:
+    """The live state of a project directory: ``ok``, ``missing`` or ``blocked``.
+
+    Unlike ``Project.stale``, this is observed at call time and never stored.
+    ``missing`` means that the directory can be recreated. ``blocked`` means
+    that it is absent and cannot be: a file or a broken link holds the path, a
+    parent is not a directory, or the nearest existing parent refuses the
+    creation. A project whose directory is unknown is ``ok``: there is nothing
+    to recreate.
+    """
+    if not directory or os.path.isdir(directory):
+        return "ok"
+    if os.path.lexists(directory):
+        return "blocked"
+    ancestor = os.path.dirname(directory)
+    while not os.path.lexists(ancestor) and ancestor != os.path.dirname(ancestor):
+        ancestor = os.path.dirname(ancestor)
+    if os.path.isdir(ancestor) and os.access(ancestor, os.W_OK | os.X_OK):
+        return "missing"
+    return "blocked"
+
+
 async def refresh_project_directory_state(project_id: str) -> tuple[bool, Project | None]:
     """Action-time directory verifier behind the project dialog's "Re-check" button.
 

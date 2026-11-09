@@ -10,7 +10,8 @@ import { computed, watch, ref, reactive, shallowReactive, provide, nextTick, inj
 import { useRoute, useRouter } from 'vue-router'
 import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../../../utils/scrollerLoadWindow.js'
 import { useDataStore } from '../../../stores/data'
-import { DISPLAY_MODE } from '../../../constants'
+import { DISPLAY_MODE, PROCESS_STATE } from '../../../constants'
+import { createProjectDirectoryStatus, PROJECT_DIRECTORY_STATUS } from '../../../utils/projectDirectoryStatus.js'
 import { useSettingsStore } from '../../../stores/settings'
 import { toast } from '../../../composables/useToast'
 import { apiFetch } from '../../../utils/api'
@@ -286,6 +287,35 @@ const hasError = computed(() => store.didSessionItemsFailToLoad(props.sessionId)
 
 // Process state for this session (starting, assistant_turn, user_turn, dead)
 const processState = computed(() => store.getProcessState(props.sessionId))
+const hasLiveProcess = computed(() => !!processState.value && processState.value.state !== PROCESS_STATE.DEAD)
+
+// The working directory of a stopped main session, checked when the session is
+// displayed. A directory that disappears later is reported by the send itself.
+const projectDirectory = createProjectDirectoryStatus({
+    request: apiFetch,
+    onProjectUpdated: updated => store.updateProject(updated),
+})
+
+function checkProjectDirectory() {
+    const current = session.value
+    if (!current || props.parentSessionId || current.draft || isLaunchedEphemeral(current) || hasLiveProcess.value) {
+        projectDirectory.clear()
+        return
+    }
+    projectDirectory.check(props.projectId)
+}
+
+watch([() => props.sessionId, () => !!session.value], checkProjectDirectory, { immediate: true })
+onActivated(checkProjectDirectory)
+
+const directoryBannerStatus = computed(() => {
+    const status = projectDirectory.status.value
+    return status !== PROJECT_DIRECTORY_STATUS.OK && !hasLiveProcess.value && !props.parentSessionId ? status : null
+})
+const directoryRecreateError = computed(() => {
+    const payload = projectDirectory.recreateError.value
+    return payload ? resolveUiMessage(remoteUiMessage(payload, t('session.history.directoryRecreateFailed'))) : ''
+})
 
 // Pending requests for this session (tool approvals and/or ask-user questions).
 // The CLI can run multiple concurrency-safe tools in parallel, each with its own
@@ -2662,6 +2692,30 @@ defineExpose({
                     </div>
                 </wa-callout>
             </div>
+            <!-- Missing working directory (replaces message input for stopped main sessions) -->
+            <div v-else-if="directoryBannerStatus" v-footer-enter class="stale-banner">
+                <wa-callout variant="warning">
+                    <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                    <div class="stale-banner-content">
+                        <strong>{{ $t('session.history.directoryGone') }}</strong>
+                        <span class="directory-banner-path">{{ project?.directory }}</span>
+                        <span v-if="directoryBannerStatus === PROJECT_DIRECTORY_STATUS.BLOCKED">{{ $t('session.history.directoryBlocked') }}</span>
+                        <div v-else class="directory-banner-actions">
+                            <wa-button
+                                size="small"
+                                variant="brand"
+                                :loading="projectDirectory.recreating.value"
+                                :disabled="projectDirectory.recreating.value"
+                                @click="projectDirectory.recreate(projectId)"
+                            >
+                                <wa-icon slot="start" name="folder-plus"></wa-icon>
+                                {{ $t('session.history.directoryRecreate') }}
+                            </wa-button>
+                        </div>
+                        <span v-if="directoryRecreateError" class="directory-banner-error" role="alert">{{ directoryRecreateError }}</span>
+                    </div>
+                </wa-callout>
+            </div>
             <template v-else>
                 <!-- Current goal bar (topmost of the footer stack). Collapsed to a
                      single-line bar by default; opening it (read-only objectives
@@ -2969,6 +3023,20 @@ defineExpose({
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-2xs);
+}
+
+.directory-banner-path {
+    font-family: var(--wa-font-family-code);
+    font-size: var(--wa-font-size-s);
+    overflow-wrap: anywhere;
+}
+
+.directory-banner-actions {
+    margin-top: var(--wa-space-2xs);
+}
+
+.directory-banner-error {
+    color: var(--wa-color-danger-on-quiet);
 }
 
 .provider-disabled-banner {

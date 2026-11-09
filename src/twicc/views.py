@@ -492,6 +492,49 @@ async def project_refresh_directory(request, project_id):
     return JsonResponse(serialize_project(project))
 
 
+async def project_directory_status_view(request, project_id):
+    """GET /api/projects/<id>/directory-status/ - The live state of the project directory.
+
+    Read-only: it returns ``ok``, ``missing`` or ``blocked`` and stores nothing.
+    A session view calls it when it opens a session that has no process.
+    """
+    from twicc.projects import project_directory_status
+
+    if request.method != "GET":
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
+    project = await Project.objects.filter(id=project_id).afirst()
+    if project is None:
+        return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
+    status = await asyncio.to_thread(project_directory_status, project.directory)
+    return JsonResponse({"status": status})
+
+
+async def project_recreate_directory(request, project_id):
+    """POST /api/projects/<id>/recreate-directory/ - Recreate the missing project directory, empty.
+
+    The path is the stored project directory, never a client value. On success
+    it refreshes ``Project.stale`` and returns the serialised project.
+    """
+    from twicc.projects import refresh_project_directory_state
+
+    if request.method != "POST":
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
+    project = await Project.objects.filter(id=project_id).afirst()
+    if project is None or not project.directory:
+        return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
+    try:
+        await asyncio.to_thread(os.makedirs, project.directory, exist_ok=True)
+    except OSError as e:
+        return JsonResponse(
+            ui_error(f"Failed to create directory: {e}", 'backend.projects.directory_create_failed', {"detail": str(e)}),
+            status=400,
+        )
+    found, project = await refresh_project_directory_state(project_id)
+    if not found:
+        return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
+    return JsonResponse(serialize_project(project))
+
+
 # Worktree-creation error code -> HTTP status. The service is
 # transport-agnostic (it returns structured codes); the endpoint maps
 # them here. Anything unmapped is a 400 (client-side input fault).
