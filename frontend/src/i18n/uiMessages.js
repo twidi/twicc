@@ -1,6 +1,5 @@
 import { i18n } from './index.js'
-import manifest from '../../../android/i18n/messages.json' with { type: 'json' }
-import { formatMessageParams } from './messageDescriptors.js'
+import { resolveUiMessageWithComposer } from './uiMessageRenderer.js'
 
 // Store local UI messages without freezing their language. Never send these
 // descriptors to a provider or the backend. Keep external prose as plain text.
@@ -8,29 +7,9 @@ export function localUiMessage(key, params = {}, count) {
     return { type: 'local-ui-message', key, params, ...(count === undefined ? {} : { count }) }
 }
 
-export function resolveUiMessage(message, composer = i18n.global) {
-    if (message?.type === 'local-ui-message-list') {
-        return message.messages.map(item => resolveUiMessage(item, composer)).join(' — ')
-    }
-    if (message?.type !== 'local-ui-message') return message
-    const params = Object.fromEntries(Object.entries(message.params || {}).map(([key, value]) => [
-        key, value?.type === 'local-ui-message' || value?.type === 'local-ui-message-list'
-            ? resolveUiMessage(value, composer) : value,
-    ]))
-    const count = typeof params.count === 'number' ? params.count
-        : typeof params.n === 'number' ? params.n : message.count
-    for (const name of ['count', 'n']) {
-        if (params[name] == null && message.count !== undefined && manifest.messages[message.key]?.numberFormats?.[name]) {
-            params[name] = message.count
-        }
-    }
-    const formatted = formatMessageParams(message.key, params, composer.locale.value)
-    // Vue prioritizes numeric aliases over its plural argument. Keep their display
-    // values as text so the original numeric choice remains authoritative.
-    for (const name of ['count', 'n']) {
-        if (typeof formatted[name] === 'number') formatted[name] = String(formatted[name])
-    }
-    return composer.t(message.key, formatted, count === undefined ? {} : count)
+// Application messages always use the current global language.
+export function resolveUiMessage(message) {
+    return resolveUiMessageWithComposer(message, i18n.global)
 }
 
 // Keep the Error contract for callers and retain local message identity for caches.

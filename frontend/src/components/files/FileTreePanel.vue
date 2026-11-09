@@ -1442,7 +1442,7 @@ defineExpose({
                 <wa-spinner></wa-spinner>
             </div>
             <div v-else-if="!isSearching && error" class="panel-placeholder panel-error">
-                {{ resolveUiMessage(error, { t }) }}
+                {{ resolveUiMessage(error) }}
             </div>
             <div v-else-if="!isSearching && !rootPath && !hasExtraTree" class="panel-placeholder">
                 {{ mode === 'git' ? $t('files.search.noChanges') : $t('files.directories.none') }}

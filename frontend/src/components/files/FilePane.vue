@@ -1847,7 +1847,7 @@ function goToNextDiff() {
                 </template>
                 <template v-else-if="error">
                     <wa-callout variant="danger" size="small">
-                        {{ resolveUiMessage(error, { t }) }}
+                        {{ resolveUiMessage(error) }}
                     </wa-callout>
                     <wa-button v-if="tooLarge && canDownload" size="small" @click="handleDownload">
                         <wa-icon slot="start" name="download"></wa-icon>
@@ -1868,7 +1868,7 @@ function goToNextDiff() {
         <!-- Save error message (overlays above the editor) -->
         <div v-if="saveError" class="editor-overlay">
             <wa-callout variant="danger" size="small">
-                {{ resolveUiMessage(saveError, { t }) }}
+                {{ resolveUiMessage(saveError) }}
             </wa-callout>
         </div>
 

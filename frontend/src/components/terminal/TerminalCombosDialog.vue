@@ -449,12 +449,12 @@ defineExpose({ open, close })
 
             <!-- Warning (duplicate) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
-                {{ resolveUiMessage(warningMessage, { t }) }}
+                {{ resolveUiMessage(warningMessage) }}
             </wa-callout>
 
             <!-- Error -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ resolveUiMessage(errorMessage, { t }) }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </form>
 

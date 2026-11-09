@@ -131,7 +131,7 @@ defineExpose({ open, close })
                 ></wa-input>
             </div>
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ resolveUiMessage(errorMessage, { t }) }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </form>
         <div slot="footer" class="dialog-footer">

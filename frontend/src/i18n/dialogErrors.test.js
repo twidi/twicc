@@ -1,3 +1,4 @@
+import { resolveUiMessageWithComposer } from './uiMessageRenderer.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -25,7 +26,7 @@ function dialog(file, functions, state = {}) {
     const composer = createAppI18n('en').global
     const scope = {
         t: composer.t, localUiMessage, remoteUiMessage, remoteUiErrors, ...state,
-        resolveUiMessage: message => resolveUiMessage(message, composer),
+        resolveUiMessage: message => resolveUiMessageWithComposer(message, composer),
     }
     const handlers = runInNewContext(`${declarations.map(node => node.getText(ast)).join('\n')}; ({ ${functions.join(', ')} })`, scope)
     async function render(field) {
@@ -120,11 +121,11 @@ for (const file of ['peer/PeerComposeDialog.vue', 'peer/PeersManagerDialog.vue',
     test(`${file} translates request fallback while preserving backend errors`, () => {
         const view = dialog(file, ['errorText'])
         const message = view.errorText(null)
-        assert.equal(resolveUiMessage(message, view.composer), view.composer.t('peer.compose.errors.request'))
+        assert.equal(resolveUiMessageWithComposer(message, view.composer), view.composer.t('peer.compose.errors.request'))
         view.composer.locale.value = 'pt-BR'
-        assert.equal(resolveUiMessage(message, view.composer), view.composer.t('peer.compose.errors.request'))
+        assert.equal(resolveUiMessageWithComposer(message, view.composer), view.composer.t('peer.compose.errors.request'))
         assert.equal(view.errorText({ error: 'Backend prose' }), 'Backend prose')
-        assert.equal(resolveUiMessage(view.errorText({ errors: [{ message: 'Backend message' }, { code: 'provider_code' }] }), view.composer), 'Backend message — provider_code')
+        assert.equal(resolveUiMessageWithComposer(view.errorText({ errors: [{ message: 'Backend message' }, { code: 'provider_code' }] }), view.composer), 'Backend message — provider_code')
     })
 }
 
@@ -132,9 +133,9 @@ test('MCP clipboard errors retain a descriptor for the public store getter', asy
     const state = { store: { error: '' }, endpoint: field('https://mcp.example/mcp'), navigator: { clipboard: { writeText: async () => { throw new Error('Denied') } } } }
     const view = dialog('mcp/McpSettings.vue', ['copyEndpoint'], state)
     await view.copyEndpoint()
-    assert.equal(resolveUiMessage(state.store.error, view.composer), view.composer.t('mcp.settings.copyError'))
+    assert.equal(resolveUiMessageWithComposer(state.store.error, view.composer), view.composer.t('mcp.settings.copyError'))
     view.composer.locale.value = 'pt-BR'
-    assert.equal(resolveUiMessage(state.store.error, view.composer), view.composer.t('mcp.settings.copyError'))
+    assert.equal(resolveUiMessageWithComposer(state.store.error, view.composer), view.composer.t('mcp.settings.copyError'))
 })
 
 test('peer compose request errors retain backend text after a locale change', async () => {
@@ -176,10 +177,10 @@ test('peer review timeout and network errors follow locale changes', async () =>
     const view = dialog('peer/PeerMessageReviewDialog.vue', ['PeerResolutionTimeoutError', 'setActionFailure'], state)
     view.setActionFailure(new view.PeerResolutionTimeoutError())
     view.composer.locale.value = 'pt-BR'
-    assert.equal(resolveUiMessage(state.actionError.value, view.composer), view.composer.t('peer.review.errors.timeout'))
+    assert.equal(resolveUiMessageWithComposer(state.actionError.value, view.composer), view.composer.t('peer.review.errors.timeout'))
     view.setActionFailure(new Error('Network detail'))
     view.composer.locale.value = 'en'
-    assert.equal(resolveUiMessage(state.actionError.value, view.composer), view.composer.t('peer.review.errors.network'))
+    assert.equal(resolveUiMessageWithComposer(state.actionError.value, view.composer), view.composer.t('peer.review.errors.network'))
 })
 
 for (const [handler, method, key] of [

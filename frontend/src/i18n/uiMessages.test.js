@@ -1,3 +1,4 @@
+import { resolveUiMessageWithComposer } from './uiMessageRenderer.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createAppI18n, loadLocaleMessages } from './index.js'
@@ -11,9 +12,9 @@ test('stored local messages follow locale changes and retain plural parameters',
     composer.mergeLocaleMessage('en', { auditCount: 'One item | {count} items' })
     composer.mergeLocaleMessage('pt-BR', { auditCount: 'Um item | {count} itens' })
     const message = localUiMessage('auditCount', { count: 2 }, 2)
-    assert.equal(resolveUiMessage(message, composer), '2 items')
+    assert.equal(resolveUiMessageWithComposer(message, composer), '2 items')
     composer.locale.value = 'pt-BR'
-    assert.equal(resolveUiMessage(message, composer), '2 itens')
+    assert.equal(resolveUiMessageWithComposer(message, composer), '2 itens')
 })
 
 test('external text and errors keep their content', () => {
@@ -35,12 +36,12 @@ test('formatsOnlyDeclaredNumbers and preserves exact decimal strings', async () 
     assert.equal(formatMessageParams('session.notifications.creditsUsed', { used: '-0.00100' }, 'fr').used, '-0,00100')
     assert.deepEqual(formatMessageParams('session.summary.httpFailed', { status: 12345 }, 'fr'), { status: 12345 })
     const composer = createAppI18n('fr').global
-    assert.match(resolveUiMessage(localUiMessage('session.notifications.creditsUsed', { used: '12345.6700' }), composer), /12\u202f345,6700/)
+    assert.match(resolveUiMessageWithComposer(localUiMessage('session.notifications.creditsUsed', { used: '12345.6700' }), composer), /12\u202f345,6700/)
 })
 
 test('formatted count parameters retain plural selection without an explicit count', () => {
     const composer = createAppI18n().global
-    assert.equal(resolveUiMessage(localUiMessage('common.sessionCount', { count: 2 }), composer), '2 sessions')
+    assert.equal(resolveUiMessageWithComposer(localUiMessage('common.sessionCount', { count: 2 }), composer), '2 sessions')
 })
 
 
@@ -55,7 +56,7 @@ test('matches every real generated Vue oracle case through the shared web resolv
         composer.locale.value = entry.locale
         const descriptor = toLocalMessageDescriptor(entry.message, composer)
         assert.ok(descriptor, `${entry.locale} ${entry.message.key}`)
-        assert.equal(resolveUiMessage(descriptor, composer), entry.expected, `${entry.locale} ${entry.message.key}`)
+        assert.equal(resolveUiMessageWithComposer(descriptor, composer), entry.expected, `${entry.locale} ${entry.message.key}`)
     }
 })
 
@@ -74,17 +75,17 @@ test('recursive descriptor validation uses the selected French plural form param
     composer.mergeLocaleMessage('fr', { parameterSubset: 'Un {single} | Plusieurs {multiple}' })
     const descriptor = toLocalMessageDescriptor({ key: 'parameterSubset', params: { single: 'item' }, count: 0 }, composer)
     assert.ok(descriptor)
-    assert.equal(resolveUiMessage(descriptor, composer), 'Un item')
+    assert.equal(resolveUiMessageWithComposer(descriptor, composer), 'Un item')
 })
 
 test('declared numeric count retains Vue named-count priority over the plural argument', () => {
     const composer = createAppI18n().global
-    assert.equal(resolveUiMessage(localUiMessage('common.sessionCount', { count: 2 }, 1), composer), '2 sessions')
+    assert.equal(resolveUiMessageWithComposer(localUiMessage('common.sessionCount', { count: 2 }, 1), composer), '2 sessions')
 })
 
 test('implicit plural count receives declared number formatting', () => {
     const composer = createAppI18n().global
-    assert.equal(resolveUiMessage(localUiMessage('common.sessionCount', {}, 12345), composer), '12,345 sessions')
+    assert.equal(resolveUiMessageWithComposer(localUiMessage('common.sessionCount', {}, 12345), composer), '12,345 sessions')
 })
 
 test('formatted plural aliases preserve the original numeric count priority', () => {
@@ -98,11 +99,11 @@ test('formatted plural aliases preserve the original numeric count priority', ()
         [{ n: 2 }, 1, '1 sessions'],
     ]
     for (const [params, count, expected] of cases) {
-        assert.equal(resolveUiMessage(localUiMessage('common.sessionCount', params, count), composer), expected,
+        assert.equal(resolveUiMessageWithComposer(localUiMessage('common.sessionCount', params, count), composer), expected,
             JSON.stringify({ params, count }))
     }
     composer.mergeLocaleMessage('en', { conflictingAliases: '{count} / {n} item | {count} / {n} items' })
-    assert.equal(resolveUiMessage(localUiMessage('conflictingAliases', { count: 2, n: 1 }), composer), '2 / 1 items')
+    assert.equal(resolveUiMessageWithComposer(localUiMessage('conflictingAliases', { count: 2, n: 1 }), composer), '2 / 1 items')
 })
 
 test('Vue numeric interpolation defines JavaScript exponent and shortest-decimal boundaries', () => {
@@ -116,6 +117,25 @@ test('Vue numeric interpolation defines JavaScript exponent and shortest-decimal
         [2 ** -24, '5.960464477539063e-8'], [-(2 ** -24), '-5.960464477539063e-8'],
     ]) {
         assert.equal(composer.t('numericText', { value }), expected)
-        assert.equal(resolveUiMessage(localUiMessage('numericText', { value }), composer), expected)
+        assert.equal(resolveUiMessageWithComposer(localUiMessage('numericText', { value }), composer), expected)
     }
+})
+
+test('public resolver always follows the application locale', async (context) => {
+    const { i18n } = await import('./index.js')
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    const message = localUiMessage('files.actions.download')
+    const translations = new Set()
+    for (const locale of ['en', 'fr', 'de', 'es', 'pt-BR']) {
+        await loadLocaleMessages(locale)
+        i18n.global.locale.value = locale
+        translations.add(resolveUiMessage(message))
+        assert.equal(resolveUiMessage(message), i18n.global.t(message.key))
+        // A stale caller cannot replace the global context with an incomplete object.
+        assert.equal(resolveUiMessage(message, { t() { throw Error('unexpected context') } }),
+            i18n.global.t(message.key))
+    }
+    assert.ok(translations.size > 1)
+    assert.equal(resolveUiMessage.length, 1)
 })

@@ -31513,8 +31513,19 @@ function jg(e, t = Cg.global) {
 	}
 }
 //#endregion
+//#region src/i18n/uiMessageRenderer.js
+function Mg(e, t) {
+	if (e?.type === "local-ui-message-list") return e.messages.map((e) => Mg(e, t)).join(" — ");
+	if (e?.type !== "local-ui-message") return e;
+	let n = Object.fromEntries(Object.entries(e.params || {}).map(([e, n]) => [e, n?.type === "local-ui-message" || n?.type === "local-ui-message-list" ? Mg(n, t) : n])), r = typeof n.count == "number" ? n.count : typeof n.n == "number" ? n.n : e.count;
+	for (let t of ["count", "n"]) n[t] == null && e.count !== void 0 && We.messages[e.key]?.numberFormats?.[t] && (n[t] = e.count);
+	let i = kg(e.key, n, t.locale.value);
+	for (let e of ["count", "n"]) typeof i[e] == "number" && (i[e] = String(i[e]));
+	return t.t(e.key, i, r === void 0 ? {} : r);
+}
+//#endregion
 //#region src/i18n/uiMessages.js
-function Mg(e, t = {}, n) {
+function Ng(e, t = {}, n) {
 	return {
 		type: "local-ui-message",
 		key: e,
@@ -31522,34 +31533,28 @@ function Mg(e, t = {}, n) {
 		...n === void 0 ? {} : { count: n }
 	};
 }
-function Ng(e, t = Cg.global) {
-	if (e?.type === "local-ui-message-list") return e.messages.map((e) => Ng(e, t)).join(" — ");
-	if (e?.type !== "local-ui-message") return e;
-	let n = Object.fromEntries(Object.entries(e.params || {}).map(([e, n]) => [e, n?.type === "local-ui-message" || n?.type === "local-ui-message-list" ? Ng(n, t) : n])), r = typeof n.count == "number" ? n.count : typeof n.n == "number" ? n.n : e.count;
-	for (let t of ["count", "n"]) n[t] == null && e.count !== void 0 && We.messages[e.key]?.numberFormats?.[t] && (n[t] = e.count);
-	let i = kg(e.key, n, t.locale.value);
-	for (let e of ["count", "n"]) typeof i[e] == "number" && (i[e] = String(i[e]));
-	return t.t(e.key, i, r === void 0 ? {} : r);
+function Pg(e) {
+	return Mg(e, Cg.global);
 }
-function Pg(e, t = {}, n) {
-	let r = Mg(e, t, n), i = Error(Ng(r));
+function Fg(e, t = {}, n) {
+	let r = Ng(e, t, n), i = Error(Pg(r));
 	return Object.defineProperty(i, "message", {
 		configurable: !0,
-		get: () => Ng(r)
+		get: () => Pg(r)
 	}), i.uiMessage = r, i;
 }
 //#endregion
 //#region src/i18n/remoteMessages.js
-function Fg(e, t = e?.error ?? e?.message ?? "", n = "ui_message") {
+function Ig(e, t = e?.error ?? e?.message ?? "", n = "ui_message") {
 	return jg(e?.[n] ?? (n === "ui_message" ? e?.error_ui_message : void 0)) ?? t;
 }
-function Ig(e, t = e?.error ?? e?.message ?? "") {
-	let n = Fg(e, e?.error ?? e?.message ?? t), r = n?.type === "local-ui-message" ? Pg(n.key, n.params, n.count) : Error(n);
+function Lg(e, t = e?.error ?? e?.message ?? "") {
+	let n = Ig(e, e?.error ?? e?.message ?? t), r = n?.type === "local-ui-message" ? Fg(n.key, n.params, n.count) : Error(n);
 	return e?.code !== void 0 && (r.code = e.code), e?.status !== void 0 && (r.status = e.status), r;
 }
 //#endregion
 //#region src/utils/androidAppClient.js
-var Lg = "twicc.android.response", Rg = "twicc.android.request", zg = /* @__PURE__ */ new Set([
+var Rg = "twicc.android.response", zg = "twicc.android.request", Bg = /* @__PURE__ */ new Set([
 	"tts.attach",
 	"tts.state",
 	"tts.acknowledge",
@@ -31559,8 +31564,8 @@ var Lg = "twicc.android.response", Rg = "twicc.android.request", zg = /* @__PURE
 	"tts.disable",
 	"tts.skip",
 	"tts.stop_all"
-]), Bg = /* @__PURE__ */ new Set([...zg, "locale.set"]);
-function Vg(e, { timeoutMs: t = 1500 } = {}) {
+]), Vg = /* @__PURE__ */ new Set([...Bg, "locale.set"]);
+function Hg(e, { timeoutMs: t = 1500 } = {}) {
 	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = e.TwiccAndroid;
 	function l(e) {
 		if (o) return;
@@ -31573,13 +31578,13 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 		if (t && typeof e.ok == "boolean") {
 			if (n.delete(e.id), clearTimeout(t.timer), e.ok) t.resolve(e.state ?? null);
 			else {
-				let n = e.ui_message || typeof e.error == "string" ? Ig(e, Pg("common.android.errors.actionFailed").message) : Pg("common.android.errors.actionFailed");
+				let n = e.ui_message || typeof e.error == "string" ? Lg(e, Fg("common.android.errors.actionFailed").message) : Fg("common.android.errors.actionFailed");
 				e.state !== void 0 && (n.state = e.state), t.reject(n);
 			}
 		}
 	}
 	function u(t) {
-		t.source === e && t.origin === e.location.origin && t.data?.channel === Lg && l(t.data.response);
+		t.source === e && t.origin === e.location.origin && t.data?.channel === Rg && l(t.data.response);
 	}
 	function d(e) {
 		try {
@@ -31591,8 +31596,8 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 			return o || r.add(e), () => r.delete(e);
 		},
 		async request(r, l = {}) {
-			if (o) return Promise.reject(Pg("common.android.errors.closed"));
-			if (c && Bg.has(r)) {
+			if (o) return Promise.reject(Fg("common.android.errors.closed"));
+			if (c && Vg.has(r)) {
 				let n = Date.now() + t;
 				for (; !s && !o;) {
 					let t = e.__twiccNativeTtsDocument;
@@ -31600,28 +31605,28 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 						s = t;
 						break;
 					}
-					if (Date.now() >= n) throw Pg(r === "locale.set" ? "android.language.errors.staleDocument" : "common.android.errors.speechPreparing");
+					if (Date.now() >= n) throw Fg(r === "locale.set" ? "android.language.errors.staleDocument" : "common.android.errors.speechPreparing");
 					await new Promise((e) => setTimeout(e, 10));
 				}
-				if (o) throw Pg("common.android.errors.closed");
+				if (o) throw Fg("common.android.errors.closed");
 			}
 			let u = `${i}-${++a}`, d = {
 				...l,
-				...s && Bg.has(r) ? { documentToken: s } : {},
+				...s && Vg.has(r) ? { documentToken: s } : {},
 				protocol: 1,
 				id: u,
 				command: r
 			}, f;
 			try {
 				f = JSON.stringify(d);
-				let e = zg.has(r) ? 12582912 : 16384;
-				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Pg("common.android.errors.tooLarge"));
+				let e = Bg.has(r) ? 12582912 : 16384;
+				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Fg("common.android.errors.tooLarge"));
 			} catch (e) {
-				return console.warn("Android request serialization failed", e), Promise.reject(Pg("common.android.errors.actionFailed"));
+				return console.warn("Android request serialization failed", e), Promise.reject(Fg("common.android.errors.actionFailed"));
 			}
 			return new Promise((r, i) => {
 				let a = setTimeout(() => {
-					n.delete(u), i(Pg("common.android.errors.unreachable"));
+					n.delete(u), i(Fg("common.android.errors.unreachable"));
 				}, t);
 				n.set(u, {
 					resolve: r,
@@ -31630,58 +31635,58 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 				});
 				try {
 					c ? c.postMessage(f) : e.postMessage({
-						channel: Rg,
+						channel: zg,
 						request: d
 					}, e.location.origin);
 				} catch (e) {
-					clearTimeout(a), n.delete(u), console.warn("Android request transport failed", e), i(Pg("common.android.errors.unreachable"));
+					clearTimeout(a), n.delete(u), console.warn("Android request transport failed", e), i(Fg("common.android.errors.unreachable"));
 				}
 			});
 		},
 		close() {
 			o = !0, r.clear(), e.removeEventListener("message", u), c?.onmessage === d && (c.onmessage = null);
-			for (let e of n.values()) clearTimeout(e.timer), e.reject(Pg("common.android.errors.closed"));
+			for (let e of n.values()) clearTimeout(e.timer), e.reject(Fg("common.android.errors.closed"));
 			n.clear();
 		}
 	};
 }
-var Hg;
-function Ug() {
-	return Hg ?? (Hg = Vg(window));
+var Ug;
+function Wg() {
+	return Ug ?? (Ug = Hg(window));
 }
 //#endregion
 //#region src/utils/nativeTtsClient.js
-var Wg = Object.freeze({
+var Gg = Object.freeze({
 	ok: !1,
 	aborted: !0
-}), Gg = (e) => JSON.parse(JSON.stringify(e));
-function Kg(e, t = "error") {
+}), Kg = (e) => JSON.parse(JSON.stringify(e));
+function qg(e, t = "error") {
 	if (!e) return e;
-	let n = e.uiMessage ?? Fg(e, null);
+	let n = e.uiMessage ?? Ig(e, null);
 	return n ? {
 		...e,
 		uiMessage: n,
 		get [t]() {
-			return Ng(n);
+			return Pg(n);
 		}
 	} : e;
 }
-function qg(e) {
+function Jg(e) {
 	return {
 		...e,
-		error: Kg(e.error, "message"),
+		error: qg(e.error, "message"),
 		results: e.results?.map((e) => ({
 			...e,
-			start: Kg(e.start),
-			ended: Kg(e.ended)
+			start: qg(e.start),
+			ended: qg(e.ended)
 		}))
 	};
 }
-function Jg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = (...e) => fetch(...e) }) {
+function Yg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = (...e) => fetch(...e) }) {
 	let i = null, a = !1, o = null, s = null, c = -1, l = null, u = 0, d = 0, f = Math.random().toString(36).slice(2), p = /* @__PURE__ */ new Map(), m = /* @__PURE__ */ new Set(), h = /* @__PURE__ */ new Set();
 	function g(e, t = !1) {
 		if (e && e.version === 1 && Number.isSafeInteger(e.revision) && !(i && (e.instanceId !== i.instanceId || e.revision < i.revision || e.revision === i.revision && !t))) {
-			e = qg(e), i = e;
+			e = Jg(e), i = e;
 			for (let [t, n] of p) {
 				let r = e.results?.find((e) => e.operationId === t);
 				if (r) {
@@ -31693,7 +31698,7 @@ function Jg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				} else !n.started && e.playback?.operationId === t && e.playback.started ? (n.started = !0, n.resolve({
 					ok: !0,
 					ended: n.ended
-				})) : n.accepted && e.playback?.operationId !== t && !["starting", "reconnecting"].includes(e.sessionStatus) && (n.resolve(Wg), n.resolveEnded(Wg), p.delete(t));
+				})) : n.accepted && e.playback?.operationId !== t && !["starting", "reconnecting"].includes(e.sessionStatus) && (n.resolve(Gg), n.resolveEnded(Gg), p.delete(t));
 			}
 			for (let n of m) n(e, t);
 		}
@@ -31728,22 +31733,22 @@ function Jg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 			let i = await e.request(`tts.${t}`, n);
 			return a && r === u && g(i?.snapshot), i?.error ? {
 				...i,
-				error: Kg(i.error, "message")
+				error: qg(i.error, "message")
 			} : i;
 		} catch (e) {
 			return {
 				accepted: !1,
-				error: Kg({
+				error: qg({
 					code: e.code,
 					status: e.status,
 					message: e.message,
-					uiMessage: e.uiMessage ?? (e.message ? void 0 : Mg("session.speech.errors.unavailable"))
+					uiMessage: e.uiMessage ?? (e.message ? void 0 : Ng("session.speech.errors.unavailable"))
 				}, "message")
 			};
 		}
 	}
 	function x(e = () => !0) {
-		for (let [t, n] of p) e(t) && (n.resolve(Wg), n.resolveEnded(Wg), p.delete(t));
+		for (let [t, n] of p) e(t) && (n.resolve(Gg), n.resolveEnded(Gg), p.delete(t));
 	}
 	return {
 		attach() {
@@ -31781,9 +31786,9 @@ function Jg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		},
 		acknowledge: (e) => b("acknowledge", { revision: e }),
 		manual(e) {
-			if (!a) return Promise.resolve(Kg({
+			if (!a) return Promise.resolve(qg({
 				ok: !1,
-				uiMessage: Mg("session.speech.errors.unavailable")
+				uiMessage: Ng("session.speech.errors.unavailable")
 			}));
 			x();
 			let t = `${f}-${++d}`;
@@ -31792,7 +31797,7 @@ function Jg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				n = e;
 			}), o = new Promise((e) => {
 				r = e;
-			}), s = Gg(e);
+			}), s = Kg(e);
 			return p.set(t, {
 				resolve: n,
 				ended: o,
@@ -31804,15 +31809,15 @@ function Jg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				request: s
 			}).then((e) => {
 				let n = p.get(t);
-				n && (e?.accepted ? n.accepted = !0 : (p.delete(t), n.resolve(Kg({
+				n && (e?.accepted ? n.accepted = !0 : (p.delete(t), n.resolve(qg({
 					...e?.error,
 					ok: !1,
 					error: e?.error?.message,
-					uiMessage: e?.error?.uiMessage ?? (e?.error?.message ? void 0 : Mg("session.speech.errors.startFailed"))
-				})), n.resolveEnded(Wg)));
+					uiMessage: e?.error?.uiMessage ?? (e?.error?.message ? void 0 : Ng("session.speech.errors.startFailed"))
+				})), n.resolveEnded(Gg)));
 			}), Object.assign(i, { operationId: t });
 		},
-		listen: (e) => b("listen", Gg(e)),
+		listen: (e) => b("listen", Kg(e)),
 		setMuted: (e) => b("set_muted", {
 			activationId: i?.listening?.activationId,
 			includeMuted: e
@@ -31833,12 +31838,12 @@ function Jg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		}
 	};
 }
-var Yg;
-function Xg() {
-	return Yg ?? (Yg = Jg({
-		appClient: Ug(),
+var Xg;
+function Zg() {
+	return Xg ?? (Xg = Yg({
+		appClient: Wg(),
 		document
 	}));
 }
 //#endregion
-export { Jg as createNativeTtsClient, Xg as getNativeTtsClient };
+export { Yg as createNativeTtsClient, Zg as getNativeTtsClient };

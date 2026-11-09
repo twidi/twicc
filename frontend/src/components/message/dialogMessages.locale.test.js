@@ -1,3 +1,4 @@
+import { resolveUiMessageWithComposer } from '../../i18n/uiMessageRenderer.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -27,7 +28,7 @@ function visibleNotice(path, name, state, composer) {
     assert.ok(expression, `${name} resolves at display time`)
     return computed(() => runInNewContext(expression, {
         [name]: state.value,
-        resolveUiMessage: value => resolveUiMessage(value, composer),
+        resolveUiMessage: value => resolveUiMessageWithComposer(value, composer),
     }))
 }
 

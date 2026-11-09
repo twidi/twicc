@@ -177,7 +177,8 @@ function bootstrapXml(compiled, manifest) {
 export async function generateAndroidI18n({ check = false } = {}) {
     const sourcePaths = [manifestPath, generatorPath, 'frontend/scripts/generate-android-test-fixtures.mjs',
         'frontend/src/i18n/index.js', 'frontend/package-lock.json',
-        'frontend/src/i18n/uiMessages.js', 'frontend/src/i18n/remoteMessages.js', 'frontend/src/i18n/messageDescriptors.js',
+        'frontend/src/i18n/uiMessages.js', 'frontend/src/i18n/uiMessageRenderer.js',
+        'frontend/src/i18n/remoteMessages.js', 'frontend/src/i18n/messageDescriptors.js',
         'frontend/src/utils/androidAppClient.js', 'frontend/src/utils/nativeTtsClient.js',
         ...supportedLocales.filter(locale => locale !== 'en').map(locale => `frontend/src/i18n/locales/${locale}.js`),
         ...supportedLocales.map(locale => `frontend/src/i18n/locales/${locale}.json`)]

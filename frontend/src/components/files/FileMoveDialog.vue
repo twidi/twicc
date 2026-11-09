@@ -177,7 +177,7 @@ defineExpose({ open, close })
                     ref="fileTreePanelRef"
                     :tree="tree"
                     :loading="treeLoading"
-                    :error="resolveUiMessage(treeError, { t })"
+                    :error="resolveUiMessage(treeError)"
                     :root-path="rootPath"
                     :project-id="projectId"
                     :session-id="sessionId"
@@ -198,7 +198,7 @@ defineExpose({ open, close })
             </div>
 
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ resolveUiMessage(errorMessage, { t }) }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </form>
 

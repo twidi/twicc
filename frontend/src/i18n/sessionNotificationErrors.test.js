@@ -1,3 +1,4 @@
+import { resolveUiMessageWithComposer } from './uiMessageRenderer.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -33,7 +34,7 @@ test('session toast error and detail descriptors change language while external 
         detailMessage: localUiMessage('artifacts.network.errors.request', { status: 503 }),
     })
     const { values, descriptor } = calculations('session/SessionToastContent.vue', ['resolvedErrorMessage', 'resolvedDetail', 'parsedError'], {
-        props, resolveUiMessage: value => resolveUiMessage(value, composer), parseProcessError,
+        props, resolveUiMessage: value => resolveUiMessageWithComposer(value, composer), parseProcessError,
     })
     const compiled = compileTemplate({ source: descriptor.template.content, filename: 'SessionToastContent.vue', id: 'session-toast-error-test', compilerOptions: { mode: 'function', isCustomElement: tag => tag.startsWith('wa-') } })
     assert.deepEqual(compiled.errors, [])
@@ -57,7 +58,7 @@ test('failed-send messages retain external parameters and follow locale changes'
     const failedSend = Vue.ref({ messageKey: 'session.notifications.invalidTitleDetail', messageParams: { error: 'External title detail' }, message: 'Legacy fallback' })
     const { values } = calculations('session/detail/items/FailedSendBanner.vue', ['displayMessage'], {
         failedSend, composerReadyAgain: Vue.ref(false), t: composer.t, te: composer.te,
-        localUiMessage, remoteUiMessage, resolveUiMessage: value => resolveUiMessage(value, composer),
+        localUiMessage, remoteUiMessage, resolveUiMessage: value => resolveUiMessageWithComposer(value, composer),
     })
     assert.match(values.displayMessage.value, /External title detail/)
     composer.locale.value = 'pt-BR'

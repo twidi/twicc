@@ -1,3 +1,4 @@
+import { resolveUiMessageWithComposer } from './uiMessageRenderer.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -28,7 +29,7 @@ async function renderLogin(savedLocale, error = '') {
     const instance = createAppI18n(locale)
     const app = Vue.createSSRApp({
         render,
-        data: () => ({ password: '', error, loading: false, handleSubmit() {}, resolveUiMessage: message => resolveUiMessage(message, instance.global) }),
+        data: () => ({ password: '', error, loading: false, handleSubmit() {}, resolveUiMessage: message => resolveUiMessageWithComposer(message, instance.global) }),
     })
     app.use(instance)
     app.component('BrandLogo', { render: () => Vue.h('span', 'TwiCC') })

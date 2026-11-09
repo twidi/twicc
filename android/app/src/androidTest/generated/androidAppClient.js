@@ -31512,8 +31512,19 @@ function jg(e, t = Sg.global) {
 	}
 }
 //#endregion
+//#region src/i18n/uiMessageRenderer.js
+function Mg(e, t) {
+	if (e?.type === "local-ui-message-list") return e.messages.map((e) => Mg(e, t)).join(" — ");
+	if (e?.type !== "local-ui-message") return e;
+	let n = Object.fromEntries(Object.entries(e.params || {}).map(([e, n]) => [e, n?.type === "local-ui-message" || n?.type === "local-ui-message-list" ? Mg(n, t) : n])), r = typeof n.count == "number" ? n.count : typeof n.n == "number" ? n.n : e.count;
+	for (let t of ["count", "n"]) n[t] == null && e.count !== void 0 && Tg.messages[e.key]?.numberFormats?.[t] && (n[t] = e.count);
+	let i = kg(e.key, n, t.locale.value);
+	for (let e of ["count", "n"]) typeof i[e] == "number" && (i[e] = String(i[e]));
+	return t.t(e.key, i, r === void 0 ? {} : r);
+}
+//#endregion
 //#region src/i18n/uiMessages.js
-function Mg(e, t = {}, n) {
+function Ng(e, t = {}, n) {
 	return {
 		type: "local-ui-message",
 		key: e,
@@ -31521,34 +31532,28 @@ function Mg(e, t = {}, n) {
 		...n === void 0 ? {} : { count: n }
 	};
 }
-function Ng(e, t = Sg.global) {
-	if (e?.type === "local-ui-message-list") return e.messages.map((e) => Ng(e, t)).join(" — ");
-	if (e?.type !== "local-ui-message") return e;
-	let n = Object.fromEntries(Object.entries(e.params || {}).map(([e, n]) => [e, n?.type === "local-ui-message" || n?.type === "local-ui-message-list" ? Ng(n, t) : n])), r = typeof n.count == "number" ? n.count : typeof n.n == "number" ? n.n : e.count;
-	for (let t of ["count", "n"]) n[t] == null && e.count !== void 0 && Tg.messages[e.key]?.numberFormats?.[t] && (n[t] = e.count);
-	let i = kg(e.key, n, t.locale.value);
-	for (let e of ["count", "n"]) typeof i[e] == "number" && (i[e] = String(i[e]));
-	return t.t(e.key, i, r === void 0 ? {} : r);
+function Pg(e) {
+	return Mg(e, Sg.global);
 }
-function Pg(e, t = {}, n) {
-	let r = Mg(e, t, n), i = Error(Ng(r));
+function Fg(e, t = {}, n) {
+	let r = Ng(e, t, n), i = Error(Pg(r));
 	return Object.defineProperty(i, "message", {
 		configurable: !0,
-		get: () => Ng(r)
+		get: () => Pg(r)
 	}), i.uiMessage = r, i;
 }
 //#endregion
 //#region src/i18n/remoteMessages.js
-function Fg(e, t = e?.error ?? e?.message ?? "", n = "ui_message") {
+function Ig(e, t = e?.error ?? e?.message ?? "", n = "ui_message") {
 	return jg(e?.[n] ?? (n === "ui_message" ? e?.error_ui_message : void 0)) ?? t;
 }
-function Ig(e, t = e?.error ?? e?.message ?? "") {
-	let n = Fg(e, e?.error ?? e?.message ?? t), r = n?.type === "local-ui-message" ? Pg(n.key, n.params, n.count) : Error(n);
+function Lg(e, t = e?.error ?? e?.message ?? "") {
+	let n = Ig(e, e?.error ?? e?.message ?? t), r = n?.type === "local-ui-message" ? Fg(n.key, n.params, n.count) : Error(n);
 	return e?.code !== void 0 && (r.code = e.code), e?.status !== void 0 && (r.status = e.status), r;
 }
 //#endregion
 //#region src/utils/androidAppClient.js
-var Lg = "twicc.android.response", Rg = "twicc.android.request", zg = /* @__PURE__ */ new Set([
+var Rg = "twicc.android.response", zg = "twicc.android.request", Bg = /* @__PURE__ */ new Set([
 	"tts.attach",
 	"tts.state",
 	"tts.acknowledge",
@@ -31558,8 +31563,8 @@ var Lg = "twicc.android.response", Rg = "twicc.android.request", zg = /* @__PURE
 	"tts.disable",
 	"tts.skip",
 	"tts.stop_all"
-]), Bg = /* @__PURE__ */ new Set([...zg, "locale.set"]);
-function Vg(e, { timeoutMs: t = 1500 } = {}) {
+]), Vg = /* @__PURE__ */ new Set([...Bg, "locale.set"]);
+function Hg(e, { timeoutMs: t = 1500 } = {}) {
 	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = e.TwiccAndroid;
 	function l(e) {
 		if (o) return;
@@ -31572,13 +31577,13 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 		if (t && typeof e.ok == "boolean") {
 			if (n.delete(e.id), clearTimeout(t.timer), e.ok) t.resolve(e.state ?? null);
 			else {
-				let n = e.ui_message || typeof e.error == "string" ? Ig(e, Pg("common.android.errors.actionFailed").message) : Pg("common.android.errors.actionFailed");
+				let n = e.ui_message || typeof e.error == "string" ? Lg(e, Fg("common.android.errors.actionFailed").message) : Fg("common.android.errors.actionFailed");
 				e.state !== void 0 && (n.state = e.state), t.reject(n);
 			}
 		}
 	}
 	function u(t) {
-		t.source === e && t.origin === e.location.origin && t.data?.channel === Lg && l(t.data.response);
+		t.source === e && t.origin === e.location.origin && t.data?.channel === Rg && l(t.data.response);
 	}
 	function d(e) {
 		try {
@@ -31590,8 +31595,8 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 			return o || r.add(e), () => r.delete(e);
 		},
 		async request(r, l = {}) {
-			if (o) return Promise.reject(Pg("common.android.errors.closed"));
-			if (c && Bg.has(r)) {
+			if (o) return Promise.reject(Fg("common.android.errors.closed"));
+			if (c && Vg.has(r)) {
 				let n = Date.now() + t;
 				for (; !s && !o;) {
 					let t = e.__twiccNativeTtsDocument;
@@ -31599,28 +31604,28 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 						s = t;
 						break;
 					}
-					if (Date.now() >= n) throw Pg(r === "locale.set" ? "android.language.errors.staleDocument" : "common.android.errors.speechPreparing");
+					if (Date.now() >= n) throw Fg(r === "locale.set" ? "android.language.errors.staleDocument" : "common.android.errors.speechPreparing");
 					await new Promise((e) => setTimeout(e, 10));
 				}
-				if (o) throw Pg("common.android.errors.closed");
+				if (o) throw Fg("common.android.errors.closed");
 			}
 			let u = `${i}-${++a}`, d = {
 				...l,
-				...s && Bg.has(r) ? { documentToken: s } : {},
+				...s && Vg.has(r) ? { documentToken: s } : {},
 				protocol: 1,
 				id: u,
 				command: r
 			}, f;
 			try {
 				f = JSON.stringify(d);
-				let e = zg.has(r) ? 12582912 : 16384;
-				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Pg("common.android.errors.tooLarge"));
+				let e = Bg.has(r) ? 12582912 : 16384;
+				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Fg("common.android.errors.tooLarge"));
 			} catch (e) {
-				return console.warn("Android request serialization failed", e), Promise.reject(Pg("common.android.errors.actionFailed"));
+				return console.warn("Android request serialization failed", e), Promise.reject(Fg("common.android.errors.actionFailed"));
 			}
 			return new Promise((r, i) => {
 				let a = setTimeout(() => {
-					n.delete(u), i(Pg("common.android.errors.unreachable"));
+					n.delete(u), i(Fg("common.android.errors.unreachable"));
 				}, t);
 				n.set(u, {
 					resolve: r,
@@ -31629,24 +31634,24 @@ function Vg(e, { timeoutMs: t = 1500 } = {}) {
 				});
 				try {
 					c ? c.postMessage(f) : e.postMessage({
-						channel: Rg,
+						channel: zg,
 						request: d
 					}, e.location.origin);
 				} catch (e) {
-					clearTimeout(a), n.delete(u), console.warn("Android request transport failed", e), i(Pg("common.android.errors.unreachable"));
+					clearTimeout(a), n.delete(u), console.warn("Android request transport failed", e), i(Fg("common.android.errors.unreachable"));
 				}
 			});
 		},
 		close() {
 			o = !0, r.clear(), e.removeEventListener("message", u), c?.onmessage === d && (c.onmessage = null);
-			for (let e of n.values()) clearTimeout(e.timer), e.reject(Pg("common.android.errors.closed"));
+			for (let e of n.values()) clearTimeout(e.timer), e.reject(Fg("common.android.errors.closed"));
 			n.clear();
 		}
 	};
 }
-var Hg;
-function Ug() {
-	return Hg ?? (Hg = Vg(window));
+var Ug;
+function Wg() {
+	return Ug ?? (Ug = Hg(window));
 }
 //#endregion
-export { Vg as createAndroidAppClient, Ug as getAndroidAppClient };
+export { Hg as createAndroidAppClient, Wg as getAndroidAppClient };

@@ -89,7 +89,7 @@ defineExpose({ open, close })
                 {{ $t('files.delete.directoryWarning') }}
             </p>
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ resolveUiMessage(errorMessage, { t }) }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </div>
         <div slot="footer" class="dialog-footer">

@@ -1,3 +1,4 @@
+import { resolveUiMessageWithComposer } from '../../i18n/uiMessageRenderer.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -36,7 +37,7 @@ async function fixture(file, options = {}) {
         state = component.setup(options.props ?? { apiPrefix: '/api/test' }, { expose() {}, emit() {} })
         return () => null
     } }).use(i18n))
-    const text = value => resolveUiMessage(value, i18n.global)
+    const text = value => resolveUiMessageWithComposer(value, i18n.global)
     const assertSwitch = (message, key) => {
         assert.equal(text(message), i18n.global.t(key, message.params ?? {}))
         const english = text(message)
@@ -150,10 +151,10 @@ test('file and Git request fallbacks stay reactive and preserve server prose', a
     const fetchDiff = extractedFunction('git/GitPanel.vue', 'fetchDiff', dependencies)
     await fetchFile('/file')
     await fetchDiff('/file')
-    const english = [error.value, diffError.value].map(message => resolveUiMessage(message, i18n.global))
+    const english = [error.value, diffError.value].map(message => resolveUiMessageWithComposer(message, i18n.global))
     i18n.global.locale.value = 'pt-BR'
-    assert.notEqual(resolveUiMessage(error.value, i18n.global), english[0])
-    assert.notEqual(resolveUiMessage(diffError.value, i18n.global), english[1])
+    assert.notEqual(resolveUiMessageWithComposer(error.value, i18n.global), english[0])
+    assert.notEqual(resolveUiMessageWithComposer(diffError.value, i18n.global), english[1])
     serverError = 'External server detail'
     await fetchFile('/file')
     await fetchDiff('/file')

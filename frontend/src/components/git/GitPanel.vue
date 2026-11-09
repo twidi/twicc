@@ -410,7 +410,7 @@ const currentTree = computed(() => currentFilesData.value?.tree ?? null)
 const currentTreeLabel = computed(() => {
     const tree = currentTree.value
     if (!tree) return null
-    return resolveUiMessage(remoteUiMessage(tree, tree.name, 'name_ui_message'), { t })
+    return resolveUiMessage(remoteUiMessage(tree, tree.name, 'name_ui_message'))
 })
 
 // --- Display options ---
@@ -1576,7 +1576,7 @@ onMounted(() => {
             <wa-callout variant="danger" class="pane-callout">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 <div class="error-content">
-                    <div>{{ resolveUiMessage(error, { t }) }}</div>
+                    <div>{{ resolveUiMessage(error) }}</div>
                     <wa-button
                         variant="danger"
                         appearance="outlined"
@@ -1712,7 +1712,7 @@ onMounted(() => {
                             <!-- Diff error -->
                             <div v-if="diffError" class="panel-placeholder">
                                 <wa-callout variant="danger" size="small">
-                                    {{ resolveUiMessage(diffError, { t }) }}
+                                    {{ resolveUiMessage(diffError) }}
                                 </wa-callout>
                                 <wa-button v-if="diffTooLarge" size="small" @click="handleDownload('file', { path: selectedFile })">
                                     <wa-icon slot="start" name="download"></wa-icon>
