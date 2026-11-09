@@ -8,8 +8,8 @@ import { SYNCED_SETTINGS_KEYS } from '../constants.js'
 
 const source = readFileSync(new URL('./settings.js', import.meta.url), 'utf8')
 
-test('showSessionsAsTree defaults to false and accepts booleans', () => {
-    assert.match(source, /showSessionsAsTree: false,/)
+test('showSessionsAsTree defaults to true and accepts booleans', () => {
+    assert.match(source, /showSessionsAsTree: true,/)
     assert.match(source, /showSessionsAsTree: \(v\) => typeof v === 'boolean'/)
 })
 

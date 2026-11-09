@@ -69,8 +69,8 @@ export const SETTINGS_SCHEMA = {
     showArchivedSessions: false,
     showArchivedProjects: false,
     showArchivedWorkspaces: false,
-    showActiveAcrossFilters: false,
-    showSessionsAsTree: false,
+    showActiveAcrossFilters: true,
+    showSessionsAsTree: true,
     showHiddenFiles: false,
     showGitIgnoredFiles: false,
     // Whether the user dismissed the text-selection comment widget's help hint
