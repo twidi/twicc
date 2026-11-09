@@ -101,6 +101,7 @@ def build_topology(
     spawner (a root) has no siblings, so every flag is False.
     """
     from twicc.core.models import ProcessRun
+    from twicc.core.services.session_crons import active_cron_counts
 
     (
         root,
@@ -167,11 +168,15 @@ def build_topology(
             processes_available = True
             process_rows_by_id = load_process_rows(ordered_ids, twicc_pid)
 
+    # Read from the database, so reported even without process data.
+    cron_counts_by_id = active_cron_counts(ordered_ids)
+
     nodes = [
         _serialize_topology_node(
             sessions_by_id[session_id],
             process_rows_by_id.get(session_id),
             processes_available=processes_available,
+            active_cron_count=cron_counts_by_id[session_id],
             metrics=metrics_by_id[session_id],
             full_sessions=full_sessions,
             slim_processes=slim_processes,
@@ -368,6 +373,7 @@ def _serialize_topology_node(
     process_row,
     *,
     processes_available: bool,
+    active_cron_count: int,
     metrics: dict,
     full_sessions: bool,
     slim_processes: bool = False,
@@ -389,6 +395,7 @@ def _serialize_topology_node(
             if processes_available
             else None
         ),
+        "active_cron_count": active_cron_count,
         **metrics,
     }
     if matching_ids is not None:

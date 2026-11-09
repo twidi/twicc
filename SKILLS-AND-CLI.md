@@ -384,7 +384,7 @@ Re-check one outbound message's status (read-only): `pending` / `delivered` / `d
 ## Spawn tree & filiation
 
 ### `twicc topology <SESSION_ID|self>`
-Show the spawned-session tree containing a session, rooted at its top-level ancestor: an id-only tree first, then per-node metadata, process state, and aggregate child/cost data. Any id in the tree resolves to the whole tree.
+Show the spawned-session tree containing a session, rooted at its top-level ancestor: an id-only tree first, then per-node metadata, process state, active cron count (`nodes[].active_cron_count`, always present, even with `--no-processes`), and aggregate child/cost data. Any id in the tree resolves to the whole tree.
 - `--processes/--no-processes` (default on) — include compact live process state.
 - `--full` — emit the full `session` serialization per node instead of the reduced subset, and the six-field `process` block. By default each node's `process` block is `{state, background_work_in_progress}` alone.
 - `--annotation` — mark nodes with `matches_annotations` (see below).

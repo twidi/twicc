@@ -11,7 +11,7 @@ from django.utils import timezone
 from twicc.agent.states import AgentState
 from twicc.cli._annotation_filters import AnnotationFilter, AnnotationOp
 from twicc.cli.topology import TOPOLOGY_SESSION_FIELDS, build_topology
-from twicc.core.models import ProcessRun, Project, Session, SessionType
+from twicc.core.models import ProcessRun, Project, Session, SessionCron, SessionType
 
 
 @pytest.fixture
@@ -316,3 +316,45 @@ def test_topology_root_with_null_spawn_root_matches_its_own_annotations(project)
     )
     by_id = {node["id"]: node for node in data["nodes"]}
     assert by_id["STANDALONE"]["matches_annotations"] is True
+
+
+def make_recurring_cron(cron_id: str, session_id: str, *, created_at):
+    return SessionCron.objects.create(
+        provider="claude_code",
+        cron_id=cron_id,
+        session_id=session_id,
+        cron_expr="*/5 * * * *",
+        recurring=True,
+        prompt="tick",
+        created_at=created_at,
+        next_fire=created_at + timedelta(minutes=5),
+    )
+
+
+def test_topology_node_reports_active_cron_count(project):
+    root = make_session(project, "A", title="Root")
+    root.spawn_root = root
+    root.save(update_fields=["spawn_root"])
+    make_session(project, "B", title="Worker", spawned_by=root, spawn_root=root, minutes=1)
+    make_recurring_cron("cron-a", "A", created_at=timezone.now())
+
+    # The count does not depend on the process data: both modes report it.
+    for include_processes, twicc_pid in ((False, None), (True, 1234)):
+        data = build_topology(root, include_processes=include_processes, twicc_pid=twicc_pid)
+        nodes = {node["id"]: node for node in data["nodes"]}
+
+        assert nodes["A"]["active_cron_count"] == 1
+        assert nodes["B"]["active_cron_count"] == 0
+
+
+def test_topology_cron_count_ignores_expired(project):
+    root = make_session(project, "A", title="Root")
+    make_recurring_cron(
+        "cron-expired",
+        "A",
+        created_at=timezone.now() - SessionCron.CLAUDE_RECURRING_MAX_AGE - timedelta(hours=1),
+    )
+
+    data = build_topology(root, include_processes=False)
+
+    assert data["nodes"][0]["active_cron_count"] == 0

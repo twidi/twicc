@@ -85,6 +85,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
         "directory": "/home/twidi/dev/myproject"
       },
       "process": {"state": "user_turn", "background_work_in_progress": null},
+      "active_cron_count": 1,
       "direct_child_count": 1,
       "descendant_count": 1,
       "subtree_total_cost": 2.34,
@@ -108,6 +109,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
         "directory": "/home/twidi/dev/myproject"
       },
       "process": {"state": "dead", "background_work_in_progress": null},
+      "active_cron_count": 0,
       "direct_child_count": 0,
       "descendant_count": 0,
       "subtree_total_cost": 1.11,
@@ -127,6 +129,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 - `nodes[].id` — same value as `nodes[].session.id`, exposed for direct indexing.
 - `nodes[].session` — slim session payload by default (fields shown above); pass `--full` to get the full serializer payload for every node — agent settings as stored, `artifacts_dir` as the serializer reports it (always the session's artifacts folder, even while empty), none of the CLI-added keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, `question_widget`) — minus its `process` block, which lives at `nodes[].process` here. With `--full`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
 - `nodes[].session.directory` — resolved working directory: `git_directory` when known, else `cwd`. Slim payload only.
+- `nodes[].active_cron_count` — non-expired crons of this session, `0` when it has none. Always present, with or without `--no-processes`.
 - `nodes[].direct_child_count` — immediate spawned children.
 - `nodes[].descendant_count` — spawned descendants across all levels.
 - `nodes[].subtree_total_cost` — sum of `session.total_cost` for this node and all descendants, or `null` when none has cost.
