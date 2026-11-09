@@ -217,9 +217,9 @@ the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.22-release.apk
+adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.27-release.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.22-release.apk
+adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.27-release.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to
@@ -672,3 +672,20 @@ and applies the short/long interruption policy. **Stop** removes that listening 
     page and network. Check audio stays suspended until **Resume automatic reading**.
 
 Run these checks on a physical phone to validate fluidity and TwiCC streaming TTS.
+
+## Language reconciliation and file selection
+
+Language reconciliation never intercepts page interactions. Native state changes
+and visible-page resume start a background read. Clicks, typing, changes, form
+submission and picker completion continue during that read or a catalog download.
+An unchanged language reuses its rendered catalog. Revision and document checks
+still reject stale language mutations; generation checks reject stale rendering.
+Startup still applies the installation language before mounting the interface.
+This correction lives in the server frontend, so each instance must serve the
+updated frontend. Reload the page after updating its server.
+
+`FilePickerInstanceTest` serves the real generated Android client and language
+controller. It selects files through DocumentsUI on A, B and A again, with hidden
+and rendered inputs. A controlled resume-before-change ordering and delayed
+`locale.get` response exercise picker completion and ordinary DOM interaction
+handlers during reconciliation. These fixtures exist only in the test APK.

@@ -1490,11 +1490,11 @@ async function onPaste(event) {
  * the staging store and its chip shows the upload. Only a local failure (the
  * draft storage write) is reported here.
  */
-async function addFile(file) {
+async function addFile(file, sessionId = props.sessionId) {
     try {
-        await store.addAttachment(props.sessionId, file)
+        await store.addAttachment(sessionId, file)
         // Notify server that user is actively preparing a message
-        notifyUserDraftUpdated(props.sessionId)
+        notifyUserDraftUpdated(sessionId)
     } catch (error) {
         toast.error(error.message || t('composer.errors.addFile'), {
             title: t('composer.errors.attachFileTitle')
@@ -1516,9 +1516,10 @@ async function onFileSelected(event) {
     const files = [...(event.target.files || [])]
     // Reset input so the same file can be selected again
     event.target.value = ''
+    const sessionId = props.sessionId
 
     for (const file of files) {
-        await addFile(file)
+        await addFile(file, sessionId)
     }
 }
 

@@ -90,7 +90,7 @@ test('browserKeepsOwnPreference', async () => {
     page.controller.dispose()
 })
 
-test('selectionPropagatesOnResume', async () => {
+test('resume reconciles native language without blocking page interactions', async () => {
     const pending = deferred()
     let resume = false
     const page = fixture({ request: async command => command === 'getState'
@@ -99,9 +99,14 @@ test('selectionPropagatesOnResume', async () => {
     const state = await page.controller.initialize()
     resume = true
     page.document.dispatchEvent(new Event('visibilitychange'))
-    const blocked = new Event('click', { cancelable: true })
-    page.document.dispatchEvent(blocked)
-    assert.equal(blocked.defaultPrevented, true)
+    for (const type of ['click', 'pointerdown', 'keydown', 'change', 'submit']) {
+        let handled = 0
+        page.document.addEventListener(type, () => { handled++ }, { once: true })
+        const event = new Event(type, { cancelable: true })
+        page.document.dispatchEvent(event)
+        assert.equal(handled, 1, `${type} must reach its handler while locale.get is pending`)
+        assert.equal(event.defaultPrevented, false)
+    }
     pending.resolve(language('es', 2))
     await tick()
     assert.equal(state.locale, 'es')
@@ -110,6 +115,83 @@ test('selectionPropagatesOnResume', async () => {
     assert.equal(unblocked.defaultPrevented, false)
     page.controller.dispose()
     assert.equal(page.listeners.size, 0)
+})
+
+test('file picker completion reaches its handler during Android resume reconciliation', async () => {
+    const pending = deferred()
+    let resume = false
+    const page = fixture({ request: async command => command === 'getState'
+        ? { capabilities: { appLanguage: 1 }, appLanguage: language() }
+        : resume ? pending.promise : language() })
+    await page.controller.initialize()
+    try {
+        resume = true
+        page.document.dispatchEvent(new Event('visibilitychange'))
+        await tick()
+        let handled = 0
+        // EventTarget supplies document capture ordering without a browser DOM.
+        page.document.addEventListener('change', () => { handled++ })
+        function change(target) {
+            const event = new Event('change', { bubbles: true, cancelable: true })
+            Object.defineProperty(event, 'target', { value: target })
+            page.document.dispatchEvent(event)
+            return event
+        }
+        const file = change({ tagName: 'INPUT', type: 'file' })
+        assert.equal(handled, 1, 'The selected file must reach the upload handler while locale.get is pending')
+        assert.equal(file.defaultPrevented, false)
+        const select = change({ tagName: 'SELECT', type: 'select-one' })
+        const text = change({ tagName: 'INPUT', type: 'text' })
+        assert.equal(handled, 3, 'Ordinary controls also receive change during locale reconciliation')
+        assert.equal(select.defaultPrevented, false)
+        assert.equal(text.defaultPrevented, false)
+        pending.resolve(language())
+        await tick()
+        change({ tagName: 'SELECT', type: 'select-one' })
+        assert.equal(handled, 4)
+    } finally {
+        pending.resolve(language())
+        page.controller.dispose()
+    }
+})
+
+test('unchanged native language on resume reuses the rendered catalog without writing a preference', async () => {
+    const page = fixture({ initial: language('fr', 3) })
+    await page.controller.initialize()
+    page.document.dispatchEvent(new Event('visibilitychange'))
+    await tick()
+    page.document.dispatchEvent(new Event('visibilitychange'))
+    await tick()
+    assert.deepEqual(page.applied, ['fr'])
+    assert.deepEqual(page.calls.map(([command]) => command), ['getState', 'locale.get', 'locale.get', 'locale.get'])
+    page.controller.dispose()
+})
+
+test('failed native resume read leaves form submission working before and after rejection', async () => {
+    const pending = deferred()
+    let resume = false
+    const page = fixture({ request: async command => command === 'getState'
+        ? { capabilities: { appLanguage: 1 }, appLanguage: language() }
+        : resume ? pending.promise : language() })
+    await page.controller.initialize()
+    try {
+        resume = true
+        page.document.dispatchEvent(new Event('visibilitychange'))
+        await tick()
+        let submissions = 0
+        page.document.addEventListener('submit', () => { submissions++ })
+        page.document.dispatchEvent(new Event('submit', { cancelable: true }))
+        assert.equal(submissions, 1)
+        pending.reject(new Error('Native read failed'))
+        await tick()
+        page.document.dispatchEvent(new Event('submit', { cancelable: true }))
+        assert.equal(submissions, 2)
+        assert.equal(page.compatibility.at(-1).key, 'common.android.errors.unreachable')
+        assert.deepEqual(page.applied, ['en'])
+    } finally {
+        pending.resolve(language())
+        page.controller.dispose()
+    }
 })
 
 test('olderSelectionCannotWin', async () => {
@@ -535,7 +617,7 @@ test('explicit selection retries a failed catalog without replacing native prefe
     } finally { page.controller.dispose() }
 })
 
-test('resume guard awaits an existing pending catalog for the same native language', async () => {
+test('pending native catalog downloads leave page interactions working on resume', async () => {
     const download = deferred()
     const manager = createLocaleManager({ de: () => download.promise })
     let native = language()
@@ -550,9 +632,14 @@ test('resume guard awaits an existing pending catalog for the same native langua
     try {
         page.document.dispatchEvent(new Event('visibilitychange'))
         await tick()
-        const blocked = new Event('click', { cancelable: true })
-        page.document.dispatchEvent(blocked)
-        assert.equal(blocked.defaultPrevented, true)
+        for (const type of ['click', 'pointerdown', 'keydown', 'change', 'submit']) {
+            let handled = 0
+            page.document.addEventListener(type, () => { handled++ }, { once: true })
+            const event = new Event(type, { cancelable: true })
+            page.document.dispatchEvent(event)
+            assert.equal(handled, 1, `${type} must reach its handler while the catalog loads`)
+            assert.equal(event.defaultPrevented, false)
+        }
         assert.equal(manager.i18n.global.locale.value, 'en')
         download.resolve({})
         await selection

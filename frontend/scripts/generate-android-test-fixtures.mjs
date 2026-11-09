@@ -5,10 +5,14 @@ const frontend = fileURLToPath(new URL('../', import.meta.url))
 
 // Use the installed frontend bundler explicitly during catalog generation.
 // Each module is self-contained because native fixture servers serve only these
-// two paths. No bare imports, JSON import attributes, or locale chunks can leak.
+// adapter paths. No bare imports, JSON import attributes, or locale chunks can leak.
 export async function generateAndroidTestFixtures() {
     const outputs = {}
-    for (const name of ['androidAppClient', 'nativeTtsClient']) {
+    for (const [name, entry] of Object.entries({
+        androidAppClient: 'utils/androidAppClient',
+        nativeTtsClient: 'utils/nativeTtsClient',
+        androidLocale: 'i18n/androidLocale',
+    })) {
         const result = await build({
             root: frontend,
             configFile: false,
@@ -24,7 +28,7 @@ export async function generateAndroidTestFixtures() {
                 target: 'es2020',
                 minify: true,
                 sourcemap: false,
-                lib: { entry: `${frontend}src/utils/${name}.js`, formats: ['es'], fileName: () => `${name}.js` },
+                lib: { entry: `${frontend}src/${entry}.js`, formats: ['es'], fileName: () => `${name}.js` },
                 rolldownOptions: { output: { codeSplitting: false } },
             },
         })

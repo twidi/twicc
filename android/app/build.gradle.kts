@@ -27,8 +27,8 @@ android {
         minSdk = 29
         targetSdk = 35
         ndk { abiFilters += targetAbis }
-        versionCode = 33
-        versionName = "0.5.22"
+        versionCode = 38
+        versionName = "0.5.27"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "engine"
@@ -170,7 +170,7 @@ tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyAndroid
 // Generated self-contained adapters live only in the instrumentation APK.
 val nativeTtsFixtureAssets by tasks.registering(Sync::class) {
     dependsOn(verifyAndroidI18n)
-    from("src/androidTest/generated") { include("androidAppClient.js", "nativeTtsClient.js") }
+    from("src/androidTest/generated") { include("androidAppClient.js", "nativeTtsClient.js", "androidLocale.js") }
     from("../../frontend") { include("index.html") }
     into(layout.buildDirectory.dir("generated/nativeTtsFixtureAssets"))
 }

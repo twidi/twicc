@@ -5,7 +5,6 @@ import { getAndroidAppClient } from '../utils/androidAppClient.js'
 import { markAndroidApp } from '../utils/androidEnvironment.js'
 
 const browserLocales = SUPPORTED_LOCALES.map(({ value }) => value)
-const guardedEvents = ['click', 'pointerdown', 'keydown', 'change', 'submit']
 
 function validLanguage(value) {
     return typeof value?.locale === 'string' && Number.isSafeInteger(value.revision) && value.revision >= 0
@@ -21,14 +20,9 @@ function validLanguage(value) {
 export function createAndroidLocaleController({ client, document, applyLocale, readBrowserLocale, onCompatibility = () => {} }) {
     const state = reactive({ mode: 'browser', locale: DEFAULT_LOCALE, revision: null, supportedLocales: [...browserLocales] })
     let initialization, unsubscribe, disposed = false, native = false
-    let authoritative, generation = 0, selection = 0, mutationQueue = Promise.resolve(), pendingMutations = 0, guards = 0
+    let authoritative, generation = 0, selection = 0, mutationQueue = Promise.resolve(), pendingMutations = 0
     let renderAttempt, recovery, initializing = true, initializationDirty = false
 
-    function guard(event) {
-        if (!guards) return
-        event.preventDefault()
-        event.stopImmediatePropagation()
-    }
     function compatibility(key) { onCompatibility(key ? localUiMessage(key) : null) }
 
     async function render(locale, ticket, retry = false) {
@@ -71,10 +65,11 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
             return
         }
         // State events are evidence of a bridge, even after an initial timeout.
-        guards++
+        // Reconcile in the background. Revisions and generations protect language
+        // state without consuming unrelated page interactions or picker results.
         void reconcile().catch(error => {
             if (!disposed && state.mode !== 'incompatible') onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
-        }).finally(() => { guards-- })
+        })
     }
     function visibilityChanged() {
         if (native && document.visibilityState === 'visible') backgroundReconcile()
@@ -86,7 +81,6 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
             // Subscribe before probing so a delayed snapshot cannot lose changes.
             unsubscribe = client.onStateChanged(backgroundReconcile)
             document?.addEventListener('visibilitychange', visibilityChanged)
-            for (const type of guardedEvents) document?.addEventListener(type, guard, true)
             let fullState
             try { fullState = await client.request('getState') }
             catch { /* Ordinary browsers use the client's bounded probe timeout. */ }
@@ -214,7 +208,6 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
         ++selection
         unsubscribe?.()
         document?.removeEventListener('visibilitychange', visibilityChanged)
-        for (const type of guardedEvents) document?.removeEventListener(type, guard, true)
     }
     return { initialize, select, reconcile, dispose }
 }

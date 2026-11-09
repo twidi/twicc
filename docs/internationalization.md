@@ -93,6 +93,15 @@ the document language and the CSS loading label.
 - English is already loaded. Public viewers call `setLocale(DEFAULT_LOCALE)` without waiting.
 - Private artifact pages await their saved locale.
 
+Android embedded pages use the installation language before their first mount.
+Later native state changes and visible-page resume reconcile in the background.
+Language synchronization must not intercept clicks, pointer events, typing,
+changes, form submission or file-picker completion, including during downloads.
+Revision validation and document/generation checks protect language state without
+blocking unrelated actions. An unchanged language reuses the existing rendering.
+Ordinary browsers store language in `twicc-settings` in localStorage per origin;
+language is excluded from backend-synchronized settings.
+
 ### Caching and failures
 
 - A successful import stays cached for the page lifetime.

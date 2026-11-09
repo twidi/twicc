@@ -44,6 +44,7 @@ test('generatedOutputEditsFailAndAllOutputsHaveFingerprints', async () => {
         'android/app/src/main/assets/i18n/messages.json', 'android/app/src/main/res/values/strings.xml',
         'android/app/src/test/resources/i18n/render-cases.json',
         'android/app/src/androidTest/generated/androidAppClient.js', 'android/app/src/androidTest/generated/nativeTtsClient.js',
+        'android/app/src/androidTest/generated/androidLocale.js',
     ]) {
         assert.ok(contents.includes(`  ${path}\n`), path)
         const failures = await verifyFingerprints(contents, input => input === path ? Buffer.from('changed')
@@ -54,10 +55,11 @@ test('generatedOutputEditsFailAndAllOutputsHaveFingerprints', async () => {
 })
 
 test('generatedBrowserFixturesLoadTheirRealDependencies', async () => {
-    for (const name of ['androidAppClient', 'nativeTtsClient']) {
+    for (const [name, factory] of Object.entries({ androidAppClient: 'createAndroidAppClient',
+        nativeTtsClient: 'createNativeTtsClient', androidLocale: 'createAndroidLocaleController' })) {
         const source = await readFile(new URL(`../../android/app/src/androidTest/generated/${name}.js`, import.meta.url), 'utf8')
         const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
-        assert.equal(typeof module[name === 'androidAppClient' ? 'createAndroidAppClient' : 'createNativeTtsClient'], 'function')
+        assert.equal(typeof module[factory], 'function')
         if (name === 'androidAppClient') {
             const client = module.createAndroidAppClient({ addEventListener() {}, removeEventListener() {} })
             client.close()

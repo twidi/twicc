@@ -345,6 +345,11 @@ class BrowserRecoveryTest {
     @Test fun oldFrontendKeepsFallbackMenuUntilTheCurrentDocumentReadsLanguage() {
         Site().use { site -> withBrowser(site) { scenario ->
             waitFor { site.ready.size == 1 }
+            waitFor {
+                var loaded = false
+                scenario.onActivity { loaded = field(it, "documentLoaded") == true }
+                loaded
+            }
             scenario.onActivity { activity ->
                 val events = fieldEvents(activity)
                 val browser = field(activity, "browser")
