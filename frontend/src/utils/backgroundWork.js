@@ -1,4 +1,5 @@
 import { i18n } from '../i18n/index.js'
+import { formatClock } from './timeline/eventTime.js'
 
 // frontend/src/utils/backgroundWork.js
 //
@@ -146,18 +147,6 @@ export function idleWithShellsSuffix(sessionCount) {
 }
 
 /**
- * Local "HH:MM" of an epoch time in seconds.
- *
- * @param {number} epochSeconds
- * @returns {string}
- */
-export function formatClockTime(epochSeconds) {
-    const date = new Date(epochSeconds * 1000)
-    const pad = (n) => String(n).padStart(2, '0')
-    return `${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-/**
  * Lines of the static status shown at the bottom of a USER_TURN session:
  *   - `{kind: 'shells', text: '1 background shell still running'}`
  *   - `{kind: 'crons', text: '2 active crons — next run at 14:05'}` (the
@@ -188,9 +177,9 @@ export function buildBackgroundWorkStatusLines(processState, nowSeconds) {
         lines.push({
             kind: 'crons',
             textKey: nextFire === null ? 'session.background.cronCount' : 'session.background.cronNextRun',
-            textParams: { count: crons, time: nextFire === null ? '' : formatClockTime(nextFire) },
+            textParams: { count: crons, time: nextFire === null ? '' : formatClock(nextFire * 1000) },
             textCount: crons,
-            text: nextFire === null ? label : i18n.global.t('session.background.cronNextRun', { count: crons, time: formatClockTime(nextFire) }, crons),
+            text: nextFire === null ? label : i18n.global.t('session.background.cronNextRun', { count: crons, time: formatClock(nextFire * 1000) }, crons),
         })
     }
     return lines

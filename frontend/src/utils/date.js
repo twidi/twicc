@@ -1,4 +1,5 @@
 import { i18n } from '../i18n/index.js'
+import { formatClock } from './timeline/eventTime.js'
 
 /**
  * Format a Unix timestamp using locale-aware formatting
@@ -60,21 +61,21 @@ export function formatDate(timestamp, { smart = false } = {}) {
 }
 
 /**
- * Format an epoch ms timestamp as a fixed 24-hour clock "HH:MM" in local time.
+ * Format an epoch ms timestamp as a local clock time, hour and minute, in the
+ * app locale ("21:01" in French, "9:01 PM" in English).
  *
  * Used for the always-visible per-message timestamp label. Deliberately
- * setting-independent and non-relative so it never needs periodic refreshing
- * (no live "N minutes ago" tickers). Day-boundary disambiguation is left to the
- * hover tooltip (formatFullDateTime).
+ * non-relative so it never needs periodic refreshing (no live "N minutes ago"
+ * tickers). Day-boundary disambiguation is left to the hover tooltip
+ * (formatFullDateTime). Shares formatClock with the timeline and the
+ * background-work texts, so every clock of the app has the same format.
  *
  * @param {number} timestampMs - Epoch milliseconds.
- * @returns {string} e.g. "21:01", or "-" when no timestamp.
+ * @returns {string} Clock time, or "-" when no timestamp.
  */
 export function formatClockTime(timestampMs) {
     if (!timestampMs) return '-'
-    const d = new Date(timestampMs)
-    const pad = (n) => String(n).padStart(2, '0')
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return formatClock(timestampMs) || '-'
 }
 
 /**

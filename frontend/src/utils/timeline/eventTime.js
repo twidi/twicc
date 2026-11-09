@@ -59,7 +59,8 @@ export function shiftEventTime(timestamp, deltaMs) {
 }
 
 /**
- * Clock time in the browser locale, hour and minute ("14:32").
+ * Clock time in the app locale, hour and minute, in the standard short style of the locale ("14:32", "9:05 AM").
+ * The locale decides the 12/24-hour clock and the leading zero: no rule of ours.
  *
  * @param {number} ms
  * @param {{locale?: string, timeZone?: string}} [options] - Tests pin both; the app passes nothing.
@@ -67,7 +68,7 @@ export function shiftEventTime(timestamp, deltaMs) {
  */
 export function formatClock(ms, { locale, timeZone } = {}) {
     if (!Number.isFinite(ms)) return ''
-    return new Date(ms).toLocaleTimeString(locale ?? i18n.global.locale.value, { hour: '2-digit', minute: '2-digit', timeZone })
+    return new Date(ms).toLocaleTimeString(locale ?? i18n.global.locale.value, { timeStyle: 'short', timeZone })
 }
 
 /** The mark before an estimated time ("~14:32"). */

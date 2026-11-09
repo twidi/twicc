@@ -50,6 +50,12 @@ test('clock time is hour and minute, the tooltip time has the date and the secon
     const full = formatFullTime(ms, { locale: 'en-GB', timeZone: 'UTC' })
     assert.match(full, /14 Oct 2026/)
     assert.match(full, /14:32:07/)
+    assert.equal(formatClock(ms, { locale: 'en-US', timeZone: 'UTC' }), '2:32 PM')
+    assert.equal(formatClock(ms, { locale: 'fr', timeZone: 'UTC' }), '14:32')
+    const morning = Date.UTC(2026, 9, 14, 9, 5)
+    assert.equal(formatClock(morning, { locale: 'en', timeZone: 'UTC' }), '9:05 AM')
+    assert.equal(formatClock(morning, { locale: 'fr', timeZone: 'UTC' }), '09:05')
+    assert.equal(formatClock(morning, { locale: 'es', timeZone: 'UTC' }), '9:05')
     assert.equal(formatClock(NaN), '')
     assert.equal(formatFullTime(NaN), '')
 })
@@ -86,20 +92,22 @@ test('the arrow of the plain-text forms (tooltips) is one constant', () => {
 test('the time column samples: one text per shape of the clock, with the estimated mark, in the locale', () => {
     // A 24-hour locale: every time has the same shape (tabular digits), one sample.
     assert.deepEqual(timeColumnSamples({ locale: 'en-GB', timeZone: 'UTC' }), ['~00:59'])
-    // A 12-hour locale: the morning and the afternoon marks, both sampled, so the sizer holds the wider of the two.
+    // A 12-hour locale without leading zero: one or two hour digits, morning or afternoon, all sampled, so the sizer holds the widest.
     const twelve = timeColumnSamples({ locale: 'en-US', timeZone: 'UTC' })
-    assert.equal(twelve.length, 2)
+    assert.equal(twelve.length, 4)
     assert.match(twelve[0], /^~12:59\sAM$/u)
-    assert.match(twelve[1], /^~12:59\sPM$/u)
+    assert.match(twelve[1], /^~1:59\sAM$/u)
+    assert.match(twelve[2], /^~12:59\sPM$/u)
+    assert.match(twelve[3], /^~1:59\sPM$/u)
     assert.ok(twelve.every((text) => text.startsWith(ESTIMATED_MARK)))
     // Other digits count as one shape too.
-    assert.equal(timeColumnSamples({ locale: 'ar-EG', timeZone: 'UTC' }).length, 2)
+    assert.equal(timeColumnSamples({ locale: 'ar-EG', timeZone: 'UTC' }).length, 4)
 })
 
 test('the time column sizer is a CSS string of the samples, one per line', () => {
     assert.equal(timeColumnSizer({ locale: 'en-GB', timeZone: 'UTC' }), '"~00:59"')
     const twelve = timeColumnSamples({ locale: 'en-US', timeZone: 'UTC' })
-    assert.equal(timeColumnSizer({ locale: 'en-US', timeZone: 'UTC' }), `"${twelve[0]}\\A ${twelve[1]}"`)
+    assert.equal(timeColumnSizer({ locale: 'en-US', timeZone: 'UTC' }), `"${twelve.join('\\A ')}"`)
     // Quotes and backslashes of a locale string cannot end the CSS string.
     assert.equal(cssStringOf(['a"b\\c', 'd']), '"a\\"b\\\\c\\A d"')
 })

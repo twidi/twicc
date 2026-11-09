@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { formatClock } from './timeline/eventTime.js'
+
 import {
     activeCronCount,
     aggregatedBackgroundSuffix,
@@ -10,7 +12,6 @@ import {
     backgroundWorkStatusKey,
     batchStopConfirmationMessage,
     buildBackgroundWorkStatusLines,
-    formatClockTime,
     getStopConfirmation,
     idleWithShellsSuffix,
     pluralize,
@@ -86,11 +87,6 @@ test('aggregated suffix lists shells before crons', () => {
     assert.equal(aggregatedBackgroundSuffix({ shells: 2, crons: 1 }), ' (2 background shells, 1 active cron)')
 })
 
-test('clock time is local HH:MM, zero-padded', () => {
-    const date = new Date(2026, 8, 25, 4, 7, 30)
-    assert.equal(formatClockTime(date.getTime() / 1000), '04:07')
-})
-
 test('status lines are empty outside user_turn or with nothing in the background', () => {
     assert.deepEqual(buildBackgroundWorkStatusLines(null, NOW), [])
     assert.deepEqual(buildBackgroundWorkStatusLines({ state: 'user_turn' }, NOW), [])
@@ -108,7 +104,7 @@ test('status lines: shells, then crons with the earliest future run', () => {
     }, NOW)
     assert.deepEqual(lines, [
         { kind: 'shells', text: '1 background shell still running', textKey: 'session.background.shellsStillRunning', textParams: { count: 1 }, textCount: 1 },
-        { kind: 'crons', text: `3 active crons — next run at ${formatClockTime(NOW + 600)}`, textKey: 'session.background.cronNextRun', textParams: { count: 3, time: formatClockTime(NOW + 600) }, textCount: 3 },
+        { kind: 'crons', text: `3 active crons — next run at ${formatClock((NOW + 600) * 1000)}`, textKey: 'session.background.cronNextRun', textParams: { count: 3, time: formatClock((NOW + 600) * 1000) }, textCount: 3 },
     ])
 })
 

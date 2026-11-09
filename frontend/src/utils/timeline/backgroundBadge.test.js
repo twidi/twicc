@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatClockTime } from '../backgroundWork.js'
+import { formatClock } from './eventTime.js'
 import { describeBackgroundWork } from './backgroundBadge.js'
 
 const work = (fields) => ({ subagents: 0, shells: 0, monitors: 0, workflows: 0, scheduled_wakeup_at: null, goal: false, ...fields })
@@ -23,7 +23,7 @@ test('a single subagent is singular', () => {
 
 test('the wake-up shows its local clock time, after the counters and before the goal', () => {
     const iso = '2026-10-14T14:05:00.000Z'
-    const clock = formatClockTime(Date.parse(iso) / 1000)
+    const clock = formatClock(Date.parse(iso))
     const badge = describeBackgroundWork(work({ shells: 1, scheduled_wakeup_at: iso, goal: true }))
     assert.equal(badge.text, `1 shell, wake-up at ${clock}, goal`)
 })
