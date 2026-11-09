@@ -10,17 +10,30 @@
  * the crons / background shells / confirmation / flag mechanics. Batch flows (session list
  * multi-select) provide their own aggregated confirmation and call
  * `stopSessionProcessUnconfirmed` instead.
+ *
+ * An archive request of a session with spawned sessions first goes through
+ * `archiveFlow`, which can open the single <ArchiveDescendantsDialog> mounted
+ * in App.vue (`archiveDialogState`) in place of the confirmation.
  */
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { useDataStore } from '../stores/data'
 import { killProcess } from './useWebSocket'
+import { toast } from './useToast'
 import { PROCESS_STATE } from '../constants'
+import { localUiMessage } from '../i18n/uiMessages.js'
+import { apiFetch } from '../utils/api'
+import { ARCHIVE_TREE_LOADING_DELAY_MS, createArchiveFlow } from '../utils/archiveFlow.js'
 import { getStopConfirmation } from '../utils/backgroundWork'
 
 // Module-scoped: shared across every consumer of the composable.
 // null when no confirmation dialog is requested.
-// Shape: { sessionId, projectId, mode: 'stop' | 'archive', cronCount, shellCount }
+// Shape: { sessionId, projectId, mode: 'stop' | 'archive', cronCount, shellCount, onConfirmed? }
 export const pendingConfirmation = ref(null)
+
+// null when the archive dialog is closed.
+// Shape: { sessionId, projectId, status, targetSession, rows, cronCounts }
+// Shallow: the dialog resets its checkboxes when the `rows` reference changes.
+export const archiveDialogState = shallowRef(null)
 
 /**
  * Whether a session's process is stoppable right now.
@@ -43,15 +56,18 @@ export function isStoppable(processState) {
 /**
  * Execute the actual kill + optional archive for a session.
  * Also sets the per-session "stopping" flag in the store for UI feedback.
+ *
+ * @returns {boolean} Whether the kill ran: false when a stop is already in progress.
  */
 function doKill(store, sessionId, { archive = false, projectId = null } = {}) {
-    if (store.isSessionStopping(sessionId)) return  // debounce re-entrance
+    if (store.isSessionStopping(sessionId)) return false  // debounce re-entrance
     store.setSessionStopping(sessionId)
     killProcess(sessionId)
     if (archive) {
         const pid = projectId ?? store.getSession(sessionId)?.project_id
         if (pid) store.setSessionArchived(pid, sessionId, true)
     }
+    return true
 }
 
 /**
@@ -66,6 +82,7 @@ function doKill(store, sessionId, { archive = false, projectId = null } = {}) {
  * @param {Object} [options]
  * @param {boolean} [options.archive=false] - Also archive the session after stop.
  *   If `archive` is true and no process is running, archives the session outright.
+ * @returns {boolean} Whether the stop or the archive proceeded.
  */
 export function stopSessionProcessUnconfirmed(sessionId, { archive = false } = {}) {
     const store = useDataStore()
@@ -77,24 +94,24 @@ export function stopSessionProcessUnconfirmed(sessionId, { archive = false } = {
         // Archive-only path: no running process, just archive if requested.
         if (archive && projectId && session && !session.archived) {
             store.setSessionArchived(projectId, sessionId, true)
+            return true
         }
-        return
+        return false
     }
 
-    doKill(store, sessionId, { archive, projectId })
+    return doKill(store, sessionId, { archive, projectId })
 }
 
 /**
- * Stop the process of a session. Handles the confirmation (active crons that
- * would be lost, background shells that would be killed),
- * the archive variant, and the "no process running" no-op.
+ * Stop the process of a session, with the crons / background shells confirmation.
  *
  * @param {string} sessionId
  * @param {Object} [options]
- * @param {boolean} [options.archive=false] - Also archive the session after stop.
- *   If `archive` is true and no process is running, archives the session outright.
+ * @param {boolean} [options.archive=false]
+ * @param {function(): void} [options.onConfirmed] - Runs when the archive proceeds:
+ *   at once, or when the user confirms.
  */
-export function stopSessionProcess(sessionId, { archive = false } = {}) {
+function stopWithConfirmation(sessionId, { archive = false, onConfirmed = null } = {}) {
     const store = useDataStore()
     const processState = store.getProcessState(sessionId)
 
@@ -110,11 +127,74 @@ export function stopSessionProcess(sessionId, { archive = false } = {}) {
             mode: archive ? 'archive' : 'stop',
             cronCount: confirmation.cronCount,
             shellCount: confirmation.shellCount,
+            onConfirmed,
         }
         return
     }
 
-    stopSessionProcessUnconfirmed(sessionId, { archive })
+    if (stopSessionProcessUnconfirmed(sessionId, { archive })) onConfirmed?.()
+}
+
+async function readTopology(projectId, sessionId) {
+    const response = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/topology/`)
+    if (!response.ok) throw new Error(`Topology read failed with HTTP ${response.status}`)
+    return response.json()
+}
+
+async function archiveHidden(projectId, sessionId, archivedIds) {
+    const response = await apiFetch(
+        `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/archive-hidden-descendants/`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ archived_ids: archivedIds }),
+        },
+    )
+    if (!response.ok) throw new Error(`Hidden descendants archive failed with HTTP ${response.status}`)
+    return response.json()
+}
+
+/**
+ * Stop a session if it is stoppable, then archive it. Unlike `doKill`, a stop
+ * already in progress does not skip the archive: the user confirmed it.
+ */
+async function archiveOne({ id, projectId, pinned }) {
+    const store = useDataStore()
+    if (isStoppable(store.getProcessState(id)) && !store.isSessionStopping(id)) {
+        store.setSessionStopping(id)
+        killProcess(id)
+    }
+    await store.setSessionArchived(projectId, id, true, { knownPinned: pinned })
+}
+
+const archiveFlow = createArchiveFlow({
+    getSession: (id) => useDataStore().getSession(id),
+    readTopology,
+    archiveHidden,
+    archiveOne,
+    runTodayPath: (id, options) => stopWithConfirmation(id, { archive: true, ...options }),
+    setDialog: (state) => { archiveDialogState.value = state },
+    reportFailures: (count) => toast.error(localUiMessage('session.archiveDescendants.failed', { count }, count)),
+    loadingDelayMs: ARCHIVE_TREE_LOADING_DELAY_MS,
+})
+
+/**
+ * Stop the process of a session. Handles the confirmation (active crons that
+ * would be lost, background shells that would be killed),
+ * the archive variant, and the "no process running" no-op.
+ *
+ * @param {string} sessionId
+ * @param {Object} [options]
+ * @param {boolean} [options.archive=false] - Also archive the session after stop.
+ *   If `archive` is true and no process is running, archives the session outright.
+ *   A session with spawned sessions can open the archive dialog instead.
+ */
+export function stopSessionProcess(sessionId, { archive = false } = {}) {
+    if (archive) {
+        archiveFlow.request(sessionId)
+        return
+    }
+    stopWithConfirmation(sessionId)
 }
 
 /**
@@ -142,10 +222,9 @@ export function confirmPendingStop({ mode } = {}) {
     if (!pending) return
     pendingConfirmation.value = null
     const store = useDataStore()
-    doKill(store, pending.sessionId, {
-        archive: (mode ?? pending.mode) === 'archive',
-        projectId: pending.projectId,
-    })
+    const archive = (mode ?? pending.mode) === 'archive'
+    const proceeded = doKill(store, pending.sessionId, { archive, projectId: pending.projectId })
+    if (archive && proceeded) pending.onConfirmed?.()
 }
 
 /**
@@ -153,6 +232,22 @@ export function confirmPendingStop({ mode } = {}) {
  */
 export function cancelPendingStop() {
     pendingConfirmation.value = null
+}
+
+/**
+ * Called by the global ArchiveDescendantsDialog when the user confirms.
+ *
+ * @param {{ checkedIds: string[], targetOnly: boolean }} payload
+ */
+export function confirmArchiveDialog(payload) {
+    return archiveFlow.confirm(payload)
+}
+
+/**
+ * Called by the global ArchiveDescendantsDialog when the user dismisses.
+ */
+export function cancelArchiveDialog() {
+    archiveFlow.cancel()
 }
 
 /**
@@ -169,5 +264,8 @@ export function useStopSessionProcess() {
         confirmPendingStop,
         cancelPendingStop,
         pendingConfirmation,
+        confirmArchiveDialog,
+        cancelArchiveDialog,
+        archiveDialogState,
     }
 }

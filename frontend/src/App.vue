@@ -31,6 +31,7 @@ import CommandPalette from './components/app/CommandPalette.vue'
 import SearchOverlay from './components/app/SearchOverlay.vue'
 import SessionSwitcher from './components/app/SessionSwitcher.vue'
 import StopProcessConfirmDialog from './components/app/StopProcessConfirmDialog.vue'
+import ArchiveDescendantsDialog from './components/app/ArchiveDescendantsDialog.vue'
 import ProviderActivationDialog from './components/app/ProviderActivationDialog.vue'
 import HybridAnnouncementDialog from './components/app/HybridAnnouncementDialog.vue'
 import TelemetryNoticeDialog from './components/app/TelemetryNoticeDialog.vue'
@@ -51,6 +52,9 @@ import {
     pendingConfirmation,
     confirmPendingStop,
     cancelPendingStop,
+    archiveDialogState,
+    confirmArchiveDialog,
+    cancelArchiveDialog,
     stopSessionProcess,
     hardKillSessionProcess,
 } from './composables/useStopSessionProcess'
@@ -877,6 +881,15 @@ const toastTheme = computed(() => {
         :shell-count="pendingConfirmation?.shellCount ?? 0"
         @confirm="confirmPendingStop"
         @cancel="cancelPendingStop"
+    />
+    <ArchiveDescendantsDialog
+        :open="archiveDialogState !== null"
+        :status="archiveDialogState?.status"
+        :target-session="archiveDialogState?.targetSession"
+        :rows="archiveDialogState?.rows"
+        :cron-counts="archiveDialogState?.cronCounts"
+        @confirm="confirmArchiveDialog"
+        @cancel="cancelArchiveDialog"
     />
     <!-- Singleton dialog used to preview images & SVGs embedded in markdown
          (and any other "open this media fullscreen" call site that doesn't

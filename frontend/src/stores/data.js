@@ -6432,16 +6432,19 @@ export const useDataStore = defineStore('data', {
          * @param {string} projectId - The project ID
          * @param {string} sessionId - The session ID
          * @param {boolean} archived - Whether to archive or unarchive
+         * @param {Object} [options]
+         * @param {?string} [options.knownPinned] - Pin of the session when it is not in the store.
          * @throws {Error} If the update fails
          */
-        async setSessionArchived(projectId, sessionId, archived) {
+        async setSessionArchived(projectId, sessionId, archived, { knownPinned } = {}) {
             // Optimistic update
             const session = this.sessions[sessionId]
             const oldArchived = session?.archived
 
             // Auto-unpin on archive: if archiving a pinned session and setting is enabled
             const settingsStore = useSettingsStore()
-            const shouldUnpin = archived && session?.pinned && settingsStore.isAutoUnpinOnArchive
+            const pinned = session ? session.pinned : knownPinned
+            const shouldUnpin = archived && pinned && settingsStore.isAutoUnpinOnArchive
             const oldPinned = session?.pinned
 
             if (session) {
