@@ -72,7 +72,7 @@ export const SESSION_TIME_FORMAT = {
     RELATIVE_NARROW: 'relative_narrow',
 }
 
-export const DEFAULT_SESSION_TIME_FORMAT = SESSION_TIME_FORMAT.TIME
+export const DEFAULT_SESSION_TIME_FORMAT = SESSION_TIME_FORMAT.RELATIVE_SHORT
 
 /**
  * Default maximum number of sessions kept alive in the cache (Vue KeepAlive).

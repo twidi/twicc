@@ -24,7 +24,7 @@ from twicc.providers.helpers import AgentSettingCategory, ModelVersion, assert_u
 SYNCED_SETTINGS_DEFAULTS: dict = {
     "codexDefaultModel": "gpt-sol",
     "codexDefaultEffort": "medium",
-    "codexDefaultPermissionMode": "read_only",
+    "codexDefaultPermissionMode": "auto",
     "codexDefaultUntrustedPermissionMode": "read_only",
     "codexDefaultFastMode": False,
     # Matches ``codexDefaultModel``'s window (gpt-sol, GPT-6.1 Sol: 272K). Mostly

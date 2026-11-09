@@ -95,9 +95,9 @@ def test_codex_target_fields():
 
 
 def test_requested_settings_are_resolved_and_enforced_before_the_target():
-    # Unset fields fall back to the synced defaults (model "opus", 200K context).
+    # Unset fields fall back to the synced defaults (model "opus", 1M context).
     target = resolve(settings=AgentSettings())
-    assert (target.model, target.context_1m) == ("opus", False)
+    assert (target.model, target.context_1m) == ("opus", True)
 
 
 # ── Live 1M context ──

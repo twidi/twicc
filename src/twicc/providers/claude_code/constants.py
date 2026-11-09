@@ -58,14 +58,14 @@ class ClaudeCodeModelExtra(NamedTuple):
 # ``build_provider_show`` to appear in the bare read. Mirror the change in the
 # Codex constants.
 SYNCED_SETTINGS_DEFAULTS: dict = {
-    "claudeCodeDefaultPermissionMode": "default",
+    "claudeCodeDefaultPermissionMode": "acceptEdits",
     "claudeCodeDefaultUntrustedPermissionMode": "default",
     "claudeCodeDefaultModel": "opus",
     "claudeCodeDefaultEffort": "medium",
     "claudeCodeDefaultThinking": True,
     "claudeCodeDefaultClaudeInChrome": True,
     "claudeCodeDefaultFastMode": False,
-    "claudeCodeDefaultContextMax": 200_000,
+    "claudeCodeDefaultContextMax": 1_000_000,
     "claudeCodeUsageReadFileEnabled": False,
     "claudeCodeUsageReadFilePath": "",
     "claudeCodeUsageDumpFileEnabled": False,
