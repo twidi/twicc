@@ -65,7 +65,14 @@ export function createArchiveFlow(deps) {
 
     function finishRun() {
         run = null
-        if (waiting.length > 0) request(waiting.shift())
+        // A queued session can have been archived while it waited.
+        while (waiting.length > 0) {
+            const next = waiting.shift()
+            if (!deps.getSession(next)?.archived) {
+                request(next)
+                return
+            }
+        }
     }
 
     async function request(sessionId) {
@@ -127,17 +134,20 @@ export function createArchiveFlow(deps) {
 
         try {
             const checked = new Set(targetOnly ? [] : checkedIds)
-            let failures = 0
-            if (checked.size > 0) {
-                failures += await hiddenFailures(deps, projectId, sessionId, [sessionId, ...checked])
-            }
             const items = [
                 { id: sessionId, projectId },
                 ...rows
                     .filter((row) => checked.has(row.id))
                     .map((row) => ({ id: row.id, projectId: row.session.project_id, pinned: row.session.pinned })),
             ]
-            const results = await Promise.allSettled(items.map(async (item) => deps.archiveOne(item)))
+            // Together: the hidden call kills agents one by one and can take seconds,
+            // and the listed sessions must not wait for it. The backend walk accepts
+            // `archived_ids` that are already archived.
+            const [hiddenFailureCount, results] = await Promise.all([
+                checked.size > 0 ? hiddenFailures(deps, projectId, sessionId, [sessionId, ...checked]) : 0,
+                Promise.allSettled(items.map(async (item) => deps.archiveOne(item))),
+            ])
+            let failures = hiddenFailureCount
             for (const [index, result] of results.entries()) {
                 if (result.status === 'rejected') {
                     console.error('Failed to archive', items[index].id, result.reason)

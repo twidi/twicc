@@ -31,7 +31,7 @@ const aloneTopology = () => ({
 
 function harness({ sessions, ...overrides } = {}) {
     const known = sessions ?? { t: { id: 't', project_id: 'p', spawn_root: 'root' } }
-    const calls = { order: [], dialogs: [], failures: [], today: [], hidden: [], archived: [], reads: [] }
+    const calls = { dialogs: [], failures: [], today: [], hidden: [], archived: [], reads: [] }
     const deps = {
         getSession: (id) => known[id],
         readTopology: async (projectId, id) => {
@@ -39,12 +39,10 @@ function harness({ sessions, ...overrides } = {}) {
             return familyTopology()
         },
         archiveHidden: async (projectId, id, archivedIds) => {
-            calls.order.push('hidden')
             calls.hidden.push([projectId, id, archivedIds])
             return { archived: [], failed: [] }
         },
         archiveOne: async (item) => {
-            calls.order.push(`archive:${item.id}`)
             calls.archived.push(item)
         },
         runTodayPath: (id, options) => { calls.today.push([id, options]) },
@@ -259,6 +257,35 @@ test('a request for another session waits for the end of the current one', async
     assert.deepEqual(calls.reads, [['p', 't'], ['q', 'u']])
 })
 
+test('a queued session already archived at its turn is skipped', async () => {
+    const sessions = {
+        t: { id: 't', project_id: 'p', spawn_root: 'root' },
+        u: { id: 'u', project_id: 'q', spawn_root: 'root' },
+    }
+    const { flow, calls } = await ready({ sessions })
+    flow.request('u')
+    sessions.u.archived = true
+    flow.cancel()
+    await flush()
+    assert.deepEqual(calls.reads, [['p', 't']])
+    assert.deepEqual(calls.today, [])
+})
+
+test('after a skipped queued session, the next queued session starts', async () => {
+    const sessions = {
+        t: { id: 't', project_id: 'p', spawn_root: 'root' },
+        u: { id: 'u', project_id: 'q', spawn_root: 'root' },
+        v: { id: 'v', project_id: 'r', spawn_root: 'root' },
+    }
+    const { flow, calls } = await ready({ sessions })
+    flow.request('u')
+    flow.request('v')
+    sessions.u.archived = true
+    flow.cancel()
+    await flush()
+    assert.deepEqual(calls.reads, [['p', 't'], ['r', 'v']])
+})
+
 test('rows keep their reference: no state change after the opening rebuilds them', async () => {
     const { flow, calls, lastDialog } = await ready()
     const { rows } = lastDialog()
@@ -282,11 +309,53 @@ test('no checked row makes no hidden call', async () => {
     assert.deepEqual(calls.archived.map((item) => item.id), ['t'])
 })
 
-test('the endpoint receives the target and the checked ids, before any archive', async () => {
+test('the endpoint receives the target and the checked ids', async () => {
     const { flow, calls } = await ready()
     await flow.confirm({ checkedIds: ['a', 'b'], targetOnly: false })
     assert.deepEqual(calls.hidden, [['p', 't', ['t', 'a', 'b']]])
-    assert.equal(calls.order[0], 'hidden')
+})
+
+test('a slow hidden call does not delay the archives of the listed sessions', async () => {
+    const hidden = deferred()
+    const { flow, calls } = await ready({ archiveHidden: () => hidden.promise })
+    const pending = flow.confirm({ checkedIds: ['a', 'b'], targetOnly: false })
+    await flush()
+    assert.deepEqual(calls.archived.map((item) => item.id), ['t', 'a', 'b'])
+    assert.deepEqual(calls.failures, [])
+    hidden.resolve({ archived: [], failed: [] })
+    await pending
+    assert.deepEqual(calls.failures, [])
+})
+
+test('the failures of a slow hidden call and of the archives are summed in one report', async () => {
+    const hidden = deferred()
+    const { flow, calls } = await ready({
+        archiveHidden: () => hidden.promise,
+        archiveOne: async ({ id }) => {
+            if (id === 'a') throw new Error('boom')
+        },
+    })
+    const pending = flow.confirm({ checkedIds: ['a', 'b'], targetOnly: false })
+    await flush()
+    assert.deepEqual(calls.failures, [])
+    hidden.resolve({ archived: [], failed: ['h1', 'h2'] })
+    await pending
+    assert.deepEqual(calls.failures, [3])
+})
+
+test('a failed slow hidden request counts one, next to a failed archive', async () => {
+    const hidden = deferred()
+    const { flow, calls } = await ready({
+        archiveHidden: () => hidden.promise,
+        archiveOne: async ({ id }) => {
+            if (id === 'a') throw new Error('boom')
+        },
+    })
+    const pending = flow.confirm({ checkedIds: ['a'], targetOnly: false })
+    await flush()
+    hidden.reject(new Error('boom'))
+    await pending
+    assert.deepEqual(calls.failures, [2])
 })
 
 test('a checked row uses the project and the pin of its topology node', async () => {
