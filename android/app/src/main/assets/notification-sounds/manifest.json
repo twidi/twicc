@@ -1,0 +1,73 @@
+{
+  "format": 1,
+  "sampleRate": 48000,
+  "channels": 1,
+  "bitsPerSample": 16,
+  "sources": {
+    "frontend/scripts/generate-android-notification-sounds.mjs": "633845f39d9298c2a0a427893ebb057c63bd917878582b6c98794f3e3c01d549",
+    "frontend/src/utils/notificationSoundDefinitions.js": "19c5324faf609805de29c57c83f24412728d26f3fabd794f193446a120f59978"
+  },
+  "sourceFingerprint": "ee70acda42b5294c0806a20341de5efb2e18361eee54b258d749073248cdebe9",
+  "entries": [
+    {
+      "id": "beep",
+      "file": "beep.wav",
+      "frames": 9600,
+      "sha256": "73fc9fc1bf54b831736be9c45f15e45978a7d418d69186fa5988efe7f77c8367"
+    },
+    {
+      "id": "chime",
+      "file": "chime.wav",
+      "frames": 26401,
+      "sha256": "1b16c4a854495c01ae9a4f3829a3b5e286c79b80c49fb5beead6019012debc58"
+    },
+    {
+      "id": "ping",
+      "file": "ping.wav",
+      "frames": 7201,
+      "sha256": "df278db6e65663019bd22d157f2c50a7f0a212250bab0c24c67d65bbd33e22d1"
+    },
+    {
+      "id": "pop",
+      "file": "pop.wav",
+      "frames": 8640,
+      "sha256": "55f7fee1ae95e658e0a45cce012aa646609336de29228e1ad030ba18358f00f7"
+    },
+    {
+      "id": "bloop",
+      "file": "bloop.wav",
+      "frames": 11040,
+      "sha256": "583d29d31a043084e37674fa166b54723ee6a5ec52ea21e7166409be9f614b92"
+    },
+    {
+      "id": "tink",
+      "file": "tink.wav",
+      "frames": 11040,
+      "sha256": "b5eefe39b7524572e524415a403a3eb6bb51eb7366fffbe22706edc82b4c7399"
+    },
+    {
+      "id": "knock",
+      "file": "knock.wav",
+      "frames": 7440,
+      "sha256": "de17a9b4509f1f413a5e8cb55ef8c1f39a67aee42890729ba570e7a257d02adf"
+    },
+    {
+      "id": "sweep",
+      "file": "sweep.wav",
+      "frames": 12960,
+      "sha256": "1d91f335404b4533d2a89c5d1197387c4f5c1be7e84144599e1df9066f8269e7"
+    },
+    {
+      "id": "signal",
+      "file": "signal.wav",
+      "frames": 15840,
+      "sha256": "5116d27f4617816b648aab54534b3b5c2e20d6daee50e4cf5e97558b06d4e474"
+    },
+    {
+      "id": "ripple",
+      "file": "ripple.wav",
+      "frames": 13200,
+      "sha256": "a22696fe5a7594a5b31ad1c13b278626351a0a465e707292e486887d485b2dc0"
+    }
+  ]
+}

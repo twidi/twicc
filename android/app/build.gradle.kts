@@ -1,4 +1,7 @@
 import java.security.MessageDigest
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import groovy.json.JsonSlurper
 
 plugins {
     id("com.android.application")
@@ -43,6 +46,7 @@ android {
     sourceSets.getByName("androidTest").assets.srcDir("../../tests/fixtures/native_tts_audio")
     sourceSets.getByName("test").resources.srcDir("src/main/assets")
     buildFeatures { buildConfig = true }
+    androidResources { noCompress += "wav" }
     buildTypes {
         release {
             isDebuggable = false
@@ -108,6 +112,60 @@ val verifyAndroidI18n = tasks.register("verifyAndroidI18n") {
     }
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyAndroidI18n) }
+
+val notificationSoundAssets = projectDir.resolve("src/main/assets/notification-sounds")
+val notificationSoundsFixture = providers.gradleProperty("notificationSoundsFixtureDir")
+val verifyAndroidNotificationSounds = tasks.register("verifyAndroidNotificationSounds") {
+    group = "verification"
+    description = "Reject stale or modified packaged notification sounds without Node or Chromium."
+    doLast {
+        fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256")
+            .digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        val sourcePaths = listOf(
+            "frontend/scripts/generate-android-notification-sounds.mjs",
+            "frontend/src/utils/notificationSoundDefinitions.js",
+        )
+        val sources = sourcePaths.associateWith { path -> sha256(i18nRoot.resolve(path).readBytes()) }
+        val formatFingerprint = "format=1;sampleRate=48000;channels=1;bitsPerSample=16;endMargin=0.05\n"
+        val fingerprint = sha256((formatFingerprint + sourcePaths.joinToString("") { "${sources[it]}  $it\n" }).toByteArray(Charsets.UTF_8))
+        val ids = listOf("beep", "chime", "ping", "pop", "bloop", "tink", "knock", "sweep", "signal", "ripple")
+        // The fixture is additional: a property can never bypass committed-asset verification.
+        val directories = listOf(notificationSoundAssets) + listOfNotNull(notificationSoundsFixture.orNull?.let { file(it) })
+        for (directory in directories) {
+            fun invalid(reason: String): Nothing = throw GradleException(
+                "Invalid Android notification sounds in $directory: $reason. Run cd frontend && npm run sounds:android:generate -- --scratch-dir <scratch>, then commit all outputs."
+            )
+            val expectedFiles = (ids.map { "$it.wav" } + "manifest.json").toSet()
+            if (directory.listFiles()?.map { it.name }?.toSet() != expectedFiles || directory.listFiles()?.any { !it.isFile } != false) {
+                invalid("missing or unexpected files")
+            }
+            val manifest = JsonSlurper().parse(directory.resolve("manifest.json")) as? Map<*, *> ?: invalid("manifest object")
+            if (manifest["format"] != 1 || manifest["sampleRate"] != 48000 || manifest["channels"] != 1 || manifest["bitsPerSample"] != 16) {
+                invalid("manifest format")
+            }
+            if (manifest["sources"] != sources || manifest["sourceFingerprint"] != fingerprint) invalid("stale source fingerprint")
+            val entries = manifest["entries"] as? List<*> ?: invalid("manifest entries")
+            if (entries.size != ids.size) invalid("sound count")
+            for ((index, id) in ids.withIndex()) {
+                val entry = entries[index] as? Map<*, *> ?: invalid("entry $id")
+                val frames = (entry["frames"] as? Number)?.toLong() ?: invalid("frames $id")
+                if (entry["id"] != id || entry["file"] != "$id.wav" || frames <= 0) invalid("sound ID/file/frames $id")
+                val wav = directory.resolve("$id.wav").readBytes()
+                if (entry["sha256"] != sha256(wav)) invalid("modified WAV $id")
+                if (wav.size.toLong() != 44 + frames * 2) invalid("WAV length $id")
+                val header = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)
+                fun text(start: Int, end: Int) = String(wav, start, end - start, Charsets.US_ASCII)
+                if (text(0, 4) != "RIFF" || header.getInt(4) != wav.size - 8 || text(8, 16) != "WAVEfmt " ||
+                    header.getInt(16) != 16 || header.getShort(20).toInt() != 1 || header.getShort(22).toInt() != 1 ||
+                    header.getInt(24) != 48000 || header.getInt(28) != 96000 || header.getShort(32).toInt() != 2 ||
+                    header.getShort(34).toInt() != 16 || text(36, 40) != "data" || header.getInt(40).toLong() != frames * 2) {
+                    invalid("PCM16 WAV structure $id")
+                }
+            }
+        }
+    }
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyAndroidNotificationSounds) }
 
 // Generated self-contained adapters live only in the instrumentation APK.
 val nativeTtsFixtureAssets by tasks.registering(Sync::class) {
