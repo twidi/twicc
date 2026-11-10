@@ -20,7 +20,7 @@ Les scores sont construits à partir des évaluations publiées par
 Il mesure chaque modèle, à chaque effort de réflexion, sur de nombreuses évaluations, avec le
 **coût** et la **durée** de chaque tâche.
 
-TwiCC fournit un instantané de ces résultats, pris le **29/10/2026**, sur la version 5.0 de
+TwiCC fournit un instantané de ces résultats, pris le **10/11/2026**, sur la version 5.0.1 de
 l'Intelligence Index. Il n'est pas actualisé automatiquement.
 
 ## Les commandes
@@ -55,9 +55,13 @@ en dessous en perd tant qu'un prix bas ne peut pas la sauver.
 - Les scores comparent **tous les fournisseurs activés** ensemble, pour que vous puissiez
   choisir entre Claude Code et Codex. Les fournisseurs désactivés, les modèles retirés ou
   désactivés et les efforts qu'un modèle ne prend pas en charge ne comptent jamais.
-- L'instantané ne couvre que les **modèles les plus récents** : la version 5.0 de
-  l'Intelligence Index ne mesure pas les plus anciens. Avec **Afficher les modèles plus anciens**
-  activé, leurs cellules affichent **?**.
+- Les modèles plus anciens ne comptent que lorsque **Afficher les modèles plus anciens** est
+  activé. Sinon, les scores comparent les modèles les plus récents : le 100 est donc toujours
+  sur une cellule visible. Un modèle plus ancien déjà sélectionné reste visible et reçoit un
+  score face aux modèles les plus récents (100 au maximum), mais il n'a jamais l'anneau ni la
+  **Sélection auto du meilleur**.
+- La version 5.0.1 de l'Intelligence Index ne mesure que quelques modèles plus anciens, souvent
+  à leur effort le plus élevé uniquement. Leurs autres cellules affichent **?**.
 
 ## Types de tâche
 

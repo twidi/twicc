@@ -20,8 +20,8 @@ As pontuações usam as avaliações publicadas pelo
 de benchmarks. Ele mede cada modelo, em cada esforço de raciocínio, em
 várias avaliações. Também mede o **custo** e o **tempo** de cada tarefa.
 
-O TwiCC inclui uma cópia desses resultados obtida em **2026-10-29**, na
-versão 5.0 do Intelligence Index. Ela não é atualizada automaticamente.
+O TwiCC inclui uma cópia desses resultados obtida em **2026-11-10**, na
+versão 5.0.1 do Intelligence Index. Ela não é atualizada automaticamente.
 
 ## Os controles
 
@@ -54,9 +54,14 @@ pontos. Uma combinação muito abaixo perde tantos pontos que um preço baixo n�
 - As pontuações comparam **todos os provedores ativados** juntos. Assim, você pode escolher
   entre Claude Code e Codex. Provedores desativados, modelos retirados ou desativados
   e esforços não compatíveis com um modelo nunca entram no cálculo.
-- A cópia dos dados cobre **apenas os modelos mais recentes**. A versão 5.0 do
-  Intelligence Index não mede modelos antigos. Com **Mostrar modelos
-  antigos** ativado, as células deles mostram **?**.
+- Modelos antigos só entram no cálculo enquanto **Mostrar modelos antigos**
+  está ativado. Caso contrário, as pontuações comparam os modelos mais
+  recentes, então o 100 sempre fica em uma célula visível. Um modelo antigo já
+  selecionado continua visível e recebe uma pontuação em relação aos modelos
+  mais recentes (no máximo 100), mas nunca recebe o anel nem **Selecionar o
+  melhor automaticamente**.
+- A versão 5.0.1 do Intelligence Index mede apenas alguns modelos antigos,
+  muitas vezes só no esforço mais alto. As outras células deles mostram **?**.
 
 ## Tipos de tarefa
 

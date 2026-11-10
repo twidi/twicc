@@ -280,16 +280,16 @@ const data = JSON.parse(readFileSync(new URL('../data/modelBenchmarks.json', imp
 // Appendix B of the design doc (tolerance 4, square penalty, 2^-d score); the
 // values below follow the tuned model (tolerance 2, 4th-power penalty,
 // 100 / (1 + log2(1 + d)) score) and were computed by an independent script
-// on the 2026-10-29 snapshot (Intelligence Index v5.0).
+// on the 2026-11-10 snapshot (Intelligence Index v5.0.1).
 const REFERENCE_CASES = [
     ['general', 'cost', 0, 9.67, ['codex gpt-6-luna low', 100], ['codex gpt-6-luna medium', 31]],
-    ['general', 'cost', 50, 42.96, ['codex gpt-6.1-terra high', 100], ['codex gpt-6.1-sol medium', 64]],
-    ['general', 'cost', 100, 58.41, ['claude_code claude-opus-5-5 xhigh', 100], ['codex gpt-6-astra max', 91]],
-    ['general', 'speed', 50, 42.96, ['codex gpt-6-astra low', 100], ['codex gpt-6.1-terra high', 69]],
-    ['coding', 'cost', 50, 36.55, ['codex gpt-6.1-terra high', 100], ['codex gpt-6.1-sol medium', 72]],
-    ['office', 'cost', 100, 45.65, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-sonnet-5-5 max', 61]],
-    ['knowledge', 'speed', 0, 40.95, ['claude_code claude-fable-5-1 low', 100], ['codex gpt-6.1-terra low', 85]],
-    ['science', 'cost', 50, 47.17, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-terra xhigh', 72]],
+    ['general', 'cost', 50, 47.16, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-sol high', 67]],
+    ['general', 'cost', 100, 64.56, ['claude_code claude-fable-5-2 max', 100], ['claude_code claude-fable-5-2 xhigh', 46]],
+    ['general', 'speed', 50, 47.16, ['codex gpt-6.1-sol medium', 100], ['claude_code claude-fable-5-2 low', 91]],
+    ['coding', 'cost', 50, 37.64, ['codex gpt-6.1-terra high', 100], ['codex gpt-6.1-sol medium', 72]],
+    ['office', 'cost', 100, 45.90, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-sonnet-5-5 max', 83]],
+    ['knowledge', 'speed', 0, 40.95, ['claude_code claude-fable-5-1 low', 100], ['claude_code claude-sonnet-5-5 low', 71]],
+    ['science', 'cost', 50, 54.55, ['codex gpt-6.1-sol high', 100], ['codex gpt-6.1-sol xhigh', 63]],
 ]
 
 test('reproduces the reference cases on the real snapshot', () => {
@@ -301,6 +301,4 @@ test('reproduces the reference cases on the real snapshot', () => {
         assert.deepEqual([ranked[0][0], ranked[0][1].score], first, label)
         assert.deepEqual([ranked[1][0], ranked[1][1].score], second, label)
     }
-    const speed = computeBenchmarkScores(data.rows, { taskType: 'general', difficulty: 50, favor: 'speed' }, ALL)
-    assert.equal(speed.has('codex gpt-6-luna medium'), false)
 })

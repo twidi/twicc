@@ -19,8 +19,8 @@ Die Scores basieren auf den Auswertungen von
 Benchmarking-Site. Sie misst jedes Modell, bei jedem Reasoning-Aufwand, in
 vielen Auswertungen, mit den **Kosten** und der **Zeit** jeder Aufgabe.
 
-TwiCC liefert einen Snapshot dieser Ergebnisse mit, erstellt am **2026-10-29**, auf Basis von
-Version 5.0 des Intelligence Index. Er wird nicht automatisch aktualisiert.
+TwiCC liefert einen Snapshot dieser Ergebnisse mit, erstellt am **2026-11-10**, auf Basis von
+Version 5.0.1 des Intelligence Index. Er wird nicht automatisch aktualisiert.
 
 ## Die Regler
 
@@ -52,9 +52,13 @@ Punkte. Ein Paar weit darunter verliert so viele, dass ein niedriger Preis es ni
 - Die Scores vergleichen **alle aktivierten Anbieter** gemeinsam, sodass du
   zwischen Claude Code und Codex wählen kannst. Deaktivierte Anbieter, eingestellte oder deaktivierte
   Modelle und Aufwandsstufen, die ein Modell nicht unterstützt, zählen nie.
-- Der Snapshot deckt **nur die neuesten Modelle** ab: Version 5.0 des
-  Intelligence Index misst ältere nicht. Ist **Ältere Modelle anzeigen**
-  aktiv, zeigen deren Zellen **?**.
+- Ältere Modelle zählen nur, solange **Ältere Modelle anzeigen** aktiv ist.
+  Sonst vergleichen die Scores die neuesten Modelle, also liegt die 100 immer
+  auf einer sichtbaren Zelle. Ein bereits ausgewähltes älteres Modell bleibt
+  sichtbar und wird gegen die neuesten Modelle bewertet (höchstens 100),
+  bekommt aber nie den Ring und nie **Beste automatisch wählen**.
+- Version 5.0.1 des Intelligence Index misst nur wenige ältere Modelle, oft
+  nur mit ihrem höchsten Aufwand. Ihre anderen Zellen zeigen **?**.
 
 ## Aufgabentypen
 

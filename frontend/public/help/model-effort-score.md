@@ -24,8 +24,8 @@ Scores are built from the evaluations published by
 benchmarking site. It measures each model, at each reasoning effort, on
 many evaluations, with the **cost** and **time** of each task.
 
-TwiCC ships a snapshot of these results taken on **2026-10-29**, on
-version 5.0 of the Intelligence Index. It is not refreshed automatically.
+TwiCC ships a snapshot of these results taken on **2026-11-10**, on
+version 5.0.1 of the Intelligence Index. It is not refreshed automatically.
 
 ## The controls
 
@@ -58,9 +58,13 @@ points; a pair far below it loses so many that a low price cannot save it.
 - Scores compare **every enabled provider** together, so you can choose
   across Claude Code and Codex. Disabled providers, retired or disabled
   models, and efforts a model does not support never count.
-- The snapshot covers the **latest models only**: version 5.0 of the
-  Intelligence Index does not measure older ones. With **Show older
-  models** on, their cells show **?**.
+- Older models count only while **Show older models** is on. Otherwise the
+  scores compare the latest models, so the 100 is always on a visible cell.
+  An older model you already selected stays visible and is scored against
+  the latest models (at most 100), but never gets the ring nor
+  **Auto-select best**.
+- Version 5.0.1 of the Intelligence Index measures only a few older
+  models, often at their highest effort only. Their other cells show **?**.
 
 ## Task types
 

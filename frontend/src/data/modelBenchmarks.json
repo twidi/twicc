@@ -1,58 +1,323 @@
 {
   "source": "Artificial Analysis",
   "url": "https://artificialanalysis.ai/",
-  "retrieved_at": "2026-10-29",
+  "retrieved_at": "2026-11-10",
   "rows": [
+    {
+      "provider": "claude_code",
+      "model": "claude-fable-5-2",
+      "effort": "low",
+      "intelligence_index": 53.92,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.545,
+          "cost_usd": 4.34,
+          "time_s": 572
+        },
+        "frontiercode_2_0": {
+          "score": 0.384,
+          "cost_usd": 2.12,
+          "time_s": 276
+        },
+        "aa_briefcase": {
+          "score": 1560,
+          "cost_usd": 5.62,
+          "time_s": 722
+        },
+        "gdp_pdf": {
+          "score": 0.268,
+          "cost_usd": 1.53,
+          "time_s": 34.1
+        },
+        "automationbench_aa": {
+          "score": 0.68,
+          "cost_usd": 1.28,
+          "time_s": 172
+        },
+        "hle_diamond": {
+          "score": 0.608,
+          "cost_usd": 0.128,
+          "time_s": 33.2
+        },
+        "critpt_v2_hard": {
+          "score": 0.6,
+          "cost_usd": 0.313,
+          "time_s": 64.5
+        },
+        "terminal_bench_science": {
+          "score": 0.538,
+          "cost_usd": 8.78,
+          "time_s": 1070
+        },
+        "aa_omniscience": {
+          "score": 62.9,
+          "cost_usd": 0.0138,
+          "time_s": 3.35
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-fable-5-2",
+      "effort": "medium",
+      "intelligence_index": 56.41,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.551,
+          "cost_usd": 5.25,
+          "time_s": 733
+        },
+        "frontiercode_2_0": {
+          "score": 0.413,
+          "cost_usd": 2.69,
+          "time_s": 368
+        },
+        "aa_briefcase": {
+          "score": 1620,
+          "cost_usd": 6.84,
+          "time_s": 932
+        },
+        "gdp_pdf": {
+          "score": 0.238,
+          "cost_usd": 1.56,
+          "time_s": 43.9
+        },
+        "automationbench_aa": {
+          "score": 0.688,
+          "cost_usd": 1.33,
+          "time_s": 193
+        },
+        "hle_diamond": {
+          "score": 0.663,
+          "cost_usd": 0.183,
+          "time_s": 51.6
+        },
+        "critpt_v2_hard": {
+          "score": 0.615,
+          "cost_usd": 0.367,
+          "time_s": 81.4
+        },
+        "terminal_bench_science": {
+          "score": 0.605,
+          "cost_usd": 11,
+          "time_s": 1380
+        },
+        "aa_omniscience": {
+          "score": 63.5,
+          "cost_usd": 0.0153,
+          "time_s": 4.05
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-fable-5-2",
+      "effort": "high",
+      "intelligence_index": 61.82,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.596,
+          "cost_usd": 13.5,
+          "time_s": 1710
+        },
+        "frontiercode_2_0": {
+          "score": 0.491,
+          "cost_usd": 9.64,
+          "time_s": 1140
+        },
+        "aa_briefcase": {
+          "score": 1680,
+          "cost_usd": 15.5,
+          "time_s": 1820
+        },
+        "gdp_pdf": {
+          "score": 0.218,
+          "cost_usd": 1.64,
+          "time_s": 64.5
+        },
+        "automationbench_aa": {
+          "score": 0.714,
+          "cost_usd": 1.69,
+          "time_s": 238
+        },
+        "hle_diamond": {
+          "score": 0.738,
+          "cost_usd": 0.464,
+          "time_s": 124
+        },
+        "critpt_v2_hard": {
+          "score": 0.73,
+          "cost_usd": 1.05,
+          "time_s": 224
+        },
+        "terminal_bench_science": {
+          "score": 0.7,
+          "cost_usd": 24.3,
+          "time_s": 2620
+        },
+        "aa_omniscience": {
+          "score": 64,
+          "cost_usd": 0.0196,
+          "time_s": 4.92
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-fable-5-2",
+      "effort": "xhigh",
+      "intelligence_index": 62.22,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.616,
+          "cost_usd": 20.8,
+          "time_s": 2540
+        },
+        "frontiercode_2_0": {
+          "score": 0.476,
+          "cost_usd": 21.4,
+          "time_s": 2140
+        },
+        "aa_briefcase": {
+          "score": 1740,
+          "cost_usd": 28.6,
+          "time_s": 2800
+        },
+        "gdp_pdf": {
+          "score": 0.214,
+          "cost_usd": 1.85,
+          "time_s": 108
+        },
+        "automationbench_aa": {
+          "score": 0.742,
+          "cost_usd": 2.27,
+          "time_s": 310
+        },
+        "hle_diamond": {
+          "score": 0.758,
+          "cost_usd": 0.876,
+          "time_s": 213
+        },
+        "critpt_v2_hard": {
+          "score": 0.735,
+          "cost_usd": 2.47,
+          "time_s": 472
+        },
+        "terminal_bench_science": {
+          "score": 0.676,
+          "cost_usd": 31.4,
+          "time_s": 3310
+        },
+        "aa_omniscience": {
+          "score": 64.8,
+          "cost_usd": 0.0326,
+          "time_s": 7.63
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-fable-5-2",
+      "effort": "max",
+      "intelligence_index": 64.56,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.596,
+          "cost_usd": 31.6,
+          "time_s": 3830
+        },
+        "frontiercode_2_0": {
+          "score": 0.488,
+          "cost_usd": 43.4,
+          "time_s": 4270
+        },
+        "aa_briefcase": {
+          "score": 1790,
+          "cost_usd": 59.4,
+          "time_s": 5600
+        },
+        "gdp_pdf": {
+          "score": 0.242,
+          "cost_usd": 2.52,
+          "time_s": 283
+        },
+        "automationbench_aa": {
+          "score": 0.764,
+          "cost_usd": 4.45,
+          "time_s": 701
+        },
+        "hle_diamond": {
+          "score": 0.802,
+          "cost_usd": 1.73,
+          "time_s": 439
+        },
+        "critpt_v2_hard": {
+          "score": 0.765,
+          "cost_usd": 6.35,
+          "time_s": 1250
+        },
+        "terminal_bench_science": {
+          "score": 0.733,
+          "cost_usd": 45.2,
+          "time_s": 4630
+        },
+        "aa_omniscience": {
+          "score": 66.8,
+          "cost_usd": 0.219,
+          "time_s": 55.3
+        }
+      }
+    },
     {
       "provider": "claude_code",
       "model": "claude-fable-5-1",
       "effort": "low",
-      "intelligence_index": 38.48,
+      "intelligence_index": 38.68,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.404,
           "cost_usd": 7.2,
-          "time_s": 691
+          "time_s": 796
         },
         "frontiercode_2_0": {
           "score": 0.228,
           "cost_usd": 3.51,
-          "time_s": 313
+          "time_s": 361
         },
         "aa_briefcase": {
           "score": 1480,
           "cost_usd": 6.72,
-          "time_s": 650
+          "time_s": 748
         },
         "gdp_pdf": {
           "score": 0.28,
           "cost_usd": 1.91,
-          "time_s": 36.9
+          "time_s": 42.5
         },
         "automationbench_aa": {
           "score": 0.522,
           "cost_usd": 1.5,
-          "time_s": 164
+          "time_s": 189
         },
         "hle_diamond": {
           "score": 0.374,
           "cost_usd": 0.199,
-          "time_s": 41
+          "time_s": 47.3
         },
         "critpt_v2_hard": {
-          "score": 0.475,
+          "score": 0.495,
           "cost_usd": 0.892,
-          "time_s": 142
+          "time_s": 163
         },
         "terminal_bench_science": {
           "score": 0.214,
           "cost_usd": 12.9,
-          "time_s": 1020
+          "time_s": 1170
         },
         "aa_omniscience": {
           "score": 33.9,
           "cost_usd": 0.00799,
-          "time_s": 1.32
+          "time_s": 1.52
         }
       }
     },
@@ -60,52 +325,52 @@
       "provider": "claude_code",
       "model": "claude-fable-5-1",
       "effort": "medium",
-      "intelligence_index": 42.97,
+      "intelligence_index": 43.17,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.449,
           "cost_usd": 8.98,
-          "time_s": 860
+          "time_s": 1030
         },
         "frontiercode_2_0": {
           "score": 0.288,
           "cost_usd": 4.78,
-          "time_s": 409
+          "time_s": 491
         },
         "aa_briefcase": {
           "score": 1520,
           "cost_usd": 8.58,
-          "time_s": 788
+          "time_s": 946
         },
         "gdp_pdf": {
           "score": 0.268,
           "cost_usd": 1.95,
-          "time_s": 43.8
+          "time_s": 52.5
         },
         "automationbench_aa": {
           "score": 0.547,
           "cost_usd": 1.62,
-          "time_s": 178
+          "time_s": 213
         },
         "hle_diamond": {
           "score": 0.45,
           "cost_usd": 0.457,
-          "time_s": 93.8
+          "time_s": 113
         },
         "critpt_v2_hard": {
-          "score": 0.565,
+          "score": 0.585,
           "cost_usd": 1.38,
-          "time_s": 223
+          "time_s": 267
         },
         "terminal_bench_science": {
           "score": 0.29,
           "cost_usd": 15.3,
-          "time_s": 1250
+          "time_s": 1500
         },
         "aa_omniscience": {
           "score": 36.4,
           "cost_usd": 0.0159,
-          "time_s": 2.93
+          "time_s": 3.51
         }
       }
     },
@@ -113,52 +378,52 @@
       "provider": "claude_code",
       "model": "claude-fable-5-1",
       "effort": "high",
-      "intelligence_index": 47.02,
+      "intelligence_index": 47.17,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.52,
           "cost_usd": 11.5,
-          "time_s": 1160
+          "time_s": 1370
         },
         "frontiercode_2_0": {
           "score": 0.303,
           "cost_usd": 7.43,
-          "time_s": 614
+          "time_s": 724
         },
         "aa_briefcase": {
           "score": 1580,
           "cost_usd": 11.4,
-          "time_s": 1020
+          "time_s": 1210
         },
         "gdp_pdf": {
           "score": 0.268,
           "cost_usd": 2,
-          "time_s": 56.7
+          "time_s": 66.9
         },
         "automationbench_aa": {
           "score": 0.553,
           "cost_usd": 1.75,
-          "time_s": 195
+          "time_s": 230
         },
         "hle_diamond": {
           "score": 0.504,
           "cost_usd": 0.907,
-          "time_s": 187
+          "time_s": 220
         },
         "critpt_v2_hard": {
-          "score": 0.605,
+          "score": 0.62,
           "cost_usd": 2.39,
-          "time_s": 383
+          "time_s": 452
         },
         "terminal_bench_science": {
           "score": 0.395,
           "cost_usd": 20.3,
-          "time_s": 1640
+          "time_s": 1930
         },
         "aa_omniscience": {
           "score": 39.9,
           "cost_usd": 0.0232,
-          "time_s": 4.44
+          "time_s": 5.24
         }
       }
     },
@@ -166,52 +431,52 @@
       "provider": "claude_code",
       "model": "claude-fable-5-1",
       "effort": "xhigh",
-      "intelligence_index": 49.67,
+      "intelligence_index": 50.02,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.551,
           "cost_usd": 15.5,
-          "time_s": 1570
+          "time_s": 1900
         },
         "frontiercode_2_0": {
           "score": 0.357,
           "cost_usd": 12.6,
-          "time_s": 946
+          "time_s": 1140
         },
         "aa_briefcase": {
           "score": 1650,
           "cost_usd": 17.8,
-          "time_s": 1500
+          "time_s": 1810
         },
         "gdp_pdf": {
           "score": 0.262,
           "cost_usd": 2.31,
-          "time_s": 115
+          "time_s": 139
         },
         "automationbench_aa": {
           "score": 0.578,
           "cost_usd": 2.18,
-          "time_s": 248
+          "time_s": 300
         },
         "hle_diamond": {
           "score": 0.588,
           "cost_usd": 1.87,
-          "time_s": 373
+          "time_s": 452
         },
         "critpt_v2_hard": {
-          "score": 0.565,
+          "score": 0.6,
           "cost_usd": 4.33,
-          "time_s": 667
+          "time_s": 807
         },
         "terminal_bench_science": {
           "score": 0.405,
           "cost_usd": 25.8,
-          "time_s": 2080
+          "time_s": 2520
         },
         "aa_omniscience": {
           "score": 44.3,
           "cost_usd": 0.0908,
-          "time_s": 17.7
+          "time_s": 21.4
         }
       }
     },
@@ -219,52 +484,52 @@
       "provider": "claude_code",
       "model": "claude-fable-5-1",
       "effort": "max",
-      "intelligence_index": 49.01,
+      "intelligence_index": 49.16,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.52,
           "cost_usd": 18.8,
-          "time_s": 1930
+          "time_s": 2190
         },
         "frontiercode_2_0": {
           "score": 0.316,
           "cost_usd": 16.3,
-          "time_s": 1210
+          "time_s": 1370
         },
         "aa_briefcase": {
           "score": 1670,
           "cost_usd": 22.7,
-          "time_s": 1890
+          "time_s": 2140
         },
         "gdp_pdf": {
           "score": 0.262,
           "cost_usd": 2.76,
-          "time_s": 206
+          "time_s": 233
         },
         "automationbench_aa": {
           "score": 0.594,
           "cost_usd": 2.59,
-          "time_s": 314
+          "time_s": 356
         },
         "hle_diamond": {
           "score": 0.601,
           "cost_usd": 2.77,
-          "time_s": 562
+          "time_s": 637
         },
         "critpt_v2_hard": {
-          "score": 0.51,
+          "score": 0.525,
           "cost_usd": 4.55,
-          "time_s": 721
+          "time_s": 817
         },
         "terminal_bench_science": {
           "score": 0.433,
           "cost_usd": 28.1,
-          "time_s": 2450
+          "time_s": 2780
         },
         "aa_omniscience": {
           "score": 46.3,
           "cost_usd": 0.326,
-          "time_s": 65.7
+          "time_s": 74.4
         }
       }
     },
@@ -272,52 +537,52 @@
       "provider": "claude_code",
       "model": "claude-opus-5-5",
       "effort": "low",
-      "intelligence_index": 34.5,
+      "intelligence_index": 34.75,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.313,
           "cost_usd": 2.08,
-          "time_s": 291
+          "time_s": 358
         },
         "frontiercode_2_0": {
           "score": 0.158,
           "cost_usd": 0.627,
-          "time_s": 108
+          "time_s": 133
         },
         "aa_briefcase": {
           "score": 1280,
           "cost_usd": 1.15,
-          "time_s": 206
+          "time_s": 253
         },
         "gdp_pdf": {
           "score": 0.256,
           "cost_usd": 0.764,
-          "time_s": 22.4
+          "time_s": 27.5
         },
         "automationbench_aa": {
           "score": 0.529,
           "cost_usd": 0.493,
-          "time_s": 91.7
+          "time_s": 113
         },
         "hle_diamond": {
           "score": 0.417,
           "cost_usd": 0.0351,
-          "time_s": 12.2
+          "time_s": 15
         },
         "critpt_v2_hard": {
-          "score": 0.335,
+          "score": 0.36,
           "cost_usd": 0.119,
-          "time_s": 33.8
+          "time_s": 41.6
         },
         "terminal_bench_science": {
           "score": 0.243,
           "cost_usd": 2.81,
-          "time_s": 400
+          "time_s": 492
         },
         "aa_omniscience": {
           "score": 39,
           "cost_usd": 0.00627,
-          "time_s": 2.15
+          "time_s": 2.64
         }
       }
     },
@@ -325,52 +590,52 @@
       "provider": "claude_code",
       "model": "claude-opus-5-5",
       "effort": "medium",
-      "intelligence_index": 48.06,
+      "intelligence_index": 48.21,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.525,
           "cost_usd": 4.04,
-          "time_s": 590
+          "time_s": 739
         },
         "frontiercode_2_0": {
           "score": 0.331,
           "cost_usd": 1.71,
-          "time_s": 242
+          "time_s": 303
         },
         "aa_briefcase": {
           "score": 1620,
           "cost_usd": 4.4,
-          "time_s": 650
+          "time_s": 814
         },
         "gdp_pdf": {
           "score": 0.256,
           "cost_usd": 0.795,
-          "time_s": 34.8
+          "time_s": 43.6
         },
         "automationbench_aa": {
           "score": 0.612,
           "cost_usd": 0.638,
-          "time_s": 117
+          "time_s": 147
         },
         "hle_diamond": {
           "score": 0.514,
           "cost_usd": 0.13,
-          "time_s": 49.2
+          "time_s": 61.6
         },
         "critpt_v2_hard": {
-          "score": 0.525,
+          "score": 0.54,
           "cost_usd": 0.251,
-          "time_s": 73.2
+          "time_s": 91.7
         },
         "terminal_bench_science": {
           "score": 0.433,
           "cost_usd": 6.8,
-          "time_s": 856
+          "time_s": 1070
         },
         "aa_omniscience": {
           "score": 39.8,
           "cost_usd": 0.00824,
-          "time_s": 2.94
+          "time_s": 3.68
         }
       }
     },
@@ -378,52 +643,52 @@
       "provider": "claude_code",
       "model": "claude-opus-5-5",
       "effort": "high",
-      "intelligence_index": 51.69,
+      "intelligence_index": 51.84,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.566,
           "cost_usd": 5.12,
-          "time_s": 777
+          "time_s": 955
         },
         "frontiercode_2_0": {
           "score": 0.359,
           "cost_usd": 2.49,
-          "time_s": 331
+          "time_s": 407
         },
         "aa_briefcase": {
           "score": 1680,
           "cost_usd": 6.27,
-          "time_s": 877
+          "time_s": 1080
         },
         "gdp_pdf": {
           "score": 0.288,
           "cost_usd": 0.825,
-          "time_s": 46.3
+          "time_s": 56.9
         },
         "automationbench_aa": {
           "score": 0.632,
           "cost_usd": 0.699,
-          "time_s": 128
+          "time_s": 158
         },
         "hle_diamond": {
           "score": 0.556,
           "cost_usd": 0.194,
-          "time_s": 73.6
+          "time_s": 90.4
         },
         "critpt_v2_hard": {
-          "score": 0.58,
+          "score": 0.595,
           "cost_usd": 0.384,
-          "time_s": 112
+          "time_s": 137
         },
         "terminal_bench_science": {
           "score": 0.49,
           "cost_usd": 10,
-          "time_s": 1190
+          "time_s": 1470
         },
         "aa_omniscience": {
           "score": 42.4,
           "cost_usd": 0.00931,
-          "time_s": 3.33
+          "time_s": 4.1
         }
       }
     },
@@ -431,52 +696,52 @@
       "provider": "claude_code",
       "model": "claude-opus-5-5",
       "effort": "xhigh",
-      "intelligence_index": 56.99,
+      "intelligence_index": 57.44,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.596,
           "cost_usd": 8.78,
-          "time_s": 1290
+          "time_s": 1590
         },
         "frontiercode_2_0": {
           "score": 0.438,
           "cost_usd": 6.49,
-          "time_s": 775
+          "time_s": 957
         },
         "aa_briefcase": {
           "score": 1760,
           "cost_usd": 12.3,
-          "time_s": 1510
+          "time_s": 1860
         },
         "gdp_pdf": {
           "score": 0.266,
           "cost_usd": 0.964,
-          "time_s": 98.3
+          "time_s": 121
         },
         "automationbench_aa": {
           "score": 0.65,
           "cost_usd": 0.878,
-          "time_s": 166
+          "time_s": 205
         },
         "hle_diamond": {
           "score": 0.64,
           "cost_usd": 0.47,
-          "time_s": 177
+          "time_s": 219
         },
         "critpt_v2_hard": {
-          "score": 0.63,
+          "score": 0.675,
           "cost_usd": 0.966,
-          "time_s": 279
+          "time_s": 345
         },
         "terminal_bench_science": {
           "score": 0.619,
           "cost_usd": 14.1,
-          "time_s": 1710
+          "time_s": 2110
         },
         "aa_omniscience": {
           "score": 43.1,
           "cost_usd": 0.0148,
-          "time_s": 5.35
+          "time_s": 6.61
         }
       }
     },
@@ -484,52 +749,105 @@
       "provider": "claude_code",
       "model": "claude-opus-5-5",
       "effort": "max",
-      "intelligence_index": 58.41,
+      "intelligence_index": 59.11,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.596,
           "cost_usd": 13.1,
-          "time_s": 1680
+          "time_s": 2200
         },
         "frontiercode_2_0": {
           "score": 0.464,
           "cost_usd": 13.5,
-          "time_s": 1330
+          "time_s": 1740
         },
         "aa_briefcase": {
           "score": 1800,
           "cost_usd": 21,
-          "time_s": 2240
+          "time_s": 2940
         },
         "gdp_pdf": {
           "score": 0.262,
           "cost_usd": 1.55,
-          "time_s": 281
+          "time_s": 367
         },
         "automationbench_aa": {
           "score": 0.695,
           "cost_usd": 1.43,
-          "time_s": 272
+          "time_s": 357
         },
         "hle_diamond": {
           "score": 0.679,
           "cost_usd": 1.2,
-          "time_s": 396
+          "time_s": 518
         },
         "critpt_v2_hard": {
-          "score": 0.61,
+          "score": 0.68,
           "cost_usd": 2.58,
-          "time_s": 644
+          "time_s": 844
         },
         "terminal_bench_science": {
           "score": 0.59,
           "cost_usd": 20,
-          "time_s": 2030
+          "time_s": 2670
         },
         "aa_omniscience": {
           "score": 48.1,
           "cost_usd": 0.187,
-          "time_s": 61.8
+          "time_s": 81
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-opus-5",
+      "effort": "max",
+      "intelligence_index": 44.16,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.49,
+          "cost_usd": 19.3,
+          "time_s": 2560
+        },
+        "frontiercode_2_0": {
+          "score": 0.312,
+          "cost_usd": 12.3,
+          "time_s": 1290
+        },
+        "aa_briefcase": {
+          "score": 1650,
+          "cost_usd": 17.8,
+          "time_s": 2130
+        },
+        "gdp_pdf": {
+          "score": 0.216,
+          "cost_usd": 1.09,
+          "time_s": 102
+        },
+        "automationbench_aa": {
+          "score": 0.566,
+          "cost_usd": 1.32,
+          "time_s": 302
+        },
+        "hle_diamond": {
+          "score": 0.448,
+          "cost_usd": 1.06,
+          "time_s": 527
+        },
+        "critpt_v2_hard": {
+          "score": 0.5,
+          "cost_usd": 2.9,
+          "time_s": 1010
+        },
+        "terminal_bench_science": {
+          "score": 0.286,
+          "cost_usd": 32.4,
+          "time_s": 3540
+        },
+        "aa_omniscience": {
+          "score": 37.6,
+          "cost_usd": 0.0267,
+          "time_s": 12.9
         }
       }
     },
@@ -537,52 +855,52 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "low",
-      "intelligence_index": 25.3,
+      "intelligence_index": 25.65,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.207,
           "cost_usd": 1.28,
-          "time_s": 231
+          "time_s": 301
         },
         "frontiercode_2_0": {
           "score": 0.0713,
           "cost_usd": 0.25,
-          "time_s": 60
+          "time_s": 78.3
         },
         "aa_briefcase": {
           "score": 1270,
           "cost_usd": 0.802,
-          "time_s": 261
+          "time_s": 341
         },
         "gdp_pdf": {
           "score": 0.16,
           "cost_usd": 0.372,
-          "time_s": 11
+          "time_s": 14.4
         },
         "automationbench_aa": {
           "score": 0.494,
           "cost_usd": 0.241,
-          "time_s": 63.9
+          "time_s": 83.4
         },
         "hle_diamond": {
           "score": 0.206,
           "cost_usd": 0.015,
-          "time_s": 7.78
+          "time_s": 10.1
         },
         "critpt_v2_hard": {
-          "score": 0.225,
+          "score": 0.26,
           "cost_usd": 0.0731,
-          "time_s": 28.8
+          "time_s": 37.5
         },
         "terminal_bench_science": {
           "score": 0.105,
           "cost_usd": 1.23,
-          "time_s": 271
+          "time_s": 353
         },
         "aa_omniscience": {
           "score": 20.3,
           "cost_usd": 0.00291,
-          "time_s": 1.47
+          "time_s": 1.91
         }
       }
     },
@@ -590,52 +908,52 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "medium",
-      "intelligence_index": 30.32,
+      "intelligence_index": 30.82,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.298,
           "cost_usd": 1.58,
-          "time_s": 306
+          "time_s": 367
         },
         "frontiercode_2_0": {
           "score": 0.11,
           "cost_usd": 0.324,
-          "time_s": 78.9
+          "time_s": 94.5
         },
         "aa_briefcase": {
           "score": 1440,
           "cost_usd": 1.39,
-          "time_s": 424
+          "time_s": 509
         },
         "gdp_pdf": {
           "score": 0.202,
           "cost_usd": 0.381,
-          "time_s": 16.8
+          "time_s": 20.2
         },
         "automationbench_aa": {
           "score": 0.549,
           "cost_usd": 0.262,
-          "time_s": 72.5
+          "time_s": 86.8
         },
         "hle_diamond": {
           "score": 0.238,
           "cost_usd": 0.0327,
-          "time_s": 18.6
+          "time_s": 22.3
         },
         "critpt_v2_hard": {
-          "score": 0.285,
+          "score": 0.335,
           "cost_usd": 0.0926,
-          "time_s": 40.1
+          "time_s": 48
         },
         "terminal_bench_science": {
           "score": 0.162,
           "cost_usd": 2.14,
-          "time_s": 437
+          "time_s": 524
         },
         "aa_omniscience": {
           "score": 18.6,
           "cost_usd": 0.00312,
-          "time_s": 1.64
+          "time_s": 1.97
         }
       }
     },
@@ -643,52 +961,52 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "high",
-      "intelligence_index": 41.12,
+      "intelligence_index": 41.52,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.439,
           "cost_usd": 2.19,
-          "time_s": 427
+          "time_s": 549
         },
         "frontiercode_2_0": {
           "score": 0.257,
           "cost_usd": 0.76,
-          "time_s": 154
+          "time_s": 198
         },
         "aa_briefcase": {
           "score": 1630,
           "cost_usd": 3.27,
-          "time_s": 780
+          "time_s": 1000
         },
         "gdp_pdf": {
           "score": 0.252,
           "cost_usd": 0.409,
-          "time_s": 31
+          "time_s": 39.8
         },
         "automationbench_aa": {
           "score": 0.594,
           "cost_usd": 0.313,
-          "time_s": 81.9
+          "time_s": 105
         },
         "hle_diamond": {
           "score": 0.338,
           "cost_usd": 0.107,
-          "time_s": 58.8
+          "time_s": 75.5
         },
         "critpt_v2_hard": {
-          "score": 0.475,
+          "score": 0.515,
           "cost_usd": 0.181,
-          "time_s": 76.3
+          "time_s": 98.1
         },
         "terminal_bench_science": {
           "score": 0.343,
           "cost_usd": 4.98,
-          "time_s": 821
+          "time_s": 1060
         },
         "aa_omniscience": {
           "score": 18.7,
           "cost_usd": 0.00567,
-          "time_s": 2.97
+          "time_s": 3.82
         }
       }
     },
@@ -696,52 +1014,52 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "xhigh",
-      "intelligence_index": 49.57,
+      "intelligence_index": 49.92,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.571,
           "cost_usd": 6.08,
-          "time_s": 1080
+          "time_s": 1420
         },
         "frontiercode_2_0": {
           "score": 0.356,
           "cost_usd": 2.71,
-          "time_s": 480
+          "time_s": 631
         },
         "aa_briefcase": {
           "score": 1740,
           "cost_usd": 6.98,
-          "time_s": 1360
+          "time_s": 1790
         },
         "gdp_pdf": {
           "score": 0.246,
           "cost_usd": 0.46,
-          "time_s": 60.1
+          "time_s": 79.1
         },
         "automationbench_aa": {
           "score": 0.655,
           "cost_usd": 0.422,
-          "time_s": 117
+          "time_s": 154
         },
         "hle_diamond": {
           "score": 0.441,
           "cost_usd": 0.246,
-          "time_s": 138
+          "time_s": 181
         },
         "critpt_v2_hard": {
-          "score": 0.54,
+          "score": 0.575,
           "cost_usd": 0.448,
-          "time_s": 195
+          "time_s": 256
         },
         "terminal_bench_science": {
           "score": 0.524,
           "cost_usd": 12.8,
-          "time_s": 1730
+          "time_s": 2280
         },
         "aa_omniscience": {
           "score": 20.6,
           "cost_usd": 0.00883,
-          "time_s": 4.76
+          "time_s": 6.27
         }
       }
     },
@@ -749,52 +1067,52 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "max",
-      "intelligence_index": 54.24,
+      "intelligence_index": 54.54,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.636,
           "cost_usd": 12.6,
-          "time_s": 1800
+          "time_s": 2530
         },
         "frontiercode_2_0": {
           "score": 0.417,
           "cost_usd": 11.6,
-          "time_s": 1490
+          "time_s": 2090
         },
         "aa_briefcase": {
-          "score": 1810,
+          "score": 1820,
           "cost_usd": 20.5,
-          "time_s": 2940
+          "time_s": 4130
         },
         "gdp_pdf": {
           "score": 0.258,
           "cost_usd": 0.794,
-          "time_s": 208
+          "time_s": 292
         },
         "automationbench_aa": {
           "score": 0.718,
           "cost_usd": 1.03,
-          "time_s": 286
+          "time_s": 402
         },
         "hle_diamond": {
           "score": 0.533,
           "cost_usd": 0.804,
-          "time_s": 377
+          "time_s": 530
         },
         "critpt_v2_hard": {
-          "score": 0.56,
+          "score": 0.59,
           "cost_usd": 1.93,
-          "time_s": 663
+          "time_s": 931
         },
         "terminal_bench_science": {
           "score": 0.533,
           "cost_usd": 23.8,
-          "time_s": 2390
+          "time_s": 3360
         },
         "aa_omniscience": {
           "score": 30.5,
           "cost_usd": 0.152,
-          "time_s": 71.2
+          "time_s": 100
         }
       }
     },
@@ -807,47 +1125,47 @@
         "terminalbench_4_0": {
           "score": 0.126,
           "cost_usd": 0.119,
-          "time_s": 250
+          "time_s": 324
         },
         "frontiercode_2_0": {
           "score": 0.0804,
           "cost_usd": 0.0389,
-          "time_s": 91.9
+          "time_s": 119
         },
         "aa_briefcase": {
           "score": 1110,
           "cost_usd": 0.0472,
-          "time_s": 143
+          "time_s": 186
         },
         "gdp_pdf": {
           "score": 0.112,
           "cost_usd": 0.0193,
-          "time_s": 12.1
+          "time_s": 15.7
         },
         "automationbench_aa": {
           "score": 0.229,
           "cost_usd": 0.0153,
-          "time_s": 46.2
+          "time_s": 60
         },
         "hle_diamond": {
           "score": 0.141,
           "cost_usd": 0.00172,
-          "time_s": 11.7
+          "time_s": 15.3
         },
         "critpt_v2_hard": {
           "score": 0.215,
           "cost_usd": 0.00829,
-          "time_s": 43.6
+          "time_s": 56.7
         },
         "terminal_bench_science": {
           "score": 0.019,
           "cost_usd": 0.108,
-          "time_s": 208
+          "time_s": 270
         },
         "aa_omniscience": {
           "score": 2.17,
           "cost_usd": 0.000253,
-          "time_s": 1.68
+          "time_s": 2.18
         }
       }
     },
@@ -855,52 +1173,52 @@
       "provider": "claude_code",
       "model": "claude-haiku-5-5",
       "effort": "medium",
-      "intelligence_index": 24.55,
+      "intelligence_index": 24.6,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.152,
           "cost_usd": 0.194,
-          "time_s": 389
+          "time_s": 482
         },
         "frontiercode_2_0": {
           "score": 0.161,
           "cost_usd": 0.0762,
-          "time_s": 172
+          "time_s": 213
         },
         "aa_briefcase": {
           "score": 1370,
           "cost_usd": 0.133,
-          "time_s": 360
+          "time_s": 446
         },
         "gdp_pdf": {
           "score": 0.152,
           "cost_usd": 0.0206,
-          "time_s": 21.9
+          "time_s": 27.1
         },
         "automationbench_aa": {
           "score": 0.286,
           "cost_usd": 0.0191,
-          "time_s": 61.6
+          "time_s": 76.3
         },
         "hle_diamond": {
           "score": 0.168,
           "cost_usd": 0.0043,
-          "time_s": 30.9
+          "time_s": 38.3
         },
         "critpt_v2_hard": {
-          "score": 0.3,
+          "score": 0.305,
           "cost_usd": 0.0167,
-          "time_s": 89.3
+          "time_s": 111
         },
         "terminal_bench_science": {
           "score": 0.0714,
           "cost_usd": 0.246,
-          "time_s": 397
+          "time_s": 491
         },
         "aa_omniscience": {
           "score": 4.17,
           "cost_usd": 0.000314,
-          "time_s": 2.17
+          "time_s": 2.68
         }
       }
     },
@@ -908,52 +1226,52 @@
       "provider": "claude_code",
       "model": "claude-haiku-5-5",
       "effort": "high",
-      "intelligence_index": 29.62,
+      "intelligence_index": 29.87,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.217,
           "cost_usd": 0.331,
-          "time_s": 559
+          "time_s": 732
         },
         "frontiercode_2_0": {
           "score": 0.232,
           "cost_usd": 0.14,
-          "time_s": 281
+          "time_s": 368
         },
         "aa_briefcase": {
           "score": 1440,
           "cost_usd": 0.223,
-          "time_s": 528
+          "time_s": 691
         },
         "gdp_pdf": {
           "score": 0.172,
           "cost_usd": 0.0226,
-          "time_s": 33.6
+          "time_s": 44
         },
         "automationbench_aa": {
           "score": 0.337,
           "cost_usd": 0.0227,
-          "time_s": 71
+          "time_s": 92.9
         },
         "hle_diamond": {
           "score": 0.237,
           "cost_usd": 0.0111,
-          "time_s": 74.1
+          "time_s": 97
         },
         "critpt_v2_hard": {
-          "score": 0.425,
+          "score": 0.45,
           "cost_usd": 0.0334,
-          "time_s": 162
+          "time_s": 212
         },
         "terminal_bench_science": {
           "score": 0.1,
           "cost_usd": 0.428,
-          "time_s": 600
+          "time_s": 786
         },
         "aa_omniscience": {
           "score": 5.3,
           "cost_usd": 0.000402,
-          "time_s": 2.59
+          "time_s": 3.39
         }
       }
     },
@@ -961,52 +1279,52 @@
       "provider": "claude_code",
       "model": "claude-haiku-5-5",
       "effort": "xhigh",
-      "intelligence_index": 34.34,
+      "intelligence_index": 34.64,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.293,
           "cost_usd": 0.46,
-          "time_s": 782
+          "time_s": 984
         },
         "frontiercode_2_0": {
           "score": 0.299,
           "cost_usd": 0.256,
-          "time_s": 498
+          "time_s": 627
         },
         "aa_briefcase": {
           "score": 1520,
           "cost_usd": 0.366,
-          "time_s": 811
+          "time_s": 1020
         },
         "gdp_pdf": {
           "score": 0.182,
           "cost_usd": 0.0273,
-          "time_s": 65.5
+          "time_s": 82.4
         },
         "automationbench_aa": {
           "score": 0.36,
           "cost_usd": 0.0276,
-          "time_s": 94.4
+          "time_s": 119
         },
         "hle_diamond": {
           "score": 0.288,
           "cost_usd": 0.0242,
-          "time_s": 163
+          "time_s": 205
         },
         "critpt_v2_hard": {
-          "score": 0.445,
+          "score": 0.475,
           "cost_usd": 0.0594,
-          "time_s": 291
+          "time_s": 366
         },
         "terminal_bench_science": {
           "score": 0.181,
           "cost_usd": 0.652,
-          "time_s": 872
+          "time_s": 1100
         },
         "aa_omniscience": {
           "score": 7.83,
           "cost_usd": 0.000693,
-          "time_s": 4.56
+          "time_s": 5.73
         }
       }
     },
@@ -1014,52 +1332,52 @@
       "provider": "claude_code",
       "model": "claude-haiku-5-5",
       "effort": "max",
-      "intelligence_index": 36.23,
+      "intelligence_index": 36.48,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.328,
           "cost_usd": 0.652,
-          "time_s": 914
+          "time_s": 1360
         },
         "frontiercode_2_0": {
           "score": 0.349,
           "cost_usd": 0.461,
-          "time_s": 672
+          "time_s": 1000
         },
         "aa_briefcase": {
-          "score": 1580,
+          "score": 1570,
           "cost_usd": 0.675,
-          "time_s": 1120
+          "time_s": 1670
         },
         "gdp_pdf": {
           "score": 0.208,
           "cost_usd": 0.0527,
-          "time_s": 185
+          "time_s": 276
         },
         "automationbench_aa": {
           "score": 0.354,
           "cost_usd": 0.0423,
-          "time_s": 134
+          "time_s": 201
         },
         "hle_diamond": {
           "score": 0.296,
           "cost_usd": 0.0467,
-          "time_s": 246
+          "time_s": 367
         },
         "critpt_v2_hard": {
-          "score": 0.41,
+          "score": 0.435,
           "cost_usd": 0.101,
-          "time_s": 390
+          "time_s": 582
         },
         "terminal_bench_science": {
           "score": 0.2,
           "cost_usd": 1.03,
-          "time_s": 1010
+          "time_s": 1500
         },
         "aa_omniscience": {
           "score": 12.3,
           "cost_usd": 0.00601,
-          "time_s": 31.6
+          "time_s": 47.2
         }
       }
     },
@@ -1067,52 +1385,52 @@
       "provider": "codex",
       "model": "gpt-6-astra",
       "effort": "low",
-      "intelligence_index": 43.03,
+      "intelligence_index": 43.33,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.419,
           "cost_usd": 2.25,
-          "time_s": 253
+          "time_s": 368
         },
         "frontiercode_2_0": {
           "score": 0.262,
           "cost_usd": 1.34,
-          "time_s": 116
+          "time_s": 168
         },
         "aa_briefcase": {
           "score": 1260,
           "cost_usd": 1.44,
-          "time_s": 169
+          "time_s": 245
         },
         "gdp_pdf": {
           "score": 0.304,
           "cost_usd": 1.7,
-          "time_s": 21.3
+          "time_s": 31
         },
         "automationbench_aa": {
           "score": 0.591,
           "cost_usd": 0.999,
-          "time_s": 104
+          "time_s": 151
         },
         "hle_diamond": {
           "score": 0.451,
           "cost_usd": 0.05,
-          "time_s": 14.8
+          "time_s": 21.5
         },
         "critpt_v2_hard": {
-          "score": 0.6,
+          "score": 0.63,
           "cost_usd": 0.237,
-          "time_s": 60
+          "time_s": 87.2
         },
         "terminal_bench_science": {
           "score": 0.371,
           "cost_usd": 4.12,
-          "time_s": 489
+          "time_s": 711
         },
         "aa_omniscience": {
           "score": 40.3,
           "cost_usd": 0.00697,
-          "time_s": 1.96
+          "time_s": 2.84
         }
       }
     },
@@ -1120,52 +1438,52 @@
       "provider": "codex",
       "model": "gpt-6-astra",
       "effort": "medium",
-      "intelligence_index": 51.45,
+      "intelligence_index": 51.55,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.495,
           "cost_usd": 4.43,
-          "time_s": 486
+          "time_s": 688
         },
         "frontiercode_2_0": {
           "score": 0.366,
           "cost_usd": 2.8,
-          "time_s": 221
+          "time_s": 312
         },
         "aa_briefcase": {
           "score": 1460,
           "cost_usd": 3.94,
-          "time_s": 433
+          "time_s": 613
         },
         "gdp_pdf": {
           "score": 0.304,
           "cost_usd": 1.72,
-          "time_s": 28.2
+          "time_s": 39.9
         },
         "automationbench_aa": {
           "score": 0.646,
           "cost_usd": 1.18,
-          "time_s": 128
+          "time_s": 182
         },
         "hle_diamond": {
           "score": 0.527,
           "cost_usd": 0.12,
-          "time_s": 37.2
+          "time_s": 52.7
         },
         "critpt_v2_hard": {
-          "score": 0.71,
+          "score": 0.72,
           "cost_usd": 0.407,
-          "time_s": 103
+          "time_s": 145
         },
         "terminal_bench_science": {
           "score": 0.533,
           "cost_usd": 7.2,
-          "time_s": 845
+          "time_s": 1200
         },
         "aa_omniscience": {
           "score": 41.4,
           "cost_usd": 0.0109,
-          "time_s": 3.18
+          "time_s": 4.51
         }
       }
     },
@@ -1178,47 +1496,47 @@
         "terminalbench_4_0": {
           "score": 0.54,
           "cost_usd": 4.05,
-          "time_s": 496
+          "time_s": 783
         },
         "frontiercode_2_0": {
           "score": 0.401,
           "cost_usd": 3.77,
-          "time_s": 310
+          "time_s": 489
         },
         "aa_briefcase": {
           "score": 1500,
           "cost_usd": 4.76,
-          "time_s": 523
+          "time_s": 827
         },
         "gdp_pdf": {
           "score": 0.31,
           "cost_usd": 1.79,
-          "time_s": 52.5
+          "time_s": 82.9
         },
         "automationbench_aa": {
           "score": 0.666,
           "cost_usd": 1.3,
-          "time_s": 150
+          "time_s": 236
         },
         "hle_diamond": {
           "score": 0.593,
           "cost_usd": 0.257,
-          "time_s": 81.7
+          "time_s": 129
         },
         "critpt_v2_hard": {
           "score": 0.715,
           "cost_usd": 0.714,
-          "time_s": 183
+          "time_s": 289
         },
         "terminal_bench_science": {
           "score": 0.595,
           "cost_usd": 8.66,
-          "time_s": 1100
+          "time_s": 1730
         },
         "aa_omniscience": {
           "score": 44.6,
           "cost_usd": 0.028,
-          "time_s": 8.71
+          "time_s": 13.8
         }
       }
     },
@@ -1226,52 +1544,52 @@
       "provider": "codex",
       "model": "gpt-6-astra",
       "effort": "xhigh",
-      "intelligence_index": 55.26,
+      "intelligence_index": 55.31,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.596,
           "cost_usd": 5.86,
-          "time_s": 678
+          "time_s": 1110
         },
         "frontiercode_2_0": {
           "score": 0.414,
           "cost_usd": 4.04,
-          "time_s": 319
+          "time_s": 523
         },
         "aa_briefcase": {
           "score": 1540,
           "cost_usd": 6.56,
-          "time_s": 700
+          "time_s": 1150
         },
         "gdp_pdf": {
           "score": 0.322,
           "cost_usd": 1.91,
-          "time_s": 87.4
+          "time_s": 143
         },
         "automationbench_aa": {
           "score": 0.672,
           "cost_usd": 1.41,
-          "time_s": 161
+          "time_s": 265
         },
         "hle_diamond": {
           "score": 0.615,
           "cost_usd": 0.37,
-          "time_s": 114
+          "time_s": 187
         },
         "critpt_v2_hard": {
-          "score": 0.705,
+          "score": 0.71,
           "cost_usd": 0.849,
-          "time_s": 212
+          "time_s": 347
         },
         "terminal_bench_science": {
           "score": 0.548,
           "cost_usd": 7.91,
-          "time_s": 1000
+          "time_s": 1650
         },
         "aa_omniscience": {
           "score": 43.7,
           "cost_usd": 0.0518,
-          "time_s": 15.8
+          "time_s": 26
         }
       }
     },
@@ -1284,47 +1602,47 @@
         "terminalbench_4_0": {
           "score": 0.591,
           "cost_usd": 8.5,
-          "time_s": 1010
+          "time_s": 2010
         },
         "frontiercode_2_0": {
           "score": 0.424,
           "cost_usd": 6.54,
-          "time_s": 495
+          "time_s": 986
         },
         "aa_briefcase": {
           "score": 1570,
           "cost_usd": 9.5,
-          "time_s": 917
+          "time_s": 1830
         },
         "gdp_pdf": {
           "score": 0.31,
           "cost_usd": 2.08,
-          "time_s": 123
+          "time_s": 246
         },
         "automationbench_aa": {
           "score": 0.685,
           "cost_usd": 1.6,
-          "time_s": 172
+          "time_s": 343
         },
         "hle_diamond": {
           "score": 0.638,
           "cost_usd": 0.551,
-          "time_s": 145
+          "time_s": 290
         },
         "critpt_v2_hard": {
           "score": 0.705,
           "cost_usd": 1.14,
-          "time_s": 244
+          "time_s": 485
         },
         "terminal_bench_science": {
           "score": 0.633,
           "cost_usd": 17.5,
-          "time_s": 2160
+          "time_s": 4290
         },
         "aa_omniscience": {
           "score": 42.4,
           "cost_usd": 0.0988,
-          "time_s": 26.1
+          "time_s": 51.9
         }
       }
     },
@@ -1332,52 +1650,52 @@
       "provider": "codex",
       "model": "gpt-6.1-sol",
       "effort": "low",
-      "intelligence_index": 34.5,
+      "intelligence_index": 34.8,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.308,
           "cost_usd": 0.383,
-          "time_s": 282
+          "time_s": 309
         },
         "frontiercode_2_0": {
           "score": 0.202,
           "cost_usd": 0.201,
-          "time_s": 101
+          "time_s": 111
         },
         "aa_briefcase": {
           "score": 1110,
           "cost_usd": 0.177,
-          "time_s": 109
+          "time_s": 120
         },
         "gdp_pdf": {
           "score": 0.27,
           "cost_usd": 0.334,
-          "time_s": 18.6
+          "time_s": 20.4
         },
         "automationbench_aa": {
           "score": 0.526,
           "cost_usd": 0.159,
-          "time_s": 88.6
+          "time_s": 97.3
         },
         "hle_diamond": {
           "score": 0.382,
           "cost_usd": 0.00863,
-          "time_s": 11.9
+          "time_s": 13.1
         },
         "critpt_v2_hard": {
-          "score": 0.595,
+          "score": 0.625,
           "cost_usd": 0.0433,
-          "time_s": 53
+          "time_s": 58.2
         },
         "terminal_bench_science": {
           "score": 0.11,
           "cost_usd": 0.242,
-          "time_s": 153
+          "time_s": 168
         },
         "aa_omniscience": {
           "score": 38,
           "cost_usd": 0.00149,
-          "time_s": 2.03
+          "time_s": 2.22
         }
       }
     },
@@ -1385,52 +1703,52 @@
       "provider": "codex",
       "model": "gpt-6.1-sol",
       "effort": "medium",
-      "intelligence_index": 46.15,
+      "intelligence_index": 46.35,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.48,
           "cost_usd": 0.614,
-          "time_s": 508
+          "time_s": 534
         },
         "frontiercode_2_0": {
           "score": 0.334,
           "cost_usd": 0.411,
-          "time_s": 198
+          "time_s": 209
         },
         "aa_briefcase": {
           "score": 1360,
           "cost_usd": 0.464,
-          "time_s": 297
+          "time_s": 313
         },
         "gdp_pdf": {
           "score": 0.3,
           "cost_usd": 0.337,
-          "time_s": 23.5
+          "time_s": 24.7
         },
         "automationbench_aa": {
           "score": 0.626,
           "cost_usd": 0.196,
-          "time_s": 119
+          "time_s": 125
         },
         "hle_diamond": {
           "score": 0.46,
           "cost_usd": 0.0185,
-          "time_s": 27.4
+          "time_s": 28.8
         },
         "critpt_v2_hard": {
-          "score": 0.65,
+          "score": 0.67,
           "cost_usd": 0.0714,
-          "time_s": 88.1
+          "time_s": 92.7
         },
         "terminal_bench_science": {
           "score": 0.371,
           "cost_usd": 0.872,
-          "time_s": 470
+          "time_s": 494
         },
         "aa_omniscience": {
           "score": 40.2,
           "cost_usd": 0.00215,
-          "time_s": 3.03
+          "time_s": 3.19
         }
       }
     },
@@ -1438,52 +1756,52 @@
       "provider": "codex",
       "model": "gpt-6.1-sol",
       "effort": "high",
-      "intelligence_index": 50.23,
+      "intelligence_index": 50.33,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.515,
           "cost_usd": 0.828,
-          "time_s": 629
+          "time_s": 747
         },
         "frontiercode_2_0": {
           "score": 0.367,
           "cost_usd": 0.63,
-          "time_s": 280
+          "time_s": 332
         },
         "aa_briefcase": {
           "score": 1470,
           "cost_usd": 0.837,
-          "time_s": 492
+          "time_s": 584
         },
         "gdp_pdf": {
           "score": 0.32,
           "cost_usd": 0.349,
-          "time_s": 38.5
+          "time_s": 45.7
         },
         "automationbench_aa": {
           "score": 0.645,
           "cost_usd": 0.226,
-          "time_s": 132
+          "time_s": 157
         },
         "hle_diamond": {
           "score": 0.519,
           "cost_usd": 0.0433,
-          "time_s": 60.6
+          "time_s": 72
         },
         "critpt_v2_hard": {
-          "score": 0.675,
+          "score": 0.685,
           "cost_usd": 0.134,
-          "time_s": 154
+          "time_s": 183
         },
         "terminal_bench_science": {
           "score": 0.462,
           "cost_usd": 1.61,
-          "time_s": 774
+          "time_s": 919
         },
         "aa_omniscience": {
           "score": 41,
           "cost_usd": 0.00493,
-          "time_s": 6.76
+          "time_s": 8.02
         }
       }
     },
@@ -1491,52 +1809,52 @@
       "provider": "codex",
       "model": "gpt-6.1-sol",
       "effort": "xhigh",
-      "intelligence_index": 52.31,
+      "intelligence_index": 52.46,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.54,
           "cost_usd": 1.03,
-          "time_s": 820
+          "time_s": 1040
         },
         "frontiercode_2_0": {
           "score": 0.385,
           "cost_usd": 0.703,
-          "time_s": 315
+          "time_s": 398
         },
         "aa_briefcase": {
           "score": 1500,
           "cost_usd": 1.04,
-          "time_s": 627
+          "time_s": 792
         },
         "gdp_pdf": {
           "score": 0.318,
           "cost_usd": 0.368,
-          "time_s": 65.4
+          "time_s": 82.5
         },
         "automationbench_aa": {
           "score": 0.666,
           "cost_usd": 0.251,
-          "time_s": 153
+          "time_s": 193
         },
         "hle_diamond": {
           "score": 0.558,
           "cost_usd": 0.0663,
-          "time_s": 93.7
+          "time_s": 118
         },
         "critpt_v2_hard": {
-          "score": 0.68,
+          "score": 0.695,
           "cost_usd": 0.167,
-          "time_s": 194
+          "time_s": 245
         },
         "terminal_bench_science": {
           "score": 0.505,
           "cost_usd": 2.3,
-          "time_s": 1140
+          "time_s": 1440
         },
         "aa_omniscience": {
           "score": 42.4,
           "cost_usd": 0.00918,
-          "time_s": 12.9
+          "time_s": 16.3
         }
       }
     },
@@ -1544,52 +1862,105 @@
       "provider": "codex",
       "model": "gpt-6.1-sol",
       "effort": "max",
-      "intelligence_index": 54.51,
+      "intelligence_index": 54.61,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.561,
           "cost_usd": 1.82,
-          "time_s": 1370
+          "time_s": 1880
         },
         "frontiercode_2_0": {
           "score": 0.406,
           "cost_usd": 1.13,
-          "time_s": 505
+          "time_s": 692
         },
         "aa_briefcase": {
-          "score": 1560,
+          "score": 1550,
           "cost_usd": 2.31,
-          "time_s": 1460
+          "time_s": 2000
         },
         "gdp_pdf": {
           "score": 0.31,
           "cost_usd": 0.42,
-          "time_s": 123
+          "time_s": 169
         },
         "automationbench_aa": {
           "score": 0.649,
           "cost_usd": 0.297,
-          "time_s": 177
+          "time_s": 243
         },
         "hle_diamond": {
           "score": 0.588,
           "cost_usd": 0.109,
-          "time_s": 137
+          "time_s": 188
         },
         "critpt_v2_hard": {
-          "score": 0.685,
+          "score": 0.695,
           "cost_usd": 0.23,
-          "time_s": 239
+          "time_s": 328
         },
         "terminal_bench_science": {
           "score": 0.581,
           "cost_usd": 3.34,
-          "time_s": 2490
+          "time_s": 3410
         },
         "aa_omniscience": {
           "score": 42,
           "cost_usd": 0.0183,
-          "time_s": 22.9
+          "time_s": 31.4
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-6-sol",
+      "effort": "max",
+      "intelligence_index": 44.16,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.439,
+          "cost_usd": 4,
+          "time_s": 801
+        },
+        "frontiercode_2_0": {
+          "score": 0.356,
+          "cost_usd": 2.34,
+          "time_s": 410
+        },
+        "aa_briefcase": {
+          "score": 1480,
+          "cost_usd": 2.62,
+          "time_s": 560
+        },
+        "gdp_pdf": {
+          "score": 0.252,
+          "cost_usd": 0.425,
+          "time_s": 84.4
+        },
+        "automationbench_aa": {
+          "score": 0.616,
+          "cost_usd": 0.358,
+          "time_s": 111
+        },
+        "hle_diamond": {
+          "score": 0.452,
+          "cost_usd": 0.185,
+          "time_s": 151
+        },
+        "critpt_v2_hard": {
+          "score": 0.665,
+          "cost_usd": 0.384,
+          "time_s": 228
+        },
+        "terminal_bench_science": {
+          "score": 0.3,
+          "cost_usd": 8.14,
+          "time_s": 1110
+        },
+        "aa_omniscience": {
+          "score": 21.4,
+          "cost_usd": 0.0236,
+          "time_s": 19.2
         }
       }
     },
@@ -1597,52 +1968,52 @@
       "provider": "codex",
       "model": "gpt-6.1-terra",
       "effort": "low",
-      "intelligence_index": 29.22,
+      "intelligence_index": 29.42,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.152,
           "cost_usd": 0.107,
-          "time_s": 81.7
+          "time_s": 110
         },
         "frontiercode_2_0": {
           "score": 0.245,
           "cost_usd": 0.107,
-          "time_s": 65.3
+          "time_s": 88.3
         },
         "aa_briefcase": {
           "score": 1030,
           "cost_usd": 0.0848,
-          "time_s": 65.9
+          "time_s": 89
         },
         "gdp_pdf": {
           "score": 0.256,
           "cost_usd": 0.164,
-          "time_s": 6.68
+          "time_s": 9.03
         },
         "automationbench_aa": {
           "score": 0.562,
           "cost_usd": 0.0783,
-          "time_s": 61.8
+          "time_s": 83.5
         },
         "hle_diamond": {
           "score": 0.249,
           "cost_usd": 0.00314,
-          "time_s": 5.45
+          "time_s": 7.37
         },
         "critpt_v2_hard": {
-          "score": 0.485,
+          "score": 0.505,
           "cost_usd": 0.0178,
-          "time_s": 27
+          "time_s": 36.5
         },
         "terminal_bench_science": {
           "score": 0.0762,
           "cost_usd": 0.117,
-          "time_s": 90.3
+          "time_s": 122
         },
         "aa_omniscience": {
           "score": 22.9,
           "cost_usd": 0.000786,
-          "time_s": 1.45
+          "time_s": 1.96
         }
       }
     },
@@ -1650,52 +2021,52 @@
       "provider": "codex",
       "model": "gpt-6.1-terra",
       "effort": "medium",
-      "intelligence_index": 38.12,
+      "intelligence_index": 38.17,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.323,
           "cost_usd": 0.276,
-          "time_s": 210
+          "time_s": 276
         },
         "frontiercode_2_0": {
           "score": 0.345,
           "cost_usd": 0.257,
-          "time_s": 149
+          "time_s": 196
         },
         "aa_briefcase": {
           "score": 1190,
           "cost_usd": 0.184,
-          "time_s": 142
+          "time_s": 187
         },
         "gdp_pdf": {
           "score": 0.284,
           "cost_usd": 0.167,
-          "time_s": 11.7
+          "time_s": 15.4
         },
         "automationbench_aa": {
           "score": 0.578,
           "cost_usd": 0.0957,
-          "time_s": 78.4
+          "time_s": 103
         },
         "hle_diamond": {
           "score": 0.313,
           "cost_usd": 0.00896,
-          "time_s": 18.2
+          "time_s": 23.8
         },
         "critpt_v2_hard": {
-          "score": 0.56,
+          "score": 0.565,
           "cost_usd": 0.0405,
-          "time_s": 66.4
+          "time_s": 87.1
         },
         "terminal_bench_science": {
           "score": 0.248,
           "cost_usd": 0.378,
-          "time_s": 270
+          "time_s": 355
         },
         "aa_omniscience": {
           "score": 26.6,
           "cost_usd": 0.00162,
-          "time_s": 3.27
+          "time_s": 4.3
         }
       }
     },
@@ -1703,52 +2074,52 @@
       "provider": "codex",
       "model": "gpt-6.1-terra",
       "effort": "high",
-      "intelligence_index": 42.33,
+      "intelligence_index": 42.43,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.419,
           "cost_usd": 0.438,
-          "time_s": 324
+          "time_s": 436
         },
         "frontiercode_2_0": {
           "score": 0.375,
           "cost_usd": 0.392,
-          "time_s": 220
+          "time_s": 296
         },
         "aa_briefcase": {
           "score": 1260,
           "cost_usd": 0.276,
-          "time_s": 206
+          "time_s": 278
         },
         "gdp_pdf": {
           "score": 0.28,
           "cost_usd": 0.171,
-          "time_s": 21
+          "time_s": 28.2
         },
         "automationbench_aa": {
           "score": 0.585,
           "cost_usd": 0.108,
-          "time_s": 90.9
+          "time_s": 122
         },
         "hle_diamond": {
           "score": 0.354,
           "cost_usd": 0.0183,
-          "time_s": 37.6
+          "time_s": 50.6
         },
         "critpt_v2_hard": {
-          "score": 0.605,
+          "score": 0.615,
           "cost_usd": 0.0691,
-          "time_s": 113
+          "time_s": 152
         },
         "terminal_bench_science": {
           "score": 0.333,
           "cost_usd": 0.615,
-          "time_s": 405
+          "time_s": 545
         },
         "aa_omniscience": {
           "score": 27.8,
           "cost_usd": 0.00295,
-          "time_s": 6.04
+          "time_s": 8.13
         }
       }
     },
@@ -1756,52 +2127,52 @@
       "provider": "codex",
       "model": "gpt-6.1-terra",
       "effort": "xhigh",
-      "intelligence_index": 44.95,
+      "intelligence_index": 45.25,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.465,
           "cost_usd": 0.657,
-          "time_s": 520
+          "time_s": 657
         },
         "frontiercode_2_0": {
           "score": 0.369,
           "cost_usd": 0.57,
-          "time_s": 323
+          "time_s": 409
         },
         "aa_briefcase": {
           "score": 1330,
           "cost_usd": 0.406,
-          "time_s": 316
+          "time_s": 400
         },
         "gdp_pdf": {
           "score": 0.266,
           "cost_usd": 0.182,
-          "time_s": 45.9
+          "time_s": 58.1
         },
         "automationbench_aa": {
           "score": 0.599,
           "cost_usd": 0.128,
-          "time_s": 114
+          "time_s": 145
         },
         "hle_diamond": {
           "score": 0.423,
           "cost_usd": 0.0412,
-          "time_s": 88.8
+          "time_s": 112
         },
         "critpt_v2_hard": {
-          "score": 0.575,
+          "score": 0.605,
           "cost_usd": 0.118,
-          "time_s": 197
+          "time_s": 249
         },
         "terminal_bench_science": {
           "score": 0.419,
           "cost_usd": 1.04,
-          "time_s": 665
+          "time_s": 841
         },
         "aa_omniscience": {
           "score": 28.9,
           "cost_usd": 0.00794,
-          "time_s": 17.1
+          "time_s": 21.6
         }
       }
     },
@@ -1809,52 +2180,105 @@
       "provider": "codex",
       "model": "gpt-6.1-terra",
       "effort": "max",
-      "intelligence_index": 50.98,
+      "intelligence_index": 51.33,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.556,
           "cost_usd": 1.49,
-          "time_s": 1110
+          "time_s": 1380
         },
         "frontiercode_2_0": {
           "score": 0.423,
           "cost_usd": 1.29,
-          "time_s": 746
+          "time_s": 926
         },
         "aa_briefcase": {
           "score": 1400,
           "cost_usd": 0.808,
-          "time_s": 672
+          "time_s": 835
         },
         "gdp_pdf": {
           "score": 0.286,
           "cost_usd": 0.235,
-          "time_s": 162
+          "time_s": 201
         },
         "automationbench_aa": {
           "score": 0.602,
           "cost_usd": 0.185,
-          "time_s": 180
+          "time_s": 224
         },
         "hle_diamond": {
           "score": 0.473,
           "cost_usd": 0.147,
-          "time_s": 319
+          "time_s": 397
         },
         "critpt_v2_hard": {
-          "score": 0.645,
+          "score": 0.68,
           "cost_usd": 0.251,
-          "time_s": 420
+          "time_s": 522
         },
         "terminal_bench_science": {
           "score": 0.576,
           "cost_usd": 2.87,
-          "time_s": 1510
+          "time_s": 1880
         },
         "aa_omniscience": {
           "score": 29.6,
           "cost_usd": 0.0425,
-          "time_s": 92.8
+          "time_s": 115
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "max",
+      "intelligence_index": 32.34,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.354,
+          "cost_usd": 6.39,
+          "time_s": 1240
+        },
+        "frontiercode_2_0": {
+          "score": 0.239,
+          "cost_usd": 3.7,
+          "time_s": 494
+        },
+        "aa_briefcase": {
+          "score": 1330,
+          "cost_usd": 2.83,
+          "time_s": 613
+        },
+        "gdp_pdf": {
+          "score": 0.24,
+          "cost_usd": 0.589,
+          "time_s": 210
+        },
+        "automationbench_aa": {
+          "score": 0.596,
+          "cost_usd": 0.73,
+          "time_s": 200
+        },
+        "hle_diamond": {
+          "score": 0.288,
+          "cost_usd": 0.381,
+          "time_s": 299
+        },
+        "critpt_v2_hard": {
+          "score": 0.505,
+          "cost_usd": 0.624,
+          "time_s": 361
+        },
+        "terminal_bench_science": {
+          "score": 0.138,
+          "cost_usd": 12.9,
+          "time_s": 1590
+        },
+        "aa_omniscience": {
+          "score": -9.27,
+          "cost_usd": 0.0777,
+          "time_s": 60.9
         }
       }
     },
@@ -1867,47 +2291,47 @@
         "terminalbench_4_0": {
           "score": 0,
           "cost_usd": 0.00545,
-          "time_s": 33.8
+          "time_s": 41.5
         },
         "frontiercode_2_0": {
           "score": 0.022,
           "cost_usd": 0.00733,
-          "time_s": 23.6
+          "time_s": 29
         },
         "aa_briefcase": {
           "score": 740,
           "cost_usd": 0.00609,
-          "time_s": 39.4
+          "time_s": 48.4
         },
         "gdp_pdf": {
           "score": 0.09,
           "cost_usd": 0.0166,
-          "time_s": 8.56
+          "time_s": 10.5
         },
         "automationbench_aa": {
           "score": 0.12,
           "cost_usd": 0.00588,
-          "time_s": 29.6
+          "time_s": 36.4
         },
         "hle_diamond": {
           "score": 0.102,
           "cost_usd": 0.000529,
-          "time_s": 8.5
+          "time_s": 10.4
         },
         "critpt_v2_hard": {
           "score": 0.095,
           "cost_usd": 0.00189,
-          "time_s": 25.1
+          "time_s": 30.8
         },
         "terminal_bench_science": {
           "score": 0.00952,
           "cost_usd": 0.00777,
-          "time_s": 77.4
+          "time_s": 95.1
         },
         "aa_omniscience": {
           "score": -18.1,
           "cost_usd": 0.000178,
-          "time_s": 3.04
+          "time_s": 3.74
         }
       }
     },
@@ -1915,52 +2339,52 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "medium",
-      "intelligence_index": 18.3,
+      "intelligence_index": 18.45,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.0253,
           "cost_usd": 0.0716,
-          "time_s": null
+          "time_s": 453
         },
         "frontiercode_2_0": {
           "score": 0.128,
           "cost_usd": 0.0528,
-          "time_s": null
+          "time_s": 174
         },
         "aa_briefcase": {
           "score": 1100,
           "cost_usd": 0.0331,
-          "time_s": null
+          "time_s": 234
         },
         "gdp_pdf": {
           "score": 0.138,
           "cost_usd": 0.0174,
-          "time_s": null
+          "time_s": 26.1
         },
         "automationbench_aa": {
           "score": 0.405,
           "cost_usd": 0.0166,
-          "time_s": null
+          "time_s": 125
         },
         "hle_diamond": {
           "score": 0.151,
           "cost_usd": 0.00172,
-          "time_s": null
+          "time_s": 33.4
         },
         "critpt_v2_hard": {
-          "score": 0.26,
+          "score": 0.275,
           "cost_usd": 0.00549,
-          "time_s": null
+          "time_s": 82
         },
         "terminal_bench_science": {
           "score": 0.0143,
           "cost_usd": 0.131,
-          "time_s": null
+          "time_s": 486
         },
         "aa_omniscience": {
           "score": -13.6,
           "cost_usd": 0.000361,
-          "time_s": null
+          "time_s": 7.03
         }
       }
     },
@@ -1968,52 +2392,52 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "high",
-      "intelligence_index": 21.38,
+      "intelligence_index": 21.43,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.0455,
           "cost_usd": 0.12,
-          "time_s": 639
+          "time_s": 768
         },
         "frontiercode_2_0": {
           "score": 0.186,
           "cost_usd": 0.0844,
-          "time_s": 255
+          "time_s": 306
         },
         "aa_briefcase": {
           "score": 1190,
           "cost_usd": 0.0622,
-          "time_s": 365
+          "time_s": 439
         },
         "gdp_pdf": {
           "score": 0.182,
           "cost_usd": 0.0188,
-          "time_s": 46.3
+          "time_s": 55.7
         },
         "automationbench_aa": {
           "score": 0.478,
           "cost_usd": 0.0207,
-          "time_s": 143
+          "time_s": 173
         },
         "hle_diamond": {
           "score": 0.156,
           "cost_usd": 0.00363,
-          "time_s": 61.3
+          "time_s": 73.7
         },
         "critpt_v2_hard": {
-          "score": 0.305,
+          "score": 0.31,
           "cost_usd": 0.00964,
-          "time_s": 121
+          "time_s": 146
         },
         "terminal_bench_science": {
           "score": 0.0286,
           "cost_usd": 0.237,
-          "time_s": 643
+          "time_s": 774
         },
         "aa_omniscience": {
           "score": -12.8,
           "cost_usd": 0.000573,
-          "time_s": 9.65
+          "time_s": 11.6
         }
       }
     },
@@ -2021,52 +2445,52 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "xhigh",
-      "intelligence_index": 23.3,
+      "intelligence_index": 23.45,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.0808,
           "cost_usd": 0.198,
-          "time_s": 845
+          "time_s": 1010
         },
         "frontiercode_2_0": {
           "score": 0.184,
           "cost_usd": 0.11,
-          "time_s": 311
+          "time_s": 370
         },
         "aa_briefcase": {
-          "score": 1230,
+          "score": 1240,
           "cost_usd": 0.0825,
-          "time_s": 465
+          "time_s": 553
         },
         "gdp_pdf": {
           "score": 0.186,
           "cost_usd": 0.0207,
-          "time_s": 73.5
+          "time_s": 87.5
         },
         "automationbench_aa": {
           "score": 0.478,
           "cost_usd": 0.0233,
-          "time_s": 162
+          "time_s": 193
         },
         "hle_diamond": {
           "score": 0.189,
           "cost_usd": 0.0062,
-          "time_s": 99.5
+          "time_s": 118
         },
         "critpt_v2_hard": {
-          "score": 0.355,
+          "score": 0.37,
           "cost_usd": 0.0129,
-          "time_s": 159
+          "time_s": 190
         },
         "terminal_bench_science": {
           "score": 0.0524,
           "cost_usd": 0.341,
-          "time_s": 769
+          "time_s": 916
         },
         "aa_omniscience": {
           "score": -13,
           "cost_usd": 0.000885,
-          "time_s": 14.2
+          "time_s": 16.9
         }
       }
     },
@@ -2074,52 +2498,105 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "max",
-      "intelligence_index": 27.76,
+      "intelligence_index": 27.86,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.126,
           "cost_usd": 0.236,
-          "time_s": 1160
+          "time_s": 1350
         },
         "frontiercode_2_0": {
           "score": 0.252,
           "cost_usd": 0.176,
-          "time_s": 576
+          "time_s": 669
         },
         "aa_briefcase": {
           "score": 1340,
           "cost_usd": 0.17,
-          "time_s": 907
+          "time_s": 1050
         },
         "gdp_pdf": {
           "score": 0.228,
           "cost_usd": 0.0285,
-          "time_s": 205
+          "time_s": 238
         },
         "automationbench_aa": {
           "score": 0.532,
           "cost_usd": 0.0364,
-          "time_s": 281
+          "time_s": 326
         },
         "hle_diamond": {
           "score": 0.222,
           "cost_usd": 0.0149,
-          "time_s": 244
+          "time_s": 284
         },
         "critpt_v2_hard": {
-          "score": 0.415,
+          "score": 0.425,
           "cost_usd": 0.0325,
-          "time_s": 402
+          "time_s": 467
         },
         "terminal_bench_science": {
           "score": 0.0857,
           "cost_usd": 0.454,
-          "time_s": 1250
+          "time_s": 1450
         },
         "aa_omniscience": {
           "score": -8.27,
           "cost_usd": 0.00234,
-          "time_s": 38.4
+          "time_s": 44.7
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "max",
+      "intelligence_index": 23.79,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.116,
+          "cost_usd": 0.849,
+          "time_s": 1150
+        },
+        "frontiercode_2_0": {
+          "score": 0.176,
+          "cost_usd": 0.376,
+          "time_s": 410
+        },
+        "aa_briefcase": {
+          "score": 1340,
+          "cost_usd": 0.395,
+          "time_s": 672
+        },
+        "gdp_pdf": {
+          "score": 0.24,
+          "cost_usd": 0.0568,
+          "time_s": 176
+        },
+        "automationbench_aa": {
+          "score": 0.502,
+          "cost_usd": 0.0912,
+          "time_s": 200
+        },
+        "hle_diamond": {
+          "score": 0.209,
+          "cost_usd": 0.0417,
+          "time_s": 299
+        },
+        "critpt_v2_hard": {
+          "score": 0.305,
+          "cost_usd": 0.0768,
+          "time_s": 398
+        },
+        "terminal_bench_science": {
+          "score": 0.0333,
+          "cost_usd": 0.732,
+          "time_s": 877
+        },
+        "aa_omniscience": {
+          "score": -17.1,
+          "cost_usd": 0.0103,
+          "time_s": 74.2
         }
       }
     }
