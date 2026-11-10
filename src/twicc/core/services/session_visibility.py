@@ -148,7 +148,7 @@ def _apply_visibility_flag(session_id: str, new_hidden: bool):
 
 async def _apply_flip(session, *, new_hidden: bool) -> None:
     """Commit visibility and counters, then refresh search and broadcasts."""
-    from twicc.search import reindex_session
+    from twicc.search import areindex_session
     from twicc.providers.compute_executor import run_compute_sync
     from twicc.providers.db_writer import run_under_db_write_lock
 
@@ -163,7 +163,7 @@ async def _apply_flip(session, *, new_hidden: bool) -> None:
             )
 
             # Activity aggregates already committed with the hidden flag.
-            await sync_to_async(reindex_session)(session.id)
+            await areindex_session(session.id)
         except Exception:
             logger.exception(
                 "session_visibility flip side-effects failed for session %s "

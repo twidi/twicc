@@ -48,7 +48,6 @@ from twicc.core.services import timeline_feed
 from twicc.paths import path_to_project_id
 from twicc.projects import register_project
 from twicc.providers.db_writer import run_under_db_write_lock
-from twicc.providers.sessions_watcher import mark_session_search_version_current
 from twicc.providers.state import ProviderDisabledError, ensure_provider_running
 from twicc.providers.helpers import get_provider_helpers, get_provider_helpers_registry
 from twicc.terminal import kill_all_tmux_terminals
@@ -1298,7 +1297,7 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             # 2. Re-index for full-text search (title is a searchable document)
             if search.is_initialized():
                 try:
-                    await asyncio.to_thread(search.reindex_session, session_id)
+                    await search.areindex_session(session_id)
                 except Exception:
                     pass  # Non-critical: search will catch up on next startup
 
@@ -1600,14 +1599,7 @@ async def bulk_archive_sessions(request):
             for sid in ids_snapshot:
                 try:
                     if search.is_initialized():
-                        await asyncio.to_thread(search.reindex_session, sid)
-                        # Bump ``search_version`` back to CURRENT only once
-                        # the Tantivy write has landed — shutdown between
-                        # the reindex and this mark leaves the session at
-                        # search_version=0 for the next-boot sweep to fix.
-                        await run_under_db_write_lock(
-                            lambda sid=sid: mark_session_search_version_current(sid)
-                        )
+                        await search.areindex_session(sid)
                 except Exception:
                     logger.exception("bulk archive: reindex failed for session %s", sid)
                 try:

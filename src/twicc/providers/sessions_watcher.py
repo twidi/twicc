@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from channels.layers import get_channel_layer
 from django.db import transaction
 from django.utils import timezone
@@ -1302,6 +1303,7 @@ class BaseSessionsWatcher:
             return result
         if not session_compute_ready(indexed_session):
             if search.is_initialized():
+                await search.invalidate_sessions_search_version([indexing.session_id])
                 await asyncio.to_thread(search.delete_session_documents, indexing.session_id)
                 await asyncio.to_thread(search.commit)
             return result
@@ -1312,18 +1314,19 @@ class BaseSessionsWatcher:
             request_title_check(indexing.session_id)
 
         try:
-            if indexing.title_changed:
-                await asyncio.to_thread(search.reindex_session, indexing.session_id)
-            else:
-                await self._index_new_items_for_search(
-                    indexed_session, indexing.new_line_nums,
-                )
+            if indexing.title_changed or indexed_session.search_version != settings.CURRENT_SEARCH_VERSION:
+                await search.areindex_session(indexing.session_id)
+                return result
+            await self._index_new_items_for_search(
+                indexed_session, indexing.new_line_nums,
+            )
         except Exception:
             logger.exception(
                 "Error indexing session for search (session=%s, title_changed=%s)",
                 indexing.session_id,
                 indexing.title_changed,
             )
+            return result
 
         try:
             await run_under_db_write_lock(

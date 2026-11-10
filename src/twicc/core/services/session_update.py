@@ -454,7 +454,7 @@ async def update_session_title_from_payload(payload: dict) -> UpdateSessionResul
     from twicc import search
     if search.is_initialized():
         try:
-            await asyncio.to_thread(search.reindex_session, session_id)
+            await search.areindex_session(session_id)
         except Exception:
             logger.warning(
                 "[update_session_title] search reindex failed for %s",
@@ -578,7 +578,7 @@ async def apply_session_archived_change(
     # document, so we re-index the whole session.
     if search.is_initialized():
         try:
-            await asyncio.to_thread(search.reindex_session, session.id)
+            await search.areindex_session(session.id)
         except Exception:
             logger.warning(
                 "[apply_session_archived_change] search reindex failed for %s",

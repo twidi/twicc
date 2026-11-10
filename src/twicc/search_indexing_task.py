@@ -358,6 +358,7 @@ async def remove_obsolete_session_documents() -> int:
     obsolete_ids = [session.id for session in sessions if not session_compute_ready(session)]
     if not obsolete_ids:
         return 0
+    await search.invalidate_sessions_search_version(obsolete_ids)
     for session_id in obsolete_ids:
         await asyncio.to_thread(search.delete_session_documents, session_id)
     await asyncio.to_thread(search.commit)
@@ -486,6 +487,8 @@ async def _index_session(session_id: str, buffer: _MarkIndexedBuffer):
     via the DB writer instead of one direct write per session.
     """
     session = await sync_to_async(Session.objects.get)(id=session_id)
+
+    await search.invalidate_sessions_search_version([session.id])
 
     if not session_compute_ready(session):
         await asyncio.to_thread(search.delete_session_documents, session.id)

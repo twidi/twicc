@@ -372,7 +372,45 @@ def commit() -> None:
         _writer.commit()
 
 
-def reindex_session(session_id: str) -> None:
+async def invalidate_sessions_search_version(session_ids: list[str]) -> None:
+    """Persist retry intent before deleting or replacing search documents."""
+    from asgiref.sync import sync_to_async
+
+    from twicc.core.models import Session
+    from twicc.providers.db_writer import run_under_db_write_lock
+
+    await run_under_db_write_lock(
+        lambda: sync_to_async(
+            lambda: Session.objects.filter(id__in=session_ids).update(search_version=None)
+        )()
+    )
+
+
+async def areindex_session(session_id: str) -> bool:
+    """Rebuild a session with durable retry intent and mark only committed work."""
+    import asyncio
+
+    from asgiref.sync import sync_to_async
+    from django.conf import settings
+
+    from twicc.core.models import Session
+    from twicc.core.serializers import session_compute_ready
+    from twicc.providers.db_writer import run_under_db_write_lock
+
+    await invalidate_sessions_search_version([session_id])
+    if not await asyncio.to_thread(reindex_session, session_id):
+        return False
+
+    def mark_current():
+        session = Session.objects.filter(id=session_id).only("provider", "compute_version").first()
+        if session is not None and session_compute_ready(session):
+            Session.objects.filter(id=session_id).update(search_version=settings.CURRENT_SEARCH_VERSION)
+
+    await run_under_db_write_lock(lambda: sync_to_async(mark_current)())
+    return True
+
+
+def reindex_session(session_id: str) -> bool:
     """Full re-index of a session: delete all docs, re-add title + all messages, commit.
 
     Used when a session title changes (rename, initial title set) to keep
@@ -380,7 +418,8 @@ def reindex_session(session_id: str) -> None:
     Tantivy only supports deleting by a single field (session_id), not
     compound deletes (session_id + from_role).
 
-    Lazy-imports Django models to avoid circular imports at module level.
+    Runtime callers use ``areindex_session`` to invalidate the DB marker first.
+    Returns whether a complete current session was committed.
     """
     from twicc.core.enums import ItemKind
     from twicc.core.models import Session, SessionItem
@@ -394,14 +433,14 @@ def reindex_session(session_id: str) -> None:
         session = Session.objects.get(id=session_id)
     except Session.DoesNotExist:
         logger.warning("reindex_session: session %s not found, skipping", session_id)
-        return
+        return False
 
     # Delete all existing documents for this session
     delete_session_documents(session_id)
     if not session_compute_ready(session):
         commit()
         logger.debug("reindex_session: obsolete session %s removed and skipped", session_id)
-        return
+        return False
 
     # Index title (if any)
     if session.title:
@@ -438,10 +477,11 @@ def reindex_session(session_id: str) -> None:
         delete_session_documents(session_id)
         commit()
         logger.debug("reindex_session: session %s became obsolete and was removed", session_id)
-        return
+        return False
 
     commit()
     logger.debug("reindex_session: session %s re-indexed", session_id)
+    return True
 
 
 # ---------------------------------------------------------------------------
