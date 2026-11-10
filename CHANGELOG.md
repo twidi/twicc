@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Claude Fable 5.2** — The new version of the Fable model is available for your Claude Code sessions.
 - **GPT-6.1 Terra** — support for OpenAI's new Terra model, now the latest Terra (GPT-5.6 Terra remains selectable).
 - **Languages** — The interface is now translated into French, German, Spanish and Brazilian Portuguese. Pick your language in Settings → General → Language; English stays the default. Thanks to @kaviskicorporation for the first Brazilian Portuguese translation.
 - **Timeline** — Follow what happens in your sessions, live, in a new tab of each project and workspace. Filter it, see the same events in the chat, and query it from CLI, MCP and RPC API.

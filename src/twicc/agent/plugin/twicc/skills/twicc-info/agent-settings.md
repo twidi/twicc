@@ -16,7 +16,7 @@ $TWICC info agent-settings [--provider <key>] [--include-disabled-providers]
 "agent-settings": {
   "claude_code": {
     "model": {
-      "values": [{"value": "fable", "latest": true}, {"value": "fable-5", "latest": false},
+      "values": [{"value": "fable", "latest": true}, {"value": "fable-5.1", "latest": false}, {"value": "fable-5", "latest": false},
                  {"value": "opus", "latest": true}, {"value": "opus-5", "latest": false},
                  {"value": "sonnet", "latest": true}, {"value": "haiku", "latest": true},
                  {"value": "opus-4.8", "latest": false}],
@@ -25,13 +25,13 @@ $TWICC info agent-settings [--provider <key>] [--include-disabled-providers]
     "effort": {
       "values": [{"value": "low", "restricted_to": null}, {"value": "medium", "restricted_to": null},
                  {"value": "high", "restricted_to": null},
-                 {"value": "xhigh", "restricted_to": ["fable-5.1", "fable", "fable-5", "opus-5.5", "opus", "opus-5", "opus-4.8", ...]},
-                 {"value": "max", "restricted_to": ["fable-5.1", "fable", "fable-5", "opus-5.5", "opus", "opus-5", "opus-4.8", "opus-4.7", ...]}],
+                 {"value": "xhigh", "restricted_to": ["fable-5.2", "fable", "fable-5.1", "opus-5.5", "opus", "opus-5", "opus-4.8", ...]},
+                 {"value": "max", "restricted_to": ["fable-5.2", "fable", "fable-5.1", "opus-5.5", "opus", "opus-5", "opus-4.8", "opus-4.7", ...]}],
       "aliases": {"min": "low", "max": "max"}
     },
     "permission_mode": {
       "values": [{"value": "default", "restricted_to": null, "description": "Prompts for permission on first use of each tool"},
-                 {"value": "auto", "restricted_to": ["fable-5.1", "fable", "fable-5", "opus-5.5", "opus", "opus-5", ...], "description": "Auto-approves tools, with safety checks blocking risky actions"}],
+                 {"value": "auto", "restricted_to": ["fable-5.2", "fable", "fable-5.1", "opus-5.5", "opus", "opus-5", ...], "description": "Auto-approves tools, with safety checks blocking risky actions"}],
       "aliases": {"min": "dontAsk", "strict": "dontAsk", "safe": "dontAsk", "max": "bypassPermissions", "open": "bypassPermissions", "full": "bypassPermissions"}
     },
     "permission_mode_if_untrusted": {
@@ -41,7 +41,7 @@ $TWICC info agent-settings [--provider <key>] [--include-disabled-providers]
     },
     "context_max": {
       "values": [{"value": 200000, "context_max_alias": "200k", "restricted_to": null},
-                 {"value": 1000000, "context_max_alias": "1m", "restricted_to": ["fable-5.1", "fable", "fable-5", "opus-5.5", "opus", "opus-5", ...]}],
+                 {"value": 1000000, "context_max_alias": "1m", "restricted_to": ["fable-5.2", "fable", "fable-5.1", "opus-5.5", "opus", "opus-5", ...]}],
       "aliases": {"min": "200k", "max": "1m"}
     }
   }
