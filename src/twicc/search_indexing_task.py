@@ -350,18 +350,31 @@ def start_pending_session_reindexes() -> asyncio.Task | None:
 
 
 async def remove_obsolete_session_documents() -> int:
-    """Delete all search documents for sessions blocked by compute readiness."""
+    """Delete documents for native subagents and sessions with outdated compute.
+
+    Run at every startup so legacy subagent documents disappear without a
+    search-version bump or a rebuild of primary sessions.
+    """
 
     sessions = await sync_to_async(
-        lambda: list(Session.objects.only("id", "provider", "compute_version"))
+        lambda: list(Session.objects.only("id", "type", "provider", "compute_version"))
     )()
-    obsolete_ids = [session.id for session in sessions if not session_compute_ready(session)]
+    obsolete_ids = [
+        session.id for session in sessions
+        if session.type != SessionType.SESSION or not session_compute_ready(session)
+    ]
     if not obsolete_ids:
         return 0
     await search.invalidate_sessions_search_version(obsolete_ids)
-    for session_id in obsolete_ids:
-        await asyncio.to_thread(search.delete_session_documents, session_id)
-    await asyncio.to_thread(search.commit)
+
+    def delete_documents():
+        # One executor dispatch for the whole cleanup, including subagents
+        # that have no documents. Commit all deletions together.
+        for session_id in obsolete_ids:
+            search.delete_session_documents(session_id)
+        search.commit()
+
+    await asyncio.to_thread(delete_documents)
     return len(obsolete_ids)
 
 
@@ -490,7 +503,7 @@ async def _index_session(session_id: str, buffer: _MarkIndexedBuffer):
 
     await search.invalidate_sessions_search_version([session.id])
 
-    if not session_compute_ready(session):
+    if session.type != SessionType.SESSION or not session_compute_ready(session):
         await asyncio.to_thread(search.delete_session_documents, session.id)
         await asyncio.to_thread(search.commit)
         return
@@ -544,9 +557,9 @@ async def _index_session(session_id: str, buffer: _MarkIndexedBuffer):
         )
 
     fresh = await sync_to_async(
-        lambda: Session.objects.filter(id=session.id).only("provider", "compute_version").first()
+        lambda: Session.objects.filter(id=session.id).only("type", "provider", "compute_version").first()
     )()
-    if fresh is None or not session_compute_ready(fresh):
+    if fresh is None or fresh.type != SessionType.SESSION or not session_compute_ready(fresh):
         await asyncio.to_thread(search.delete_session_documents, session.id)
         await asyncio.to_thread(search.commit)
         return

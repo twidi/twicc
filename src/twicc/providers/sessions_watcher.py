@@ -1301,7 +1301,7 @@ class BaseSessionsWatcher:
         indexed_session = await get_session_by_id(indexing.session_id)
         if indexed_session is None:
             return result
-        if not session_compute_ready(indexed_session):
+        if indexed_session.type != SessionType.SESSION or not session_compute_ready(indexed_session):
             if search.is_initialized():
                 await search.invalidate_sessions_search_version([indexing.session_id])
                 await asyncio.to_thread(search.delete_session_documents, indexing.session_id)

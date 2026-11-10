@@ -381,7 +381,7 @@ async def invalidate_sessions_search_version(session_ids: list[str]) -> None:
 
     await run_under_db_write_lock(
         lambda: sync_to_async(
-            lambda: Session.objects.filter(id__in=session_ids).update(search_version=None)
+            lambda: Session.objects.filter(id__in=session_ids, search_version__isnull=False).update(search_version=None)
         )()
     )
 
@@ -393,7 +393,7 @@ async def areindex_session(session_id: str) -> bool:
     from asgiref.sync import sync_to_async
     from django.conf import settings
 
-    from twicc.core.models import Session
+    from twicc.core.models import Session, SessionType
     from twicc.core.serializers import session_compute_ready
     from twicc.providers.db_writer import run_under_db_write_lock
 
@@ -402,7 +402,7 @@ async def areindex_session(session_id: str) -> bool:
         return False
 
     def mark_current():
-        session = Session.objects.filter(id=session_id).only("provider", "compute_version").first()
+        session = Session.objects.filter(id=session_id, type=SessionType.SESSION).only("provider", "compute_version").first()
         if session is not None and session_compute_ready(session):
             Session.objects.filter(id=session_id).update(search_version=settings.CURRENT_SEARCH_VERSION)
 
@@ -422,7 +422,7 @@ def reindex_session(session_id: str) -> bool:
     Returns whether a complete current session was committed.
     """
     from twicc.core.enums import ItemKind
-    from twicc.core.models import Session, SessionItem
+    from twicc.core.models import Session, SessionItem, SessionType
     from twicc.core.serializers import session_compute_ready
     from twicc.providers.helpers import get_provider_helpers
 
@@ -437,9 +437,9 @@ def reindex_session(session_id: str) -> bool:
 
     # Delete all existing documents for this session
     delete_session_documents(session_id)
-    if not session_compute_ready(session):
+    if session.type != SessionType.SESSION or not session_compute_ready(session):
         commit()
-        logger.debug("reindex_session: obsolete session %s removed and skipped", session_id)
+        logger.debug("reindex_session: ineligible session %s removed and skipped", session_id)
         return False
 
     # Index title (if any)
@@ -472,8 +472,8 @@ def reindex_session(session_id: str) -> bool:
 
     # The compute version can change while extraction runs. Fail closed by
     # deleting everything again before the commit when that happened.
-    fresh = Session.objects.filter(id=session_id).only("provider", "compute_version").first()
-    if fresh is None or not session_compute_ready(fresh):
+    fresh = Session.objects.filter(id=session_id).only("type", "provider", "compute_version").first()
+    if fresh is None or fresh.type != SessionType.SESSION or not session_compute_ready(fresh):
         delete_session_documents(session_id)
         commit()
         logger.debug("reindex_session: session %s became obsolete and was removed", session_id)
