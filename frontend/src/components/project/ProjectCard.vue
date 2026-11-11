@@ -39,6 +39,13 @@ const settingsStore = useSettingsStore()
 
 const lastActivity = computed(() => store.getProjectActivity(props.project.id))
 
+// Match detail totals: include every worktree, regardless of archive visibility.
+const totalCost = computed(() => {
+    const sum = store.getProjectScopeIds(props.project.id).reduce((sum, id) =>
+        sum + (store.getProject(id)?.total_cost || 0), 0)
+    return sum > 0 ? sum : null
+})
+
 // Home card cascade (step 7b): the card enters when the home shows it.
 const cardRef = ref(null)
 useHomeCardEntrance(cardRef)
@@ -132,7 +139,7 @@ function handleMenuSelect(event) {
                     </span>
                     <AppTooltip :for="`sessions-count-${project.id}`">{{ $t('project.card.sessionCountTooltip') }}</AppTooltip>
                     <template v-if="showCosts">
-                        <CostDisplay :id="`project-cost-${project.id}`" :cost="project.total_cost" class="project-cost" />
+                        <CostDisplay :id="`project-cost-${project.id}`" :cost="totalCost" class="project-cost" />
                         <AppTooltip :for="`project-cost-${project.id}`">{{ $t('project.card.costTooltip') }}</AppTooltip>
                     </template>
                     <span :id="`project-mtime-${project.id}`" class="project-mtime">

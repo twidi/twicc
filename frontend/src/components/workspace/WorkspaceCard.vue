@@ -44,12 +44,12 @@ const visibleProjectIds = computed(() =>
     workspacesStore.getVisibleProjectIds(props.workspace.id)
 )
 // Project badges exclude worktrees (they're subordinate to their main repo and
-// surfaced separately). Session/cost aggregates and the activity indicators
+// surfaced separately). Session aggregates and the activity indicators
 // below keep the full visible set — a worktree's sessions belong to the whole.
 const listableProjectIds = computed(() =>
     visibleProjectIds.value.filter(pid => !dataStore.getProject(pid)?.worktree_of)
 )
-// Stats (sparkline) include archived projects so the workspace history
+// Cost and sparkline include archived projects so the workspace history
 // reflects the full activity, not just what is currently visible.
 const statsProjectIds = computed(() =>
     workspacesStore.getAllProjectIds(props.workspace.id)
@@ -69,7 +69,7 @@ const totalSessionsCount = computed(() =>
 )
 
 const totalCost = computed(() =>
-    visibleProjects.value.reduce((sum, p) => sum + (p.total_cost || 0), 0)
+    statsProjectIds.value.reduce((sum, id) => sum + (dataStore.getProject(id)?.total_cost || 0), 0)
 )
 
 const showCosts = computed(() => settingsStore.areCostsShown)
