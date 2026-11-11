@@ -49,6 +49,9 @@ Not localized:
 - Console logs, CLI and MCP responses.
 - The pages below.
 
+The hidden Android terminal clipboard diagnostic menu and its activation
+confirmations deliberately stay English. They are local troubleshooting controls.
+
 ### Pages that deliberately stay English
 
 These pages need no translation. They are not deferred work. Do not report

@@ -4,6 +4,33 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { createTerminalClipboardObserver } from './terminalClipboardDiagnostics.js'
 
+test('the terminal requires an enabled Android capability before collecting failure context', () => {
+    const source = readFileSync(new URL('../composables/useTerminal.js', import.meta.url), 'utf8')
+    const start = source.indexOf('    const observeClipboard = createTerminalClipboardObserver({')
+    const declaration = source.slice(start, source.indexOf('\n    /**', start))
+    for (const android of [false, true]) {
+        for (const enabled of [false, true]) {
+            let clientReads = 0, contexts = 0
+            const reports = []
+            const observe = runInNewContext(`${declaration}; observeClipboard`, {
+                createTerminalClipboardObserver,
+                isAndroidApp: { value: android },
+                getAndroidAppClient() {
+                    clientReads++
+                    return { supports: () => enabled, request: (_, { diagnostic }) => reports.push(diagnostic) }
+                },
+                document: { hasFocus() { contexts++; return true }, visibilityState: 'visible' },
+                window: { isSecureContext: true }, navigator: { userAgent: 'test', clipboard: {} },
+                ws: null, isConnected: { value: true },
+            })
+            assert.equal(observe({ operation: 'copy', method: 'execCommand' }, () => false), false)
+            assert.equal(contexts, android && enabled ? 1 : 0)
+            assert.equal(reports.length, android && enabled ? 1 : 0)
+            if (!android) assert.equal(clientReads, 0)
+        }
+    }
+})
+
 test('web operations keep their result and never collect or report diagnostics', async () => {
     let contexts = 0, reports = 0
     const observe = createTerminalClipboardObserver({

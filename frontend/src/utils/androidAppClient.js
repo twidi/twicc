@@ -14,6 +14,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     const stateListeners = new Set()
     const prefix = Math.random().toString(36).slice(2)
     let sequence = 0, closed = false, documentToken = null
+    let capabilities = {}
     const proxy = typeof target.TwiccAndroid?.postMessage === 'function' ? target.TwiccAndroid : null
     if (proxy) markAndroidApp()
     function receive(response) {
@@ -29,7 +30,10 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         pending.delete(response.id)
         clearTimeout(entry.timer)
         if (response.ok) {
-            if (entry.command === 'getState') setAndroidTelemetry(response.state)
+            if (entry.command === 'getState') {
+                capabilities = response.state?.capabilities ?? {}
+                setAndroidTelemetry(response.state)
+            }
             entry.resolve(response.state ?? null)
         }
         else {
@@ -52,6 +56,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     target.addEventListener('message', fromWindow)
     if (proxy) proxy.onmessage = fromProxy
     return {
+        supports(capability) { return capabilities[capability] === 1 },
         onStateChanged(listener) {
             if (!closed) stateListeners.add(listener)
             return () => stateListeners.delete(listener)
@@ -99,6 +104,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         },
         close() {
             closed = true
+            capabilities = {}
             stateListeners.clear()
             target.removeEventListener('message', fromWindow)
             if (proxy?.onmessage === fromProxy) proxy.onmessage = null

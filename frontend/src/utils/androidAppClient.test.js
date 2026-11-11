@@ -24,6 +24,28 @@ function fixture(webview = false) {
     } }
 }
 for (const webview of [false, true]) {
+    test(`clipboard diagnostics require the latest native capability (${webview ? 'WebView' : 'Gecko'})`, async () => {
+        const f = fixture(webview)
+        assert.equal(f.client.supports('terminalClipboardDiagnostics'), false)
+        for (const capabilities of [{ terminalClipboardDiagnostics: 1 }, {}, { terminalClipboardDiagnostics: true }]) {
+            const pending = f.client.request('getState')
+            f.reply({ protocol: 1, id: f.sent.at(-1).id, ok: true, state: { capabilities } })
+            await pending
+            assert.equal(f.client.supports('terminalClipboardDiagnostics'), capabilities.terminalClipboardDiagnostics === 1)
+        }
+        const other = f.client.request('tts.state')
+        f.reply({ protocol: 1, id: f.sent.at(-1).id, ok: true,
+            state: { capabilities: { terminalClipboardDiagnostics: 1 } } })
+        await other
+        assert.equal(f.client.supports('terminalClipboardDiagnostics'), false)
+        const enable = f.client.request('getState')
+        f.reply({ protocol: 1, id: f.sent.at(-1).id, ok: true,
+            state: { capabilities: { terminalClipboardDiagnostics: 1 } } })
+        await enable
+        assert.equal(f.client.supports('terminalClipboardDiagnostics'), true)
+        f.client.close()
+        assert.equal(f.client.supports('terminalClipboardDiagnostics'), false)
+    })
     test(`native state changes arrive without a request or heartbeat (${webview ? 'WebView' : 'Gecko'})`, () => {
         const f = fixture(webview)
         let changes = 0

@@ -542,9 +542,9 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         return { col, row: bufferRow }
     }
 
-    // The ordinary web client runs clipboard calls directly and collects no diagnostics.
+    // Only an Android installation with diagnostics enabled collects failure context.
     const observeClipboard = createTerminalClipboardObserver({
-        enabled: () => isAndroidApp.value,
+        enabled: () => isAndroidApp.value && getAndroidAppClient().supports('terminalClipboardDiagnostics'),
         context: () => ({
             focused: document.hasFocus(), visibility: document.visibilityState,
             secureContext: window.isSecureContext, userActivation: navigator.userActivation?.isActive ?? null,

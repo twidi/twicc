@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Build
+import android.os.SystemClock
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
@@ -62,6 +63,7 @@ class InstanceManagerUi(private val activity: Activity) {
     }
 
     var onAdd: () -> Unit = {}
+    var onDiagnosticsToggle: () -> Unit = {}
 
     private fun addButton(): View = object : LinearLayout(activity) {
         override fun getAccessibilityClassName(): CharSequence = Button::class.java.name
@@ -142,6 +144,18 @@ class InstanceManagerUi(private val activity: Activity) {
             gravity = Gravity.CENTER
             isAccessibilityHeading = true
             id = R.id.instance_title
+            // Hidden local diagnostic switch: seven taps, at most one second apart.
+            var taps = 0
+            var lastTap = 0L
+            setOnClickListener {
+                val now = SystemClock.uptimeMillis()
+                taps = if (now - lastTap <= 1000) taps + 1 else 1
+                lastTap = now
+                if (taps == 7) {
+                    taps = 0
+                    onDiagnosticsToggle()
+                }
+            }
         })
         addView(text(UiMessage("android.instances.subtitle"), 14f, palette.textQuiet).apply {
             gravity = Gravity.CENTER

@@ -9915,9 +9915,9 @@ var Hg = "twicc.android.response", Ug = "twicc.android.request", Wg = /* @__PURE
 	"tts.stop_all"
 ]), Gg = /* @__PURE__ */ new Set([...Wg, "locale.set"]);
 function Kg(e, { timeoutMs: t = 1500 } = {}) {
-	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = typeof e.TwiccAndroid?.postMessage == "function" ? e.TwiccAndroid : null;
-	c && Bg();
-	function l(e) {
+	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = {}, l = typeof e.TwiccAndroid?.postMessage == "function" ? e.TwiccAndroid : null;
+	l && Bg();
+	function u(e) {
 		if (o) return;
 		if (e?.protocol === 1 && e.event === "stateChanged") {
 			for (let e of r) e();
@@ -9926,28 +9926,31 @@ function Kg(e, { timeoutMs: t = 1500 } = {}) {
 		if (!e || e.protocol !== 1 || typeof e.id != "string") return;
 		let t = n.get(e.id);
 		if (t && typeof e.ok == "boolean") {
-			if (Bg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.command === "getState" && Vg(e.state), t.resolve(e.state ?? null);
+			if (Bg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.command === "getState" && (c = e.state?.capabilities ?? {}, Vg(e.state)), t.resolve(e.state ?? null);
 			else {
 				let n = e.ui_message || typeof e.error == "string" ? Rg(e, Ig("common.android.errors.actionFailed").message) : Ig("common.android.errors.actionFailed");
 				e.state !== void 0 && (n.state = e.state), t.reject(n);
 			}
 		}
 	}
-	function u(t) {
-		t.source === e && t.origin === e.location.origin && (t.data?.channel === Hg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && Bg());
+	function d(t) {
+		t.source === e && t.origin === e.location.origin && (t.data?.channel === Hg && u(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && Bg());
 	}
-	function d(e) {
+	function f(e) {
 		try {
-			l(JSON.parse(e.data));
+			u(JSON.parse(e.data));
 		} catch {}
 	}
-	return e.addEventListener("message", u), c && (c.onmessage = d), {
+	return e.addEventListener("message", d), l && (l.onmessage = f), {
+		supports(e) {
+			return c[e] === 1;
+		},
 		onStateChanged(e) {
 			return o || r.add(e), () => r.delete(e);
 		},
-		async request(r, l = {}) {
+		async request(r, c = {}) {
 			if (o) return Promise.reject(Ig("common.android.errors.closed"));
-			if (c && Gg.has(r)) {
+			if (l && Gg.has(r)) {
 				let n = Date.now() + t;
 				for (; !s && !o;) {
 					let t = e.__twiccNativeTtsDocument;
@@ -9961,7 +9964,7 @@ function Kg(e, { timeoutMs: t = 1500 } = {}) {
 				if (o) throw Ig("common.android.errors.closed");
 			}
 			let u = `${i}-${++a}`, d = {
-				...l,
+				...c,
 				...s && Gg.has(r) ? { documentToken: s } : {},
 				protocol: 1,
 				id: u,
@@ -9985,7 +9988,7 @@ function Kg(e, { timeoutMs: t = 1500 } = {}) {
 					command: r
 				});
 				try {
-					c ? c.postMessage(f) : e.postMessage({
+					l ? l.postMessage(f) : e.postMessage({
 						channel: Ug,
 						request: d
 					}, e.location.origin);
@@ -9995,7 +9998,7 @@ function Kg(e, { timeoutMs: t = 1500 } = {}) {
 			});
 		},
 		close() {
-			o = !0, r.clear(), e.removeEventListener("message", u), c?.onmessage === d && (c.onmessage = null);
+			o = !0, c = {}, r.clear(), e.removeEventListener("message", d), l?.onmessage === f && (l.onmessage = null);
 			for (let e of n.values()) clearTimeout(e.timer), e.reject(Ig("common.android.errors.closed"));
 			n.clear();
 		}

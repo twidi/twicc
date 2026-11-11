@@ -96,6 +96,7 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        TerminalClipboardDiagnostics.restore(this)
         lastConfiguration = Configuration(resources.configuration)
         Log.i("BrowserLifecycle", "create activity=${System.identityHashCode(this)} restored=${savedInstanceState != null}")
         if (!acceptSpeechNotification(intent)) { finish(); return }
@@ -416,9 +417,11 @@ class BrowserActivity : Activity() {
             true
         }
         item(R.id.browser_menu_external, "navigation.android.browser").setOnMenuItemClickListener { openExternal(safeUrl); true }
-        popup.menu.add(TerminalClipboardDiagnostics.MENU_LABEL).setOnMenuItemClickListener {
-            copyTerminalClipboardDiagnostics()
-            true
+        if (TerminalClipboardDiagnostics.process.enabled) {
+            popup.menu.add(TerminalClipboardDiagnostics.MENU_LABEL).setOnMenuItemClickListener {
+                copyTerminalClipboardDiagnostics()
+                true
+            }
         }
         popup.setOnDismissListener { if (nativeMenu === popup) { nativeMenu = null; menuMessages.clear() } }
         popup.show()
@@ -465,7 +468,7 @@ class BrowserActivity : Activity() {
         .put("push", AndroidPush.state(this, instance))
         .put("capabilities", JSONObject().apply {
             put("androidPush", 1)
-            put("terminalClipboardDiagnostics", 1)
+            if (TerminalClipboardDiagnostics.process.enabled) put("terminalClipboardDiagnostics", 1)
             if (browser?.nativeTtsSupported == true) put("nativeTts", 1)
         })
         .put("instances", JSONArray().apply {
@@ -499,6 +502,8 @@ class BrowserActivity : Activity() {
     }
 
     private fun queueAppAction(command: AppCommand, instanceId: String?): UiMessage? {
+        if (command == AppCommand.COPY_TERMINAL_CLIPBOARD_DIAGNOSTICS && !TerminalClipboardDiagnostics.process.enabled)
+            return UiMessage("common.android.errors.actionFailed")
         val target = if (command == AppCommand.SWITCH_INSTANCE)
             store.find(instanceId) ?: return UiMessage("android.browser.errors.instanceRemoved") else null
         val source = browser ?: return UiMessage("android.browser.errors.sessionClosed")
@@ -521,6 +526,7 @@ class BrowserActivity : Activity() {
     }
 
     private fun copyTerminalClipboardDiagnostics() {
+        if (!TerminalClipboardDiagnostics.process.enabled) return
         try {
             val environment = JSONObject().put("appVersion", BuildConfig.VERSION_NAME)
                 .put("engine", EngineProvider.engine.displayName)

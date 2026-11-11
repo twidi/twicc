@@ -196,8 +196,8 @@ uv run python -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.29**,
-version code **40**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.30**,
+version code **41**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -339,6 +339,23 @@ listener. Gecko uses a bundled WebExtension and a session-scoped native message
 delegate. Both use the same versioned protocol and shared native dispatcher.
 No general-purpose JavaScript interface is exposed. If a transport is unavailable,
 normal navigation and the native menu remain available.
+
+### Local terminal clipboard diagnostics
+
+Diagnostics are disabled by default, including on upgrades from older APKs.
+To enable them, open **Manage instances** and tap the screen title seven times.
+Keep each tap within one second of the previous tap. An English toast confirms
+the change. The same gesture disables diagnostics and clears recorded errors.
+
+The installation stores only the enabled preference in private Android preferences.
+It survives app restarts and updates and applies to all instances and both engines.
+When enabled, both app menus show **Get terminal clipboard diagnostics**.
+The action copies the report through the native Android clipboard.
+The app keeps only the latest 20 terminal clipboard errors in process memory.
+It stores no copied or pasted text and sends no diagnostics to the server.
+Enable diagnostics before reproducing an error. Disabled installations collect
+no error context, show no diagnostic menu action, and cannot export a report.
+Ordinary web clipboard behavior remains unchanged.
 
 Back uses browser history, then returns to the instance manager. Rotation keeps
 the session. Process death restores the URL, not unsaved in-memory work.

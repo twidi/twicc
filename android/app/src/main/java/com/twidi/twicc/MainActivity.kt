@@ -11,6 +11,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import com.twidi.twicc.i18n.AndroidLanguageStore
 import com.twidi.twicc.i18n.UiMessageJson
 import org.json.JSONObject
@@ -34,10 +35,18 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        TerminalClipboardDiagnostics.restore(this)
         AndroidPush.reconcilePayloadSupport(this)
         store = InstanceStore(this)
         deleteUnusedProfiles()
-        ui = InstanceManagerUi(this).apply { onAdd = { edit(null) } }
+        ui = InstanceManagerUi(this).apply {
+            onAdd = { edit(null) }
+            onDiagnosticsToggle = {
+                val enabled = TerminalClipboardDiagnostics.toggle(this@MainActivity)
+                Toast.makeText(this@MainActivity, if (enabled) TerminalClipboardDiagnostics.ENABLED_MESSAGE
+                    else TerminalClipboardDiagnostics.DISABLED_MESSAGE, Toast.LENGTH_SHORT).show()
+            }
+        }
         fitSystemInsets(ui.root)
         setContentView(ui.root)
         render()

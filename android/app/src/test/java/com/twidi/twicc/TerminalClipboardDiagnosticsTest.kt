@@ -8,8 +8,30 @@ class TerminalClipboardDiagnosticsTest {
     private fun diagnostic(index: Int) = JSONObject().put("operation", "paste").put("trigger", "button")
         .put("method", "readText").put("errorName", "NotAllowedError").put("errorMessage", "Denied $index")
 
+    @Test fun defaultsToDisabledAndDropsErrorsUntilEnabled() {
+        val journal = TerminalClipboardDiagnostics()
+        assertFalse(journal.enabled)
+        journal.record(diagnostic(0))
+        assertEquals(0, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
+        journal.configure(true)
+        journal.record(diagnostic(1))
+        assertEquals(1, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
+    }
+
+    @Test fun disablingClearsErrorsAndDropsLateFailures() {
+        val journal = TerminalClipboardDiagnostics()
+        journal.configure(true)
+        journal.record(diagnostic(0))
+        journal.configure(false)
+        journal.record(diagnostic(1))
+        assertFalse(journal.enabled)
+        journal.configure(true)
+        assertEquals(0, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
+    }
+
     @Test fun keepsOnlyRecentErrorsAndExcludesPayloadFields() {
         val journal = TerminalClipboardDiagnostics()
+        journal.configure(true)
         repeat(25) { journal.record(diagnostic(it).put("clipboardText", "private command")) }
         val report = journal.report(JSONObject().put("appVersion", "test"))
         val parsed = JSONObject(report)
@@ -23,6 +45,7 @@ class TerminalClipboardDiagnosticsTest {
 
     @Test fun boundsStringsAndReportsAnEmptyJournal() {
         val journal = TerminalClipboardDiagnostics()
+        journal.configure(true)
         assertEquals(0, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
         journal.record(diagnostic(0).put("errorMessage", "x".repeat(10000)))
         val error = JSONObject(journal.report(JSONObject())).getJSONArray("errors").getJSONObject(0)
@@ -32,6 +55,7 @@ class TerminalClipboardDiagnosticsTest {
 
     @Test fun bridgeAcceptsDiagnosticsWithoutAddingThemToState() {
         val journal = TerminalClipboardDiagnostics()
+        journal.configure(true)
         val bridge = AndroidAppBridge({ JSONObject() }, { _, _ -> }, { _, _ -> null }, terminalClipboardDiagnostic = journal::record)
         val request = JSONObject().put("protocol", 1).put("id", "error-1").put("command", "terminalClipboard.record")
             .put("diagnostic", diagnostic(0))
@@ -39,5 +63,20 @@ class TerminalClipboardDiagnosticsTest {
         val state = JSONObject(bridge.receive("""{"protocol":1,"id":"state","command":"getState"}"""))
         assertFalse(state.toString().contains("Denied"))
         assertEquals(1, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
+    }
+
+    @Test fun bridgeDropsDiagnosticsWhenLocalSettingIsOff() {
+        val journal = TerminalClipboardDiagnostics()
+        val bridge = AndroidAppBridge({ JSONObject() }, { _, _ -> }, { _, _ -> null }, terminalClipboardDiagnostic = journal::record)
+        val request = JSONObject().put("protocol", 1).put("id", "error-1").put("command", "terminalClipboard.record")
+            .put("diagnostic", diagnostic(0)).toString()
+        assertTrue(JSONObject(bridge.receive(request)).getBoolean("ok"))
+        assertEquals(0, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
+        journal.configure(true)
+        bridge.receive(request)
+        assertEquals(1, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
+        journal.configure(false)
+        bridge.receive(request)
+        assertEquals(0, JSONObject(journal.report(JSONObject())).getJSONArray("errors").length())
     }
 }

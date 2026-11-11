@@ -110,6 +110,46 @@ class InstanceManagerUiTest {
         } finally { language.select(original, language.read().revision) }
     }
 
+    @Test fun sevenTitleTapsToggleLocalClipboardDiagnosticsAndClearErrors() {
+        val preferences = context.getSharedPreferences("terminalClipboardDiagnostics", Context.MODE_PRIVATE)
+        val previous = if (preferences.contains("enabled")) preferences.getBoolean("enabled", false) else null
+        try {
+            preferences.edit().remove("enabled").commit()
+            launch()
+            assertFalse(TerminalClipboardDiagnostics.process.enabled)
+            scenario!!.onActivity { activity ->
+                val title = activity.findViewById<View>(R.id.instance_title)
+                repeat(6) { title.performClick() }
+                assertFalse(TerminalClipboardDiagnostics.process.enabled)
+            }
+            SystemClock.sleep(1100)
+            scenario!!.onActivity { activity ->
+                val title = activity.findViewById<View>(R.id.instance_title)
+                // The old six taps expire. This starts a fresh sequence.
+                repeat(6) { title.performClick() }
+                assertFalse(TerminalClipboardDiagnostics.process.enabled)
+                title.performClick()
+            }
+            assertTrue(TerminalClipboardDiagnostics.process.enabled)
+            assertTrue(preferences.getBoolean("enabled", false))
+            scenario!!.recreate()
+            assertTrue(TerminalClipboardDiagnostics.process.enabled)
+            TerminalClipboardDiagnostics.process.record(org.json.JSONObject().put("errorName", "TestFailure"))
+            scenario!!.onActivity { activity -> repeat(7) { activity.findViewById<View>(R.id.instance_title).performClick() } }
+            assertFalse(TerminalClipboardDiagnostics.process.enabled)
+            assertFalse(preferences.getBoolean("enabled", true))
+            assertEquals(0, org.json.JSONObject(TerminalClipboardDiagnostics.process.report(org.json.JSONObject()))
+                .getJSONArray("errors").length())
+            scenario!!.recreate()
+            assertFalse(TerminalClipboardDiagnostics.process.enabled)
+        } finally {
+            preferences.edit().apply {
+                if (previous == null) remove("enabled") else putBoolean("enabled", previous)
+            }.commit()
+            TerminalClipboardDiagnostics.restore(context)
+        }
+    }
+
     @Test fun refreshKeepsRemoveConfirmationAndCancelPreservesTheInstance() {
         val saved = InstanceStore(context).save(null, "Saved café", "https://saved.example")
         val language = AndroidLanguageStore(context)
