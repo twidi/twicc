@@ -231,6 +231,8 @@ class BaseAgent(StopOriginMixin):
         # Keep committed boundaries only until their pending publication drains.
         self._completion_published_ids: set[str] = set()
         self._completion_inputs: dict[str, CompletionInput] = {}
+        # Delivery times for inputs waiting for their first provider activity.
+        self._completion_input_times: dict[str, datetime] = {}
         self._completion_input_callback: Callable | None = None
         self._completion_input_receipts: dict[str, asyncio.Future] = {}
         self._completion_durable_inputs: dict[str, CompletionInput] = {}
@@ -376,15 +378,19 @@ class BaseAgent(StopOriginMixin):
         snapshot = self.completion_controller.snapshot()
         if snapshot.turn_id != previous.turn_id:
             self._completion_clear_tool_refs()
+            # Publish only after root activity, but retain the triggering send's
+            # time so the opening precedes its provider-written user message.
+            opened_at = min((timezone.now(), *self._completion_input_times.values()))
             # Capture only observations made before work. Never infer the floor
             # from indexing that may have advanced during an awaited DB write.
             self._completion_openings[snapshot.turn_id] = (
-                timezone.now(), self._completion_source_floor,
+                opened_at, self._completion_source_floor,
                 self._completion_storage_incarnation, self._completion_history_epoch,
             )
         for token, (turn_id, cursor, status) in tuple(self._completion_inputs.items()):
             if turn_id is None and status != "rejected":
                 self._completion_inputs[token] = CompletionInput(snapshot.turn_id, cursor, status)
+                self._completion_input_times.pop(token, None)
         self._timeline_bind_inputs()
         self._timeline_start_refs.setdefault(snapshot.turn_id, None)
         if self.state != AgentState.ASSISTANT_TURN:
@@ -412,6 +418,8 @@ class BaseAgent(StopOriginMixin):
         self._completion_refresh()
 
     def _completion_input_pending(self, token: str, *, staged: bool = False) -> None:
+        from django.utils import timezone
+
         self._timeline_input_origins.setdefault(token, capture_origin())
         self._completion_before_input(token, self._timeline_input_origins[token])
         # Manager staging blocks confirmation before setup. Only actual provider
@@ -424,6 +432,8 @@ class BaseAgent(StopOriginMixin):
             snapshot = self.completion_controller.snapshot()
             turn_id = snapshot.turn_id if self.completion_controller.is_open else None
             self._completion_inputs[token] = CompletionInput(turn_id, self._completion_source_floor, "pending")
+            if turn_id is None:
+                self._completion_input_times[token] = timezone.now()
         self.completion_controller.input_pending(token, asyncio.get_running_loop().time())
         self._completion_refresh()
 
@@ -434,6 +444,7 @@ class BaseAgent(StopOriginMixin):
         if item is not None and item.status in ("accepted", "rejected") and status != item.status:
             return
         if status == "rejected":
+            self._completion_input_times.pop(token, None)
             self._timeline_input_origins.pop(token, None)
             self._timeline_outgoing_inputs = deque(
                 (item for item in self._timeline_outgoing_inputs if item.token != token), maxlen=12)

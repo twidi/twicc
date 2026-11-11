@@ -55,6 +55,73 @@ def index(agent, factory, ref, line, text, *, final=True):
 
 
 @pytest.mark.parametrize("provider", [Provider.CODEX, Provider.CLAUDE_CODE])
+@pytest.mark.parametrize("indexed_before_activity", [False, True])
+def test_turn_start_precedes_its_user_message(bridge, content_row_factory, monkeypatch,
+                                             provider, indexed_before_activity):
+    manager, agent = bridge
+    agent.provider = provider
+    Session.objects.filter(pk=agent.session_id).update(provider=provider.value)
+    sent_at = timezone.now()
+    clock = [sent_at]
+    monkeypatch.setattr(timezone, "now", lambda: clock[0])
+    token = str(uuid4())
+    user = NativeMessageRef("claude_uuid" if provider == Provider.CLAUDE_CODE else "codex_client", token)
+
+    def index_user():
+        index(agent, content_row_factory, user, 1, "question")
+        SessionItem.objects.filter(session_id=agent.session_id).update(timestamp=sent_at + timedelta(seconds=1))
+        record_indexed_messages(agent.session_id, new_line_nums=[1], timeline_since=sent_at)
+
+    async def scenario():
+        manager._bind_completion_callbacks(agent)
+        agent._completion_input_pending(token)
+        agent._timeline_reserve_input(token, user)
+        agent._completion_input_settled(token, "accepted")
+        assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_STARTED).exists())
+        if indexed_before_activity:
+            await asyncio.to_thread(index_user)
+        clock[0] = sent_at + timedelta(seconds=2)
+        agent._completion_activity(first_ref=user)
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        for task in tuple(agent._completion_tasks):
+            await task
+        if not indexed_before_activity:
+            await asyncio.to_thread(index_user)
+
+    asyncio.run(scenario())
+    start = TimelineEvent.objects.get(kind=TimelineKind.TURN_STARTED)
+    message = TimelineEvent.objects.get(kind=TimelineKind.USER_MESSAGE_SENT)
+    assert start.occurred_at == sent_at
+    assert start.occurred_at < message.occurred_at
+    assert LogicalTurn.objects.get().opened_at == sent_at
+    assert refs(start) == [user]
+
+
+@pytest.mark.parametrize("unused_input", ["staged", "rejected"])
+def test_unused_input_does_not_backdate_an_automatic_turn(bridge, monkeypatch, unused_input):
+    manager, agent = bridge
+    sent_at = timezone.now()
+    clock = [sent_at]
+    monkeypatch.setattr(timezone, "now", lambda: clock[0])
+
+    async def scenario():
+        manager._bind_completion_callbacks(agent)
+        token = str(uuid4())
+        agent._completion_input_pending(token, staged=unused_input == "staged")
+        if unused_input == "rejected":
+            agent._completion_input_settled(token, "rejected")
+        clock[0] = sent_at + timedelta(seconds=2)
+        agent._completion_activity()
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        for task in tuple(agent._completion_tasks):
+            await task
+
+    asyncio.run(scenario())
+    assert TimelineEvent.objects.get(kind=TimelineKind.TURN_STARTED).occurred_at == clock[0]
+    assert LogicalTurn.objects.get().opened_at == clock[0]
+
+
+@pytest.mark.parametrize("provider", [Provider.CODEX, Provider.CLAUDE_CODE])
 def test_end_before_indexing_keeps_every_input_and_final(bridge, content_row_factory, provider):
     manager, agent = bridge
     agent.provider = provider
