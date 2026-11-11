@@ -1590,7 +1590,8 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
 
         fitAddon = new FitAddon()
         terminal.loadAddon(fitAddon)
-        terminal.loadAddon(new WebLinksAddon())
+        // Android engines must receive the URL before they handle the new window.
+        terminal.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener,noreferrer')))
         terminal.loadAddon(new ClipboardAddon())
 
         Terminal.strings.promptLabel = i18n.global.t('session.terminal.input')
