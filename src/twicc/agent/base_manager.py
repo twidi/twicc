@@ -974,8 +974,11 @@ class BaseAgentManager:
             if journal_exists:
                 for token, cursor, status in inputs:
                     bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
-            closed_at = ending.occurred_at if ending else agent._completion_boundary_times.setdefault(snapshot.turn_id, timezone.now())
-            stored = store_turn_snapshot(snapshot, closed_at=closed_at if snapshot.outcome else None)
+            closed_at = None
+            if snapshot.outcome is not None:
+                closed_at = (ending.occurred_at if ending else
+                    agent._completion_boundary_times.setdefault(snapshot.turn_id, timezone.now()))
+            stored = store_turn_snapshot(snapshot, closed_at=closed_at)
             if needs_open:
                 event_id = record_logical_turn_boundary(agent=agent, snapshot=snapshot, kind=TimelineKind.TURN_STARTED,
                     occurred_at=opened_at, background_work=None)
@@ -1021,8 +1024,9 @@ class BaseAgentManager:
                 # current controller owns the live ProcessRun transition.
                 if state == AgentState.USER_TURN and agent.completion_controller.snapshot() != snapshot:
                     state = AgentState.ASSISTANT_TURN if agent.state == AgentState.DEAD else agent.state
-                self._persist_process_run_transition_admitted(agent, state,
-                    message_refs=message_refs if state == AgentState.USER_TURN else current_start_refs)
+                if self._completion_process_is_current(agent, snapshot):
+                    self._persist_process_run_transition_admitted(agent, state,
+                        message_refs=message_refs if state == AgentState.USER_TURN else current_start_refs)
                 from django.db import transaction
 
                 transaction.on_commit(lambda: agent._timeline_forget_turn(snapshot.turn_id))
@@ -1040,7 +1044,7 @@ class BaseAgentManager:
                     "first_ref": snapshot.first_ref._asdict() if snapshot.first_ref else None,
                     "final_refs": [ref._asdict() for ref in snapshot.final_refs],
                 }
-                if stored:
+                if stored and self._completion_process_is_current(agent, snapshot):
                     self._persist_process_run_transition_admitted(agent, state)
             if stored and state is not None:
                 from twicc.core.services.timeline_messages import recover_referenced_messages
@@ -1051,6 +1055,13 @@ class BaseAgentManager:
             (token, CompletionInput(snapshot.turn_id, cursor, status)) for token, cursor, status in inputs
         )
         return stored
+
+    def _completion_process_is_current(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
+        """Recheck live ownership immediately before a completion ProcessRun write."""
+        controller = agent.completion_controller
+        return (self._agents.get(agent.session_id) is agent and not agent._stop_requested
+                and controller.run_id == snapshot.run_id
+                and controller.snapshot().run_id == snapshot.run_id)
 
     async def _confirm_completion(self, agent: BaseAgent, candidate: CompletionCandidate) -> None:
         """Freeze eligibility before admission; shells keep the general turn open."""
@@ -1294,7 +1305,7 @@ class BaseAgentManager:
             if agent.completion_controller.snapshot() != snapshot:
                 agent._completion_refresh()
                 return False
-            if self._agents.get(agent.session_id) is not agent or agent._stop_requested:
+            if not self._completion_process_is_current(agent, snapshot):
                 return False
             agent._completion_last_queued = snapshot
             agent._completion_committed_snapshot = snapshot

@@ -718,12 +718,12 @@ def test_recovery_rollback_restores_process_mirror_before_retry(bridge, death):
             agent._set_state(AgentState.DEAD)
         original = manager._persist_process_run_transition_admitted
 
-        def reject_second_transition(current, state, **kwargs):
-            if state == AgentState.ASSISTANT_TURN:
-                raise RuntimeError("second transition rolls back")
+        def reject_reconciliation_transition(current, state, **kwargs):
+            if state == (AgentState.DEAD if death else AgentState.ASSISTANT_TURN):
+                raise RuntimeError("reconciliation transition rolls back")
             original(current, state, **kwargs)
 
-        with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=reject_second_transition):
+        with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=reject_reconciliation_transition):
             if death:
                 await manager._persist_process_run_transition(agent, AgentState.DEAD)
             else:
@@ -960,4 +960,93 @@ def test_cancelled_committed_expired_closure_does_not_repeat_public_boundaries(b
         assert not await asyncio.to_thread(LogicalTurn.objects.filter(pk=claimed.turn_id).exists)
         manager._broadcast_info.assert_not_awaited()
 
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["ended", "provider_error"])
+def test_exceptional_boundary_uses_termination_time_after_open_persistence(bridge, outcome):
+    from datetime import timedelta
+
+    async def scenario():
+        manager, agent = bridge
+        ticket = open_candidate(manager, agent)
+        opened_at = timezone.now()
+        terminated_at = opened_at + timedelta(seconds=10)
+        retried_at = terminated_at + timedelta(seconds=10)
+        with patch("django.utils.timezone.now", return_value=opened_at):
+            assert await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        with patch("django.utils.timezone.now", return_value=terminated_at):
+            closed = agent._completion_terminate(outcome)
+        agent._cancel_completion_timer()
+        if agent._completion_tasks:
+            await asyncio.gather(*tuple(agent._completion_tasks))
+        with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=RuntimeError("rollback")):
+            assert not await manager._end_completion(agent, closed)
+        agent._cancel_completion_timer()
+        with patch("django.utils.timezone.now", return_value=retried_at):
+            assert await manager._retry_completion(agent, closed)
+        row = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        boundary = await asyncio.to_thread(lambda: TimelineEvent.objects.get(kind=TimelineKind.TURN_ENDED))
+        assert row.closed_at == terminated_at
+        assert boundary.occurred_at == terminated_at
+        assert agent._completion_boundary_times[ticket.turn_id] == terminated_at
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("winner", ["replacement", "stop", "controller_run", "run_id"])
+def test_worker_entry_race_preserves_history_without_obsolete_process_write(bridge, winner):
+    import threading
+    from twicc.agent.completion import CompletionController
+    from twicc.core.models import TimelineDecision
+    from twicc.core.services.timeline_decisions import fulfill_final_message_obligation
+
+    async def scenario():
+        manager, agent = bridge
+        incarnation = str(uuid4())
+        agent._completion_storage_incarnation = incarnation
+        agent._completion_history_epoch = 0
+        await asyncio.to_thread(lambda: Session.objects.filter(pk=agent.session_id).update(storage_incarnation=incarnation))
+        ticket = open_candidate(manager, agent)
+        process_id = agent.process_run.pk
+        original_transition_time = agent.process_run.last_state_change_at
+        entered, release = asyncio.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def finish_final_before_process_write(*, ending_id):
+            result = fulfill_final_message_obligation(ending_id=ending_id)
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2), "Worker must resume after the controlled ingress"
+            return result
+
+        with patch("twicc.core.services.timeline_decisions.fulfill_final_message_obligation",
+                   side_effect=finish_final_before_process_write):
+            completion = asyncio.create_task(manager._confirm_completion(agent, ticket))
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            if winner == "replacement":
+                manager._agents[agent.session_id] = object()
+            elif winner == "stop":
+                agent.mark_stopping()
+            elif winner == "controller_run":
+                agent.completion_controller = CompletionController(run_id=str(uuid4()))
+            else:
+                agent.completion_controller.run_id = str(uuid4())
+            release.set()
+            await completion
+        process = await asyncio.to_thread(ProcessRun.objects.get, pk=process_id)
+        assert process.state == AgentState.ASSISTANT_TURN.value
+        assert process.last_state_change_at == original_transition_time
+        row = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        decision = await asyncio.to_thread(lambda: TimelineDecision.objects.get(kind="ending"))
+        assert row.outcome == "normal"
+        assert decision.status == "accepted" and decision.applied_at is not None and not decision.force_pending
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).count()) == 1
+        manager._broadcast_info.assert_not_awaited()
+        if winner == "stop":
+            agent.kill_reason = "manual"
+            await agent._transition_to_dead()
+            assert not await asyncio.to_thread(ProcessRun.objects.filter(pk=process_id).exists)
+            assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.PROCESS_ENDED).count()) == 1
+            assert [call.args[0].state for call in manager._broadcast_info.await_args_list] == [AgentState.DEAD]
+        agent._cancel_completion_timer()
     asyncio.run(scenario())
