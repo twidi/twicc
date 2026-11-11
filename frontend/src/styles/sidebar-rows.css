@@ -85,6 +85,15 @@
     padding-block: var(--wa-space-2xs);
 }
 
+/* Touch screens keep the last tapped row in :hover, and the hover fill of a plain button
+   reads like a multi-selected row. Without a real hover, a plain row keeps its plain
+   background; the selected and the open rows keep their own. */
+@media (hover: none) {
+    .sidebar-row-wrapper:not(.sidebar-row-wrapper--selected) .sidebar-row:not(.sidebar-row--active)::part(base):hover {
+        background-color: transparent;
+    }
+}
+
 /* Keyboard navigation highlight. */
 .sidebar-row--highlighted::part(base) {
     outline: var(--wa-focus-ring);
