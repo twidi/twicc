@@ -27,6 +27,7 @@ import { getRegisteredProviders, getProviderHelpers, getProviderStore, getProvid
 import ProviderIcon from '../components/ui/ProviderIcon.vue'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
 import SessionList from '../components/session/list/SessionList.vue'
+import SessionLinkDragGhost from '../components/session/list/SessionLinkDragGhost.vue'
 import SessionsSidebarControls from '../components/session/SessionsSidebarControls.vue'
 import ArtifactBookmarksSidebarControls from '../components/artifacts/ArtifactBookmarksSidebarControls.vue'
 import ArtifactBookmarkList from '../components/artifacts/ArtifactBookmarkList.vue'
@@ -1671,6 +1672,42 @@ function syncSidebarState() {
     if (checkbox) checked.value = checkbox.checked
 }
 
+// Session link drag (composables/useSessionLinkDrag.js): in the narrow layout the
+// drawer covers the chat, so it closes when the drag starts, and reopens if the
+// drag ends without inserting the link.
+let drawerClosedBySessionLinkDrag = false
+
+/** Close the mobile drawer if it is open. Returns whether it closed it. */
+function closeDrawerIfNarrowOpen() {
+    const checkbox = document.getElementById('sidebar-toggle-state')
+    if (!isMobile() || !checkbox?.checked) return false
+    checkbox.checked = false
+    syncSidebarState()
+    return true
+}
+
+function onSessionLinkDragStart() {
+    drawerClosedBySessionLinkDrag = closeDrawerIfNarrowOpen()
+}
+
+function onSessionLinkDragEnd(event) {
+    const reopen = drawerClosedBySessionLinkDrag && !event.detail?.inserted
+    drawerClosedBySessionLinkDrag = false
+    const checkbox = document.getElementById('sidebar-toggle-state')
+    if (!reopen || !isMobile() || !checkbox) return
+    checkbox.checked = true
+    syncSidebarState()
+}
+
+onMounted(() => {
+    window.addEventListener('twicc:session-link-drag-start', onSessionLinkDragStart)
+    window.addEventListener('twicc:session-link-drag-end', onSessionLinkDragEnd)
+})
+onBeforeUnmount(() => {
+    window.removeEventListener('twicc:session-link-drag-start', onSessionLinkDragStart)
+    window.removeEventListener('twicc:session-link-drag-end', onSessionLinkDragEnd)
+})
+
 async function handleRailToggle() {
     toggleSidebar()
     await nextTick()
@@ -1702,6 +1739,8 @@ function openPeerInbox() {
          :data-rail-when-closed="settingsStore.isSidebarRailVisibleWhenClosed ? 'visible' : 'hidden'">
         <!-- Hidden checkbox for pure CSS sidebar toggle -->
         <input type="checkbox" id="sidebar-toggle-state" class="sidebar-toggle-checkbox" :checked="checked" @change="handleSidebarToggle"/>
+
+        <SessionLinkDragGhost />
 
         <SidebarRail
             :mode="isArtifactsMode ? 'artifacts' : 'sessions'"

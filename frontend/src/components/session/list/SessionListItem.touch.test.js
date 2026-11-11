@@ -12,7 +12,7 @@ const compiled = compileScript(descriptor, { id: 'touch-test' }).content
     .replace(/import[\s\S]*?from ['"][^'"]+['"]\s*;?/g, '')
     .replace('export default', 'const component =')
 
-function fixture(t, overrides = {}) {
+function fixture(t, overrides = {}, contextOverrides = {}) {
     t.mock.timers.enable({ apis: ['setTimeout'] })
     setActivePinia(createPinia())
     const store = useSessionSelectionStore()
@@ -31,6 +31,10 @@ function fixture(t, overrides = {}) {
         useSessionSelectionStore: () => store,
         useDragHover: () => ({ cancel() {} }),
         setTimeout, clearTimeout,
+        ref: value => ({ value }),
+        useSessionLinkTarget: () => ({ targetSessionId: { value: null } }),
+        window: { addEventListener() {}, removeEventListener() {} },
+        ...contextOverrides,
     }
     for (const match of source.matchAll(/import ([\s\S]*?) from ['"][^'"]+['"]/g)) {
         for (const name of match[1].replace(/[{}]/g, '').split(',').map(value => value.trim()).filter(Boolean)) {

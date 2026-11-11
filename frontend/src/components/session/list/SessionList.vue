@@ -992,6 +992,7 @@ defineExpose({
                 />
                 <SessionListItem
                     :session="session"
+                    link-source
                     :active="session.id === sessionId"
                     :highlighted="index === highlightedIndex"
                     :compact-view="compactView"

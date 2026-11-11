@@ -70,6 +70,9 @@ test('preview modifier clicks never enter multi-selection or emit drag selection
         useDataStore: () => ({}), useSettingsStore: () => ({}), useCodeCommentsStore: () => ({}),
         useSessionSelectionStore: () => selectionStore,
         useDragHover: options => { dragOptions = options; return { cancel() {} } },
+        ref: value => ({ value }),
+        useSessionLinkTarget: () => ({ targetSessionId: { value: null } }),
+        window: { addEventListener() {}, removeEventListener() {} },
     }
     for (const match of source.matchAll(/import ([\s\S]*?) from ['"][^'"]+['"]/g)) {
         for (const name of match[1].replace(/[{}]/g, '').split(',').map(value => value.trim()).filter(Boolean)) {
@@ -113,6 +116,9 @@ test('active preview keeps unread suppression without active row styling', () =>
         useSettingsStore: () => ({}), useCodeCommentsStore: () => ({}),
         useSessionSelectionStore: () => ({}), useDragHover: () => ({ cancel() {} }),
         isSessionUnread: () => true,
+        ref: value => ({ value }),
+        useSessionLinkTarget: () => ({ targetSessionId: { value: null } }),
+        window: { addEventListener() {}, removeEventListener() {} },
     }
     for (const match of source.matchAll(/import ([\s\S]*?) from ['"][^'"]+['"]/g)) {
         for (const name of match[1].replace(/[{}]/g, '').split(',').map(value => value.trim()).filter(Boolean)) {
@@ -130,7 +136,7 @@ test('active preview keeps unread suppression without active row styling', () =>
     const evaluate = (node, name) => {
         const binding = node.props.find(prop => prop.type === 7 && prop.arg?.content === name)
         return runInNewContext(`(${binding.exp.content})`, {
-            ...props, showActiveStyle: row.showActiveStyle.value, selected: false, isDragPending: false,
+            ...props, showActiveStyle: row.showActiveStyle.value, selected: false, isDragPending: false, linkArmed: false, linkSource: false,
         })
     }
     const wrapperClasses = evaluate(element, 'class')

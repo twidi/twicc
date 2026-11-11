@@ -9,7 +9,7 @@ const { t, n, locale } = useI18n()
  * called ~9 and ~4 times respectively in the template for the same session.
  * Now each is called once via a computed, and Vue caches the result.
  */
-import { computed, watch, inject, onBeforeUnmount } from 'vue'
+import { computed, watch, inject, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../../../stores/codeComments'
 import { useDataStore } from '../../../stores/data'
@@ -33,6 +33,8 @@ import { markSessionReadState, cancelSessionViewedThrottle, interruptSession } f
 import { stopSessionProcess } from '../../../composables/useStopSessionProcess'
 import { toggleSessionMute } from '../../../composables/useSessionMute'
 import { useDragHover } from '../../../composables/useDragHover'
+import { isSessionLinkDragActive, startSessionLinkDrag, useSessionLinkTarget } from '../../../composables/useSessionLinkDrag.js'
+import { buildSessionLinkMarkdown } from '../../../utils/sessionLink.js'
 import ProjectBadge from '../../project/ProjectBadge.vue'
 import ProjectMark from '../../project/ProjectMark.vue'
 import ProcessIndicator from '../../ui/ProcessIndicator.vue'
@@ -51,6 +53,9 @@ const props = defineProps({
     showMenu: { type: Boolean, default: true },
     // Preview rows navigate without changing sidebar selection or accepting drops.
     selectionEnabled: { type: Boolean, default: true },
+    // Main sidebar rows only: the session can be dragged onto the open chat to
+    // insert a link to it.
+    linkSource: { type: Boolean, default: false },
     // Preview rows keep active semantics without the sidebar selection style.
     highlightActive: { type: Boolean, default: true },
     // Offers "Detach from parent" / "Reattach to parent" (tree option on).
@@ -404,6 +409,100 @@ let longPressTimer = null
 let longPressTriggered = false
 let suppressTouchClick = false
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Session link drag: drop this session on the open chat to insert a link to it.
+// Same model as the layout tab drag: pointer events, a 5 px move for the mouse,
+// a long press then a move for touch. The row wears `touch-action: pan-y`, so a
+// vertical move stays a native scroll and a sideways move (towards the chat)
+// starts the drag.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MOUSE_DRAG_DISTANCE = 5
+const TOUCH_DRAG_DISTANCE = 9
+
+const sessionLinkTarget = useSessionLinkTarget()
+const isLinkable = computed(() => !props.session.draft && !props.session.ephemeral)
+
+function canStartLinkDrag() {
+    const targetId = sessionLinkTarget.targetSessionId.value
+    return props.linkSource && isLinkable.value && !selectionStore.active
+        && !!targetId && targetId !== props.session.id
+}
+
+// The long press armed a touch drag: the row lifts, a sideways move starts the
+// drag, a release without move enters multi-select as before.
+const linkArmed = ref(false)
+let linkDragStarted = false
+let pointerGesture = null
+
+function linkSessionSnapshot() {
+    const session = props.session
+    return {
+        id: session.id,
+        projectId: session.project_id,
+        title: getSessionDisplayName(session),
+        markdown: buildSessionLinkMarkdown(session, router),
+    }
+}
+
+function endPointerGesture() {
+    window.removeEventListener('pointermove', onGesturePointerMove)
+    window.removeEventListener('pointerup', onGesturePointerEnd)
+    window.removeEventListener('pointercancel', onGesturePointerEnd)
+    pointerGesture = null
+}
+
+function handlePointerDown(event) {
+    if (!props.linkSource || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+    if (isSessionLinkDragActive()) return
+    endPointerGesture()
+    pointerGesture = {
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        x: event.clientX, y: event.clientY,
+        lastX: event.clientX, lastY: event.clientY,
+        armX: 0, armY: 0,
+    }
+    window.addEventListener('pointermove', onGesturePointerMove)
+    window.addEventListener('pointerup', onGesturePointerEnd)
+    window.addEventListener('pointercancel', onGesturePointerEnd)
+}
+
+function onGesturePointerMove(event) {
+    const gesture = pointerGesture
+    if (!gesture || event.pointerId !== gesture.pointerId) return
+    gesture.lastX = event.clientX
+    gesture.lastY = event.clientY
+    if (gesture.pointerType === 'mouse') {
+        if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= MOUSE_DRAG_DISTANCE && canStartLinkDrag()) {
+            beginLinkDrag(event)
+        }
+    } else if (linkArmed.value
+        && Math.hypot(event.clientX - gesture.armX, event.clientY - gesture.armY) > TOUCH_DRAG_DISTANCE) {
+        beginLinkDrag(event)
+    }
+}
+
+// Release before the drag started, or the browser took the touch for a scroll.
+function onGesturePointerEnd(event) {
+    if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) return
+    if (event.type === 'pointercancel') linkArmed.value = false
+    endPointerGesture()
+}
+
+function beginLinkDrag(event) {
+    const { pointerId, pointerType } = pointerGesture
+    endPointerGesture()
+    linkArmed.value = false
+    linkDragStarted = true
+    startSessionLinkDrag(linkSessionSnapshot(), { pointerId, pointerType, x: event.clientX, y: event.clientY })
+}
+
+// The link drag replaces the native drag of the row link (its URL).
+function handleDragStart(event) {
+    if (canStartLinkDrag()) event.preventDefault()
+}
+
 function clearLongPressTimer() {
     clearTimeout(longPressTimer)
     longPressTimer = null
@@ -418,6 +517,8 @@ function handleTouchStart(event) {
     handleTouchCancel()
     suppressTouchClick = false
     longPressTriggered = false
+    linkArmed.value = false
+    linkDragStarted = false
     if (!props.selectionEnabled || event.touches.length !== 1) return
     const touch = event.touches[0]
     touchOrigin = { x: touch.clientX, y: touch.clientY }
@@ -427,6 +528,13 @@ function handleTouchStart(event) {
         if (!props.selectionEnabled) return
         longPressTriggered = true
         suppressTouchClick = true
+        if (pointerGesture && canStartLinkDrag()) {
+            // Multi-select waits for the release: a sideways move drags instead.
+            pointerGesture.armX = pointerGesture.lastX
+            pointerGesture.armY = pointerGesture.lastY
+            linkArmed.value = true
+            return
+        }
         selectionStore.enter(props.session.id)
         selectionStore.setSelection([props.session.id], { anchor: props.session.id })
     }, 500)
@@ -448,9 +556,14 @@ function handleTouchEnd(event) {
         event.preventDefault()
         suppressTouchClick = true
         if (!longPressTriggered) selectionStore.toggle(props.session.id)
+        else if (linkArmed.value && !linkDragStarted) {
+            selectionStore.enter(props.session.id)
+            selectionStore.setSelection([props.session.id], { anchor: props.session.id })
+        }
     }
     touchOrigin = null
     longPressTriggered = false
+    linkArmed.value = false
 }
 
 function handleContextMenu(event) {
@@ -463,8 +576,13 @@ watch(() => props.session.id, () => {
     handleTouchCancel()
     longPressTriggered = false
     suppressTouchClick = false
+    linkArmed.value = false
+    endPointerGesture()
 })
-onBeforeUnmount(handleTouchCancel)
+onBeforeUnmount(() => {
+    handleTouchCancel()
+    endPointerGesture()
+})
 
 function handleClick(event) {
     if (event.button !== 0) return // middle/right click: let the browser handle it
@@ -612,6 +730,7 @@ function handleMenuSelect(event) {
             'session-item-wrapper--compact': compactView,
             'session-item-wrapper--drag-pending': isDragPending,
             'session-item-wrapper--selected': selected,
+            'session-item-wrapper--link-armed': linkArmed,
             'session-item-wrapper--tree': !!treeRow,
             'session-item-wrapper--tree-parent': !!treeRow?.hasChildren,
             'session-item-wrapper--tree-hinted': !!treeRow?.hint,
@@ -659,6 +778,7 @@ function handleMenuSelect(event) {
                 'sidebar-row--active': showActiveStyle,
                 'sidebar-row--highlighted': highlighted,
                 'session-item--touch-selectable': selectionEnabled,
+                'session-item--link-source': linkSource,
             }"
             @click="handleClick"
             @mousedown="handleMousedown"
@@ -667,6 +787,8 @@ function handleMenuSelect(event) {
             @touchend="handleTouchEnd"
             @touchcancel="handleTouchCancel"
             @contextmenu="handleContextMenu"
+            @pointerdown="handlePointerDown"
+            @dragstart="handleDragStart"
         >
             <div v-if="treeRow?.hint" class="tree-hint">{{ $t('session.list.fromParent', { parent: treeRow.hint }) }}</div>
             <div class="session-name-row">
@@ -939,6 +1061,23 @@ function handleMenuSelect(event) {
 .session-item--touch-selectable {
     -webkit-touch-callout: none;
     user-select: none;
+}
+
+/* Session link drag: a vertical move stays a native scroll of the list, a
+   sideways move (towards the chat) is ours. */
+.session-item--link-source {
+    touch-action: pan-y;
+}
+
+/* The long press armed the drag: the row lifts until the finger moves or lifts. */
+.session-item-wrapper--link-armed > .session-item {
+    transform: scale(1.02);
+    box-shadow: var(--wa-shadow-m);
+    transition: transform var(--transition-duration, .2s) ease, box-shadow var(--transition-duration, .2s) ease;
+}
+:root.reduce-motion .session-item-wrapper--link-armed > .session-item {
+    transform: none;
+    background: var(--wa-color-brand-fill-quiet);
 }
 
 /* Row look (padding, keyboard highlight, multi-select fill, the lit open row, the row

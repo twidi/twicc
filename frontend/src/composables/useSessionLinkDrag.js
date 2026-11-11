@@ -2,11 +2,12 @@
 // receive one (registered while their composer is mounted) and the drag of a
 // sidebar session in progress.
 
-import { computed, reactive } from 'vue'
+import { computed, reactive, shallowReactive } from 'vue'
 import { useRoute } from 'vue-router'
 
 // sessionId -> { el: () => HTMLElement | null, insert: (markdown, { input }) => Promise<boolean> }
-const composers = reactive(new Map())
+// Shallow: entries stay raw objects, so an unregister can compare them by identity.
+const composers = shallowReactive(new Map())
 
 /**
  * Register the chat of `sessionId` as able to receive a session link. Returns
