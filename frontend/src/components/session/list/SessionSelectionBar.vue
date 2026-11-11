@@ -18,6 +18,7 @@ import { useI18n } from 'vue-i18n'
 import { ref, computed } from 'vue'
 import { useDataStore } from '../../../stores/data'
 import { useSessionSelectionStore } from '../../../stores/sessionSelection'
+import { useSettingsStore } from '../../../stores/settings'
 import { markSessionReadState, cancelSessionViewedThrottle } from '../../../composables/useWebSocket'
 import { stopSessionProcessUnconfirmed, isStoppable } from '../../../composables/useStopSessionProcess'
 import { backgroundShellCount, batchStopConfirmationMessage } from '../../../utils/backgroundWork'
@@ -42,6 +43,14 @@ const emit = defineEmits(['deselect-session'])
 
 const store = useDataStore()
 const selectionStore = useSessionSelectionStore()
+const settingsStore = useSettingsStore()
+
+// How to select, which differs by device: modifier clicks with a pointer (Ctrl,
+// or ⌘ on a Mac, where Ctrl+click opens the context menu), plain taps on touch.
+const selectionHint = computed(() => {
+    if (settingsStore.isTouchDevice) return t('session.selection.hintTouch')
+    return t(settingsStore.isMac ? 'session.selection.hintPointerMac' : 'session.selection.hintPointer')
+})
 
 const selectedSessions = computed(() =>
     [...selectionStore.selectedIds]
@@ -260,6 +269,7 @@ function handleActionSelect(event) {
             <wa-dropdown placement="bottom-end" @wa-select="handleActionSelect">
                 <wa-button
                     slot="trigger"
+                    class="selection-actions"
                     variant="brand"
                     appearance="accent"
                     size="small"
@@ -331,6 +341,8 @@ function handleActionSelect(event) {
         </wa-button>
         <AppTooltip for="selection-bar-exit">{{ $t('session.selection.exit') }}</AppTooltip>
 
+        <p class="selection-hint">{{ selectionHint }}</p>
+
         <!-- Aggregated batch confirmation -->
         <wa-dialog :open="confirmState !== null" :label="confirmLabel" @wa-hide="handleDialogHide">
             <p class="confirm-message">{{ confirmMessage }}</p>
@@ -352,7 +364,9 @@ function handleActionSelect(event) {
     flex-shrink: 0;
     margin: var(--wa-space-2xs) var(--wa-space-2xs) 0;
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
+    /* Same space above the hint as below it (the bar's block padding). */
     gap: var(--wa-space-xs);
     padding: var(--wa-space-xs) var(--wa-space-s);
     background-color: var(--wa-color-surface-raised);
@@ -372,6 +386,24 @@ function handleActionSelect(event) {
 
 #selection-bar-exit {
     flex-shrink: 0;
+}
+
+/* Compact buttons: a small wa-button is taller than the bar needs. Its height,
+   line height and padding derive from these properties. The exit button gets the
+   same height, so its middle lines up with the Actions button. */
+.selection-actions,
+#selection-bar-exit {
+    --wa-form-control-height: 1.75rem;
+    --wa-form-control-padding-inline: var(--wa-space-s);
+}
+
+/* Below the controls and the exit button, on the full width of the bar. */
+.selection-hint {
+    flex-basis: 100%;
+    margin: 0;
+    line-height: var(--wa-line-height-condensed);
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
 }
 
 .selection-count {
