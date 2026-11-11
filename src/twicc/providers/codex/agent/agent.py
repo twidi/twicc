@@ -57,6 +57,7 @@ from asgiref.sync import sync_to_async
 
 from twicc.agent import AgentInfo, AgentState, BaseAgent, PendingRequest, SendDeliveryError, StateChangeCallback
 from twicc.agent.completion_types import NativeMessageRef
+from twicc.agent.semantic_types import ShellExitEvidence
 from twicc.agent.shell_notice import (
     ShellInfo,
     ShellLookup,
@@ -1942,7 +1943,9 @@ class CodexAgent(BaseAgent):
             )
             self._schedule_background_work_refresh()
 
-    async def notify_shells_exited(self, thread_id: str, process_ids: list[str]) -> None:
+    async def notify_shells_exited(
+        self, thread_id: str, process_ids: list[str], *, completed_refs: tuple[ShellExitEvidence, ...] = (),
+    ) -> None:
         """Relay from the watcher: these processes of ``thread_id`` exited.
 
         The only end signal for a process that outlives its turn (Codex writes
@@ -1951,11 +1954,23 @@ class CodexAgent(BaseAgent):
         for a process not tracked (yet): its announcement may be written
         just after. Idempotent — the live ``item/completed`` of an in-turn
         exit already dropped the entry.
+        Capture current root result identities before removal can reconsider.
         """
         self._prune_recently_ended_shells()
         now = time.monotonic()
         changed = False
+        ignored: set[str] = set()
+        if thread_id == self.session_id:
+            for evidence in completed_refs:
+                if (evidence.scope.provider != self.provider.value
+                        or self._completion_storage_incarnation not in (None, evidence.scope.storage_incarnation)
+                        or self._completion_history_epoch not in (None, evidence.scope.history_epoch)):
+                    ignored.add(evidence.process_id)
+                elif evidence.process_id in process_ids and self.completion_controller.is_open:
+                    self._completion_tool_refs[evidence.ref] = None
         for process_id in process_ids:
+            if process_id in ignored:
+                continue
             key = (thread_id, process_id)
             self._recently_ended_shells[key] = now
             if self._forget_shell(key):

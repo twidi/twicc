@@ -3,13 +3,21 @@
 from datetime import datetime
 from typing import NamedTuple
 
-from twicc.agent.completion_types import CompletionCandidate, CompletionSnapshot
+from twicc.agent.completion_types import CompletionCandidate, CompletionSnapshot, NativeMessageRef
 
 
 class SourceScope(NamedTuple):
     provider: str
     storage_incarnation: str | None
     history_epoch: int | None
+
+
+class ShellExitEvidence(NamedTuple):
+    """An indexed process exit identity, without command or result content."""
+
+    process_id: str
+    ref: NativeMessageRef
+    scope: SourceScope
 
 
 class DecisionRequest(NamedTuple):

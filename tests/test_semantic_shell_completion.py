@@ -417,3 +417,79 @@ def test_root_tool_without_native_identity_marks_context_incomplete(monkeypatch)
         assert context.payload["tool_context_incomplete"]
         agent._cancel_completion_timer()
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("agent_scope", ["current", "foreign_incarnation", "foreign_epoch"])
+def test_watcher_only_codex_exit_keeps_result_after_sdk_drain(live_session, monkeypatch, agent_scope):
+    f = live_session
+    if f.provider != "codex":
+        pytest.skip("Codex watcher exit ingress")
+    from tests.test_codex_completion import Turn
+    from twicc.providers.codex.agent.manager import CodexAgentManager
+    from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
+
+    f.append(f.message("user", "Run tests", user=True), f.message("final", "Tests continue"), capture=False)
+    f.session.refresh_from_db()
+
+    def completed(identity, process_id, output):
+        return {"type": "event_msg", "payload": {"type": "item_completed", "thread_id": f.session.id,
+            "turn_id": "native-turn", "item": {"id": identity, "type": "CommandExecution",
+                "process_id": process_id, "command": "uv run pytest", "status": "completed",
+                "aggregated_output": output, "exit_code": 0}}}
+
+    async def scenario():
+        agent = codex_agent(ephemeral=False)
+        agent.session_id = f.session.id
+        agent._completion_storage_incarnation = f.session.storage_incarnation
+        agent._completion_history_epoch = f.session.history_epoch
+        agent._track_shell((agent.session_id, "tests"), 10, "uv run pytest")
+        agent._track_shell((agent.session_id, "server"), 10, "npm run dev")
+        sdk_turn = Turn([
+            event("item/completed", thread_id=f.session.id, turn_id="native-turn", item={
+                "type": "agentMessage", "id": "final", "text": "Tests continue", "phase": "final_answer"}),
+            event("turn/completed", thread_id=f.session.id, turn_id="native-turn"),
+        ])
+        sdk_turn.id = "native-turn"
+        await agent._run_turn("", None, turn_handle=sdk_turn)
+        assert not agent._has_actual_turn_work()
+        assert not agent._completion_tool_refs
+        rejected = capture(agent, monkeypatch)
+        agent._completion_ending_rejected(rejected)
+        manager = CodexAgentManager()
+        manager._agents[agent.session_id] = agent
+        other_agent = codex_agent(ephemeral=False)
+        other_agent.session_id = "another-root"
+        other_agent._completion_activity()
+        other_agent._completion_storage_incarnation = f.session.storage_incarnation
+        other_agent._completion_history_epoch = f.session.history_epoch
+        manager._agents[other_agent.session_id] = other_agent
+        if agent_scope == "foreign_incarnation":
+            agent._completion_storage_incarnation = str(uuid4())
+        elif agent_scope == "foreign_epoch":
+            agent._completion_history_epoch += 1
+        await asyncio.to_thread(f.append, completed("exit-tests", "tests", "10 passed"),
+            completed("future-output", "other", "Uncaptured future output"), capture=False)
+        await CodexSessionsWatcher()._relay_shell_events(manager, agent.session_id, None, [3])
+        assert not other_agent._completion_tool_refs
+        other_agent._cancel_completion_timer()
+        if agent_scope != "current":
+            assert not agent._completion_tool_refs
+            assert (agent.session_id, "tests") in agent._live_shells
+            assert agent.completion_controller.candidate() is None
+            agent._cancel_completion_timer()
+            return
+        candidate = agent.completion_controller.candidate()
+        assert candidate is not None
+        fresh = agent._completion_capture_ending(candidate, [])
+        agent._cancel_completion_timer()
+        await asyncio.to_thread(agent._completion_enrich_ending_evidence_admitted, fresh)
+        assert fresh.payload["captured_tool_refs"] == [NativeMessageRef("codex_item", "exit-tests", "native-turn")._asdict()]
+        assert [row["command"] for row in fresh.payload["target"]["shells"]] == ["npm run dev"]
+        assert fresh.payload["tool_evidence"] == [{"tool_id": "exit-tests", "line": 3,
+            "command": "uv run pytest", "result": "10 passed"}]
+        assert fresh.payload["previous_messages"][-1] == {"role": "assistant", "text": "Tests continue", "line": 2}
+        assert fresh.payload["source_boundary"] == 3
+        assert fresh.payload["source_ceiling"] == 2
+        assert fresh.snapshot.final_refs == rejected.snapshot.final_refs
+    asyncio.run(scenario())

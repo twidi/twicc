@@ -34,8 +34,11 @@ from typing import NamedTuple
 
 import orjson
 from asgiref.sync import sync_to_async
+from django.db import transaction
 from watchfiles import Change
 
+from twicc.agent.completion_types import NativeMessageRef
+from twicc.agent.semantic_types import ShellExitEvidence, SourceScope
 from twicc.core.content_storage.readers import effective_current, iter_current_items
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -53,7 +56,7 @@ from twicc.providers.sessions_watcher import (
     get_session_by_id,
 )
 
-from .canonical import ended_command_process_id
+from .canonical import completed_item, ended_command_process_id
 from .compute import announced_running_process_id, rollout_line_epoch
 from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
@@ -842,10 +845,17 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         subagent session) is given. Starts go out before ends: a process
         announced and ended within the same batch nets out, whatever order
         Codex wrote the two lines in.
+        Root exits also carry identity-only proofs from these indexed lines.
         """
-        def _events() -> tuple[dict[str, float], list[str]]:
+        @transaction.atomic
+        def _events() -> tuple[dict[str, float], list[str], tuple[ShellExitEvidence, ...]]:
             started: dict[str, float] = {}
             ended: list[str] = []
+            completed: list[ShellExitEvidence] = []
+            source = Session.objects.filter(pk=session_id, provider=Provider.CODEX).values(
+                "provider", "storage_incarnation", "history_epoch", "type", "parent_session_id",
+            ).first()
+            root_source = source is not None and source["type"] == SessionType.SESSION and not source["parent_session_id"]
             rows = SessionItem.objects.filter(
                 session_id=session_id, line_num__in=new_line_nums,
             ).order_by("line_num")
@@ -865,8 +875,19 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                     parsed = orjson.loads(content)
                 except orjson.JSONDecodeError:
                     continue
+                if not isinstance(parsed, dict) or not isinstance(parsed.get("payload"), dict):
+                    continue
+                payload = parsed["payload"]
+                if payload.get("thread_id") not in (None, session_id):
+                    continue
                 if is_end and (process_id := ended_command_process_id(parsed)) is not None:
                     ended.append(process_id)
+                    terminal = completed_item(parsed)
+                    identity = terminal.get("id")
+                    if root_source and isinstance(identity, str) and identity:
+                        completed.append(ShellExitEvidence(process_id,
+                            NativeMessageRef("codex_item", identity, payload.get("turn_id")),
+                            SourceScope(source["provider"], source["storage_incarnation"], source["history_epoch"])))
                     continue
                 if not is_start:
                     continue
@@ -876,14 +897,14 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                 # When the announcement was written: the start came shortly
                 # before, which bounds where the agent looks for its process.
                 started[str(announced)] = rollout_line_epoch(parsed) or time.time()
-            return started, ended
+            return started, ended, tuple(completed)
 
         try:
-            started, ended = await sync_to_async(_events)()
+            started, ended, completed = await sync_to_async(_events)()
             if started and owner_id is not None:
                 await manager.notify_shells_started(owner_id, session_id, started)
             if ended:
-                await manager.notify_shells_exited(session_id, ended)
+                await manager.notify_shells_exited(session_id, ended, **({"completed_refs": completed} if completed else {}))
         except Exception:
             logger.exception("Shell events relay failed for session %s", session_id)
 

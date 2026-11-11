@@ -582,6 +582,8 @@ def _ended_line(process_id: str) -> str:
 
 @pytest.mark.django_db(transaction=True)
 def test_the_watcher_relays_processes_ended_after_their_turn():
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.agent.semantic_types import ShellExitEvidence, SourceScope
     from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
 
     project = Project.objects.create(id="bg-work-project")
@@ -595,7 +597,9 @@ def test_the_watcher_relays_processes_ended_after_their_turn():
 
     asyncio.run(CodexSessionsWatcher()._relay_shell_events(manager, session.id, None, [1, 2]))
 
-    manager.notify_shells_exited.assert_awaited_once_with("codex-1", ["30127"])
+    manager.notify_shells_exited.assert_awaited_once_with("codex-1", ["30127"], completed_refs=(
+        ShellExitEvidence("30127", NativeMessageRef("codex_item", "exec-1"), SourceScope("codex", None, 0)),
+    ))
     manager.notify_shells_started.assert_not_awaited()
 
 

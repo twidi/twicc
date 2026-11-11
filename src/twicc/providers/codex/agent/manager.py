@@ -27,6 +27,7 @@ from asgiref.sync import sync_to_async
 from openai_codex.generated.v2_all import ApprovalsReviewer, ConfigReadResponse, SandboxMode
 
 from twicc.agent import AgentState, BaseAgent, BaseAgentManager, SendDeliveryError
+from twicc.agent.semantic_types import ShellExitEvidence
 from twicc.agent.work_dirs import resolve_and_create_work_dirs
 from twicc.context_injection import inject_context
 from twicc.core.enums import Provider
@@ -804,7 +805,9 @@ class CodexAgentManager(BaseAgentManager):
             return
         await agent.notify_shells_started(thread_id, processes)
 
-    async def notify_shells_exited(self, thread_id: str, process_ids: list[str]) -> None:
+    async def notify_shells_exited(
+        self, thread_id: str, process_ids: list[str], *, completed_refs: tuple[ShellExitEvidence, ...] = (),
+    ) -> None:
         """Relay "these processes of ``thread_id`` exited" from the watcher.
 
         ``thread_id`` is the session whose rollout carried the lines: the
@@ -815,9 +818,11 @@ class CodexAgentManager(BaseAgentManager):
         nothing gets it: it remembers the end, so a subagent's announcement
         written just after (in a later watcher batch) does not revive the
         process.
+        Only the same root agent receives completed result references.
         """
         for agent in list(self._agents.values()):
-            await agent.notify_shells_exited(thread_id, process_ids)
+            own_refs = completed_refs if agent.session_id == thread_id else ()
+            await agent.notify_shells_exited(thread_id, process_ids, **({"completed_refs": own_refs} if own_refs else {}))
 
     def has_goal_continuation(self, session_id: str) -> bool:
         """Whether a live agent for ``session_id`` is parked in a ``/goal``
