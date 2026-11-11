@@ -468,3 +468,238 @@ def test_model_logger_keeps_only_safe_captured_references(monkeypatch, caplog):
     assert record['shell_refs'] == [{'key': 'one', 'generation': 3, 'started_at': 'captured',
                                      'owner_ref': {'kind': 'claude_message', 'native_id': 'owner', 'turn_id': None}}]
     assert 'SECRET' not in caplog.text
+
+
+def test_expired_route_returns_while_async_cleanup_remains_owned(monkeypatch):
+    """A blocked disconnect must not retain the route's deadline waiter."""
+    configure_routes(monkeypatch)
+    cleanup_started = None
+    release_cleanup = None
+
+    async def delayed_runner(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+    monkeypatch.setattr(classifier, 'run_hermetic_claude', delayed_runner)
+
+    async def scenario():
+        nonlocal cleanup_started, release_cleanup
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        task = asyncio.create_task(classifier._attempt('haiku', 'system', '{}',
+                                   deadline=asyncio.get_running_loop().time() + 0.1))
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            done, _ = await asyncio.wait({task}, timeout=0.02)
+            assert task in done, 'The expired route still awaits delayed asynchronous cleanup'
+            with pytest.raises(TimeoutError):
+                task.result()
+        finally:
+            release_cleanup.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await classifier.drain_classifier_calls()
+
+    asyncio.run(scenario())
+
+
+def test_caller_cancellation_retains_async_cleanup_until_drain(monkeypatch):
+    configure_routes(monkeypatch)
+
+    async def scenario():
+        started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleaned = asyncio.Event()
+
+        async def runner(*args, **kwargs):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+                cleaned.set()
+
+        monkeypatch.setattr(classifier, 'run_hermetic_claude', runner)
+        task = asyncio.create_task(classifier._attempt('haiku', 'system', '{}',
+                                   deadline=asyncio.get_running_loop().time() + 1))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+            task.cancel()
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            done, _ = await asyncio.wait({task}, timeout=0.02)
+            assert task in done, 'Caller cancellation still waits for runner disconnect'
+            with pytest.raises(asyncio.CancelledError):
+                task.result()
+            assert not cleaned.is_set()
+            drain = asyncio.create_task(classifier.drain_classifier_calls())
+            done, _ = await asyncio.wait({drain}, timeout=0.01)
+            assert drain not in done
+            release_cleanup.set()
+            await asyncio.wait_for(drain, timeout=1)
+            assert cleaned.is_set()
+        finally:
+            release_cleanup.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await classifier.drain_classifier_calls()
+
+    asyncio.run(scenario())
+
+
+def test_expired_route_can_fallback_while_owned_cleanup_uses_one_slot(monkeypatch):
+    configure_routes(monkeypatch)
+    real_attempt = classifier._attempt
+
+    async def scenario():
+        release_cleanup = asyncio.Event()
+        cleaned = asyncio.Event()
+        cleanup_started = asyncio.Event()
+
+        async def claude(*args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+                cleaned.set()
+
+        async def prepare(model):
+            return 'plan'
+
+        async def codex(*args, **kwargs):
+            assert cleanup_started.is_set()
+            assert not cleaned.is_set()
+            return SimpleNamespace(text='NO\nTemporary work remains', terminal_error=None)
+
+        async def short_first(route, system_text, user_json, *, deadline):
+            if route == 'haiku':
+                deadline = min(deadline, asyncio.get_running_loop().time() + 0.1)
+            return await real_attempt(route, system_text, user_json, deadline=deadline)
+
+        monkeypatch.setattr(classifier, 'run_hermetic_claude', claude)
+        monkeypatch.setattr(classifier, 'prepare_hermetic_codex', prepare)
+        monkeypatch.setattr(classifier, 'run_hermetic_codex', codex)
+        monkeypatch.setattr(classifier, '_attempt', short_first)
+        task = asyncio.create_task(classifier.classify(request(), session_provider=Provider.CLAUDE_CODE,
+                                   deadline=asyncio.get_running_loop().time() + 1))
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            done, _ = await asyncio.wait({task}, timeout=0.03)
+            assert task in done, 'Fallback waits for the expired route cleanup'
+            assert task.result() == (Classification('NO', 'Temporary work remains'), 'luna')
+            assert not cleaned.is_set()
+        finally:
+            release_cleanup.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await classifier.drain_classifier_calls()
+        assert cleaned.is_set()
+
+    asyncio.run(scenario())
+
+
+def test_saturated_retained_cleanup_prevents_more_model_launches(monkeypatch):
+    configure_routes(monkeypatch)
+
+    async def scenario():
+        release_cleanup = asyncio.Event()
+        all_started = asyncio.Event()
+        all_cleaning = asyncio.Event()
+        launches = []
+        cleaning = []
+
+        async def claude(*args, **kwargs):
+            launches.append(True)
+            if len(launches) == 4:
+                all_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaning.append(True)
+                if len(cleaning) == 4:
+                    all_cleaning.set()
+                await release_cleanup.wait()
+
+        monkeypatch.setattr(classifier, 'run_hermetic_claude', claude)
+        loop = asyncio.get_running_loop()
+        tasks = [asyncio.create_task(classifier._attempt('haiku', 'system', '{}', deadline=loop.time() + 5))
+                 for _ in range(4)]
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=3)
+            for task in tasks:
+                task.cancel()
+            await asyncio.wait_for(all_cleaning.wait(), timeout=3)
+            done, _ = await asyncio.wait(tasks, timeout=0.02)
+            assert len(done) == 4, 'Canceled routes still hold their decision waiters'
+            assert all(task.cancelled() for task in done)
+            with pytest.raises(classifier.ClassificationError, match='timeout'):
+                await classifier.classify(request(), session_provider=Provider.CLAUDE_CODE,
+                                          deadline=loop.time() + 0.1)
+            assert len(launches) == 4
+        finally:
+            release_cleanup.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await classifier.drain_classifier_calls()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('still_available', [True, False])
+def test_capacity_release_rechecks_availability_before_model_launch(monkeypatch, still_available):
+    enabled = [True]
+    monkeypatch.setattr(classifier, 'is_provider_running', lambda provider: enabled[0])
+
+    async def scenario():
+        gates = [asyncio.Event() for _ in range(4)]
+        all_started = asyncio.Event()
+        all_cleaning = asyncio.Event()
+        launches = []
+        cleaning = []
+
+        async def claude(*args, **kwargs):
+            index = len(launches)
+            launches.append(True)
+            if index == 4:
+                return SimpleNamespace(text='YES\nDelivered', is_error=False, assistant_error=None)
+            if len(launches) == 4:
+                all_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaning.append(True)
+                if len(cleaning) == 4:
+                    all_cleaning.set()
+                await gates[index].wait()
+
+        monkeypatch.setattr(classifier, 'run_hermetic_claude', claude)
+        loop = asyncio.get_running_loop()
+        tasks = [asyncio.create_task(classifier._attempt('haiku', 'system', '{}', deadline=loop.time() + 5))
+                 for _ in range(4)]
+        waiting = None
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=3)
+            for task in tasks:
+                task.cancel()
+            await asyncio.wait_for(all_cleaning.wait(), timeout=3)
+            waiting = asyncio.create_task(classifier._attempt('haiku', 'system', '{}', deadline=loop.time() + 2))
+            done, _ = await asyncio.wait({waiting}, timeout=0.01)
+            assert waiting not in done
+            assert len(launches) == 4
+            enabled[0] = still_available
+            gates[0].set()
+            if still_available:
+                assert await asyncio.wait_for(waiting, timeout=1) == 'YES\nDelivered'
+                assert len(launches) == 5
+            else:
+                with pytest.raises(classifier.ClassificationError, match='no_provider_available'):
+                    await asyncio.wait_for(waiting, timeout=1)
+                assert len(launches) == 4
+        finally:
+            for gate in gates:
+                gate.set()
+            await asyncio.gather(*tasks, *([waiting] if waiting else []), return_exceptions=True)
+            await classifier.drain_classifier_calls()
+
+    asyncio.run(scenario())

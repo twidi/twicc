@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 PAYLOAD_BYTES = 24_000
 RESPONSE_BYTES = 8_192
+INFERENCE_CAPACITY = 4
+# Retain every running or unwinding route until its runner finishes cleanup.
+# Production has one inference event loop. Tests can use separate event loops.
+_owned_calls: set[asyncio.Task[str]] = set()
 _TOKEN = re.compile(r"[a-zA-Z_][a-zA-Z_0-9-]{3,}")
 _STOP_WORDS = frozenset((
     "python", "python3", "import", "from", "print", "timeout", "true", "false",
@@ -202,28 +206,90 @@ def classifier_messages(request: DecisionRequest) -> tuple[str, str]:
             orjson.dumps(payload).decode("utf-8"))
 
 
+def _pending_calls() -> set[asyncio.Task[str]]:
+    loop = asyncio.get_running_loop()
+    return {task for task in _owned_calls if task.get_loop() is loop and not task.done()}
+
+
+def _release_call(task: asyncio.Task[str]) -> None:
+    _owned_calls.discard(task)
+    if not task.cancelled():
+        # A timed-out decision no longer awaits this task's eventual exception.
+        # Retrieving it does not change the result seen by an active waiter.
+        task.exception()
+
+
+def _route_available(route: str) -> bool:
+    if route == "openrouter":
+        return openrouter_key_set()
+    return is_provider_running(TITLE_SUGGESTION_MODEL_PROVIDERS[route])
+
+
+async def drain_classifier_calls() -> None:
+    """Join owned calls after workers stop, before writer/event-loop shutdown.
+
+    Never cancel runner cleanup. Cooperative cleanup can outlive its decision;
+    this shutdown drain intentionally waits for completion. Canceling the drain
+    preserves task ownership and does not send another cancellation to runners.
+    The runtime must call this seam again before closing the event loop.
+    """
+    while pending := _pending_calls():
+        await asyncio.wait(pending)
+
+
+async def _run_route(route: str, system_text: str, user_json: str, *, deadline: float) -> str:
+    prompt = system_text + "\n" + user_json
+    if route == "haiku":
+        result = await run_hermetic_claude(prompt, model="haiku")
+        if result.is_error or result.assistant_error:
+            raise ClassificationError("generation_failed")
+        return result.text
+    if route == "luna":
+        plan = await prepare_hermetic_codex(TITLE_MODEL)
+        result = await run_hermetic_codex(plan, prompt, effort=ReasoningEffort.low)
+        if result.terminal_error is not None:
+            raise ClassificationError("generation_failed")
+        return result.text
+    model = OPENROUTER_TEXT_MODEL._replace(options={
+        **OPENROUTER_TEXT_MODEL.options, "max_tokens": 256, "temperature": 0,
+    })
+    return await complete_openrouter_text(
+        model, user_json, system_prompt=system_text,
+        timeout_seconds=max(0, deadline - asyncio.get_running_loop().time()),
+    )
+
+
 async def _attempt(route: str, system_text: str, user_json: str, *, deadline: float) -> str:
-    """Keep preparation, isolated execution, and runner cleanup in one budget."""
-    async with asyncio.timeout_at(deadline):
-        prompt = system_text + "\n" + user_json
-        if route == "haiku":
-            result = await run_hermetic_claude(prompt, model="haiku")
-            if result.is_error or result.assistant_error:
-                raise ClassificationError("generation_failed")
-            return result.text
-        if route == "luna":
-            plan = await prepare_hermetic_codex(TITLE_MODEL)
-            result = await run_hermetic_codex(plan, prompt, effort=ReasoningEffort.low)
-            if result.terminal_error is not None:
-                raise ClassificationError("generation_failed")
-            return result.text
-        model = OPENROUTER_TEXT_MODEL._replace(options={
-            **OPENROUTER_TEXT_MODEL.options, "max_tokens": 256, "temperature": 0,
-        })
-        return await complete_openrouter_text(
-            model, user_json, system_prompt=system_text,
-            timeout_seconds=max(0, deadline - asyncio.get_running_loop().time()),
-        )
+    """Bound the waiter; retain slow cleanup within the four-call capacity.
+
+    The route deadline includes capacity waiting, preparation, and execution.
+    Expiry cancels the owned route once. Its cooperative cleanup can finish
+    afterward without retaining the decision waiter or losing task ownership.
+    """
+    loop = asyncio.get_running_loop()
+    while len(pending := _pending_calls()) >= INFERENCE_CAPACITY:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise TimeoutError
+        await asyncio.wait(pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+    if loop.time() >= deadline:
+        raise TimeoutError
+    # A provider can become unavailable while a retained cleanup holds capacity.
+    if not _route_available(route):
+        raise ClassificationError("no_provider_available")
+    # No await separates capacity admission from registering the owned task.
+    task = asyncio.create_task(_run_route(route, system_text, user_json, deadline=deadline))
+    _owned_calls.add(task)
+    task.add_done_callback(_release_call)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=max(0, deadline - loop.time()))
+        if task not in done or loop.time() >= deadline:
+            raise TimeoutError
+        return task.result()
+    finally:
+        if not task.done() and not task.cancelling():
+            # Do not interrupt an existing asynchronous disconnect/close twice.
+            task.cancel()
 
 
 def _log_model_result(request: DecisionRequest, classification: Classification, route: str) -> None:
@@ -268,10 +334,7 @@ async def classify(
     for route in candidate_routes(request.requested_route, session_provider):
         if loop.time() >= deadline:
             raise ClassificationError("timeout")
-        if route == "openrouter":
-            if not openrouter_key_set():
-                continue
-        elif not is_provider_running(TITLE_SUGGESTION_MODEL_PROVIDERS[route]):
+        if not _route_available(route):
             continue
         attempt_deadline = min(deadline, loop.time() + (30 if attempts == 0 else 15))
         attempts += 1
