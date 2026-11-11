@@ -62,7 +62,6 @@ const pointer = (type, x, y, pointerType = 'touch') => Object.assign(new Event(t
     { pointerId: 1, pointerType, clientX: x, clientY: y, button: 0 })
 
 function longPress(f) {
-    f.row.handlePointerDown(pointer('pointerdown', 20, 20))
     f.row.handleTouchStart(touch())
     f.mock.timers.tick(500)
 }
@@ -72,7 +71,6 @@ test('a long press with an open chat arms the drag instead of entering multi-sel
     longPress(f)
     assert.equal(f.row.linkArmed.value, true)
     assert.equal(f.store.active, false)
-    f.win.dispatchEvent(pointer('pointerup', 20, 20))
     f.row.handleTouchEnd(touch())
     assert.equal(f.store.active, true, 'a release without move enters multi-select')
     assert.deepEqual([...f.store.selectedIds], ['first'])
@@ -80,26 +78,37 @@ test('a long press with an open chat arms the drag instead of entering multi-sel
     assert.equal(f.drags.length, 0)
 })
 
-test('a sideways move after the long press drags the session link', t => {
-    const f = fixture(t); f.mock = t.mock
-    longPress(f)
-    f.win.dispatchEvent(pointer('pointermove', 29, 20))
-    assert.equal(f.drags.length, 0, '9 px is not enough')
-    f.win.dispatchEvent(pointer('pointermove', 40, 20))
-    assert.equal(f.drags.length, 1)
-    assert.deepEqual({ ...f.drags[0].session }, { id: 'first', projectId: 'p', title: 'First', markdown: '[First](/project/p/session/first)' })
-    assert.equal(f.drags[0].pointer.pointerType, 'touch')
-    f.row.handleTouchEnd(touch(40, 20))
-    assert.equal(f.store.active, false, 'the drag never enters multi-select')
+test('a move in any direction after the long press drags the session link', t => {
+    for (const [x, y] of [[40, 20], [32, 34], [20, 45]]) {
+        const f = fixture(t); f.mock = t.mock
+        longPress(f)
+        f.row.handleTouchMove(touch(26, 25))
+        assert.equal(f.drags.length, 0, 'within 9 px it stays armed')
+        f.row.handleTouchMove(touch(x, y))
+        assert.equal(f.drags.length, 1)
+        assert.deepEqual({ ...f.drags[0].session }, { id: 'first', projectId: 'p', title: 'First', markdown: '[First](/project/p/session/first)' })
+        assert.equal(f.drags[0].pointer.pointerType, 'touch')
+        f.row.handleTouchEnd(touch(x, y))
+        assert.equal(f.store.active, false, 'the drag never enters multi-select')
+    }
 })
 
-test('a scroll after the long press (pointercancel) neither drags nor selects', t => {
+test('a scroll before the long press completes neither arms nor selects', t => {
     const f = fixture(t); f.mock = t.mock
-    longPress(f)
-    f.win.dispatchEvent(pointer('pointercancel', 20, 40))
+    f.row.handleTouchStart(touch())
+    f.row.handleTouchMove(touch(20, 40))
+    t.mock.timers.tick(500)
     assert.equal(f.row.linkArmed.value, false)
     f.row.handleTouchEnd(touch(20, 40))
     assert.equal(f.store.active, false)
+    assert.equal(f.drags.length, 0)
+})
+
+test('a second finger disarms the drag', t => {
+    const f = fixture(t); f.mock = t.mock
+    longPress(f)
+    f.row.handleTouchMove({ touches: [{ clientX: 40, clientY: 20 }, { clientX: 90, clientY: 90 }], preventDefault() {} })
+    assert.equal(f.row.linkArmed.value, false)
     assert.equal(f.drags.length, 0)
 })
 

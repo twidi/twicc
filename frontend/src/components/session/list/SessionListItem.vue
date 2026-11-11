@@ -411,10 +411,11 @@ let suppressTouchClick = false
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Session link drag: drop this session on the open chat to insert a link to it.
-// Same model as the layout tab drag: pointer events, a 5 px move for the mouse,
-// a long press then a move for touch. The row wears `touch-action: pan-y`, so a
-// vertical move stays a native scroll and a sideways move (towards the chat)
-// starts the drag.
+// Mouse: pointer events, the drag starts after a 5 px move (same model as the
+// layout tab drag). Touch: the long press arms it, then a move starts it. The
+// touch drag follows touch events, not pointer events: the row wears
+// `touch-action: pan-y`, so the browser may take a vertical move for a scroll
+// and cancel the pointer, while touch events keep coming in any direction.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const MOUSE_DRAG_DISTANCE = 5
@@ -429,11 +430,13 @@ function canStartLinkDrag() {
         && !!targetId && targetId !== props.session.id
 }
 
-// The long press armed a touch drag: the row lifts, a sideways move starts the
-// drag, a release without move enters multi-select as before.
+// The long press armed a touch drag: the row lifts, a move starts the drag, a
+// release without move enters multi-select as before.
 const linkArmed = ref(false)
+let linkArmPoint = null
+let lastTouchPoint = null
 let linkDragStarted = false
-let pointerGesture = null
+let mouseGesture = null
 
 function linkSessionSnapshot() {
     const session = props.session
@@ -445,57 +448,37 @@ function linkSessionSnapshot() {
     }
 }
 
-function endPointerGesture() {
-    window.removeEventListener('pointermove', onGesturePointerMove)
-    window.removeEventListener('pointerup', onGesturePointerEnd)
-    window.removeEventListener('pointercancel', onGesturePointerEnd)
-    pointerGesture = null
+function endMouseGesture() {
+    window.removeEventListener('pointermove', onMouseGestureMove)
+    window.removeEventListener('pointerup', endMouseGesture)
+    window.removeEventListener('pointercancel', endMouseGesture)
+    mouseGesture = null
 }
 
 function handlePointerDown(event) {
-    if (!props.linkSource || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+    if (!props.linkSource || event.pointerType !== 'mouse' || event.button !== 0
+        || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
     if (isSessionLinkDragActive()) return
-    endPointerGesture()
-    pointerGesture = {
-        pointerId: event.pointerId,
-        pointerType: event.pointerType,
-        x: event.clientX, y: event.clientY,
-        lastX: event.clientX, lastY: event.clientY,
-        armX: 0, armY: 0,
-    }
-    window.addEventListener('pointermove', onGesturePointerMove)
-    window.addEventListener('pointerup', onGesturePointerEnd)
-    window.addEventListener('pointercancel', onGesturePointerEnd)
+    endMouseGesture()
+    mouseGesture = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+    window.addEventListener('pointermove', onMouseGestureMove)
+    window.addEventListener('pointerup', endMouseGesture)
+    window.addEventListener('pointercancel', endMouseGesture)
 }
 
-function onGesturePointerMove(event) {
-    const gesture = pointerGesture
+function onMouseGestureMove(event) {
+    const gesture = mouseGesture
     if (!gesture || event.pointerId !== gesture.pointerId) return
-    gesture.lastX = event.clientX
-    gesture.lastY = event.clientY
-    if (gesture.pointerType === 'mouse') {
-        if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= MOUSE_DRAG_DISTANCE && canStartLinkDrag()) {
-            beginLinkDrag(event)
-        }
-    } else if (linkArmed.value
-        && Math.hypot(event.clientX - gesture.armX, event.clientY - gesture.armY) > TOUCH_DRAG_DISTANCE) {
-        beginLinkDrag(event)
-    }
+    if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < MOUSE_DRAG_DISTANCE || !canStartLinkDrag()) return
+    endMouseGesture()
+    linkDragStarted = true
+    startSessionLinkDrag(linkSessionSnapshot(), { pointerId: gesture.pointerId, pointerType: 'mouse', x: event.clientX, y: event.clientY })
 }
 
-// Release before the drag started, or the browser took the touch for a scroll.
-function onGesturePointerEnd(event) {
-    if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) return
-    if (event.type === 'pointercancel') linkArmed.value = false
-    endPointerGesture()
-}
-
-function beginLinkDrag(event) {
-    const { pointerId, pointerType } = pointerGesture
-    endPointerGesture()
+function beginTouchLinkDrag(x, y) {
     linkArmed.value = false
     linkDragStarted = true
-    startSessionLinkDrag(linkSessionSnapshot(), { pointerId, pointerType, x: event.clientX, y: event.clientY })
+    startSessionLinkDrag(linkSessionSnapshot(), { pointerType: 'touch', x, y })
 }
 
 // Row menu entry "Insert link in message": same rules as the drag, minus the
@@ -535,6 +518,7 @@ function clearLongPressTimer() {
 function handleTouchCancel() {
     clearLongPressTimer()
     touchOrigin = null
+    linkArmed.value = false
 }
 
 function handleTouchStart(event) {
@@ -546,16 +530,16 @@ function handleTouchStart(event) {
     if (!props.selectionEnabled || event.touches.length !== 1) return
     const touch = event.touches[0]
     touchOrigin = { x: touch.clientX, y: touch.clientY }
+    lastTouchPoint = touchOrigin
     if (selectionStore.active) return
     longPressTimer = setTimeout(() => {
         longPressTimer = null
         if (!props.selectionEnabled) return
         longPressTriggered = true
         suppressTouchClick = true
-        if (pointerGesture && canStartLinkDrag()) {
-            // Multi-select waits for the release: a sideways move drags instead.
-            pointerGesture.armX = pointerGesture.lastX
-            pointerGesture.armY = pointerGesture.lastY
+        if (touchOrigin && canStartLinkDrag()) {
+            // Multi-select waits for the release: a move drags instead.
+            linkArmPoint = lastTouchPoint
             linkArmed.value = true
             return
         }
@@ -565,8 +549,16 @@ function handleTouchStart(event) {
 }
 
 function handleTouchMove(event) {
-    if (!touchOrigin) return
     const touch = event.touches[0]
+    if (linkArmed.value) {
+        if (event.touches.length !== 1) linkArmed.value = false
+        else if (Math.hypot(touch.clientX - linkArmPoint.x, touch.clientY - linkArmPoint.y) > TOUCH_DRAG_DISTANCE) {
+            beginTouchLinkDrag(touch.clientX, touch.clientY)
+        }
+        return
+    }
+    if (!touchOrigin) return
+    if (touch) lastTouchPoint = { x: touch.clientX, y: touch.clientY }
     if (event.touches.length !== 1
         || Math.hypot(touch.clientX - touchOrigin.x, touch.clientY - touchOrigin.y) > 10) {
         handleTouchCancel()
@@ -601,11 +593,11 @@ watch(() => props.session.id, () => {
     longPressTriggered = false
     suppressTouchClick = false
     linkArmed.value = false
-    endPointerGesture()
+    endMouseGesture()
 })
 onBeforeUnmount(() => {
     handleTouchCancel()
-    endPointerGesture()
+    endMouseGesture()
 })
 
 function handleClick(event) {

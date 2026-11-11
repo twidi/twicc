@@ -23,6 +23,9 @@ setActivePinia(createPinia())
 const session = { id: 'src', title: 'Source', projectId: 'p', markdown: '[Source](/project/p/session/src)' }
 const move = (type, x, y) => Object.assign(new Event(type), { pointerId: 7, clientX: x, clientY: y })
 const chat = id => ({ closest: () => ({ getAttribute: () => id }) })
+const point = ([clientX, clientY]) => ({ clientX, clientY })
+const touchEvent = (type, touches, changed = touches) => Object.assign(new Event(type),
+    { touches: touches.map(point), changedTouches: changed.map(point) })
 
 function recordEnds() {
     const ends = []
@@ -52,12 +55,14 @@ test('a release over another chat after 10 px of travel inserts the link', async
     const unregister = registerSessionLinkComposer('target', { el: () => null, insert: async (markdown, opts) => { inserted.push([markdown, opts]); return true } })
     const { ends, stop } = recordEnds()
     zoneAt = () => chat('target')
-    startSessionLinkDrag(session, { pointerId: 7, pointerType: 'touch', x: 0, y: 0 })
-    win.dispatchEvent(move('pointermove', 6, 0))
+    startSessionLinkDrag(session, { pointerType: 'touch', x: 0, y: 0 })
+    win.dispatchEvent(move('pointercancel', 0, 6))
+    assert.equal(isSessionLinkDragActive(), true, 'a touch drag ignores pointer events (the browser may scroll)')
+    win.dispatchEvent(touchEvent('touchmove', [[6, 0]]))
     assert.equal(sessionLinkDrag.overSessionId, null, 'not yet 10 px')
-    win.dispatchEvent(move('pointermove', 12, 0))
+    win.dispatchEvent(touchEvent('touchmove', [[6, 12]]))
     assert.equal(sessionLinkDrag.overSessionId, 'target')
-    win.dispatchEvent(move('pointerup', 12, 0))
+    win.dispatchEvent(touchEvent('touchend', [], [[6, 12]]))
     await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(inserted, [[session.markdown, { input: 'touch' }]])
     assert.deepEqual(ends, [true])
@@ -98,4 +103,22 @@ test('pooled iframes stop taking pointer events during the drag', () => {
     assert.equal(framePool.dividerDragDepth, before + 1)
     cancelSessionLinkDrag()
     assert.equal(framePool.dividerDragDepth, before)
+})
+
+test('a second finger or a touchcancel cancels a touch drag', async () => {
+    let calls = 0
+    const unregister = registerSessionLinkComposer('target', { el: () => null, insert: async () => { calls++; return true } })
+    zoneAt = () => chat('target')
+    for (const end of [
+        () => win.dispatchEvent(touchEvent('touchmove', [[30, 0], [80, 80]])),
+        () => win.dispatchEvent(touchEvent('touchcancel', [], [[30, 0]])),
+    ]) {
+        startSessionLinkDrag(session, { pointerType: 'touch', x: 0, y: 0 })
+        win.dispatchEvent(touchEvent('touchmove', [[30, 0]]))
+        end()
+        assert.equal(isSessionLinkDragActive(), false)
+        await new Promise(resolve => setImmediate(resolve))
+    }
+    assert.equal(calls, 0)
+    unregister()
 })

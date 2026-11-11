@@ -61,17 +61,14 @@ function updateOver() {
     sessionLinkDrag.overSessionId = id && id !== session.id && composers.has(id) ? id : null
 }
 
-function onPointerMove(event) {
-    if (event.pointerId !== active.pointerId) return
-    event.preventDefault()
-    active.travel += Math.hypot(event.clientX - sessionLinkDrag.x, event.clientY - sessionLinkDrag.y)
-    sessionLinkDrag.x = event.clientX
-    sessionLinkDrag.y = event.clientY
+function moveTo(x, y) {
+    active.travel += Math.hypot(x - sessionLinkDrag.x, y - sessionLinkDrag.y)
+    sessionLinkDrag.x = x
+    sessionLinkDrag.y = y
     updateOver()
 }
 
-async function onPointerUp(event) {
-    if (event.pointerId !== active.pointerId) return
+async function release() {
     const { session, overSessionId, pointerType } = sessionLinkDrag
     const entry = overSessionId && composers.get(overSessionId)
     finish()
@@ -79,8 +76,34 @@ async function onPointerUp(event) {
     window.dispatchEvent(new CustomEvent('twicc:session-link-drag-end', { detail: { inserted } }))
 }
 
+// Mouse: pointer events.
+function onPointerMove(event) {
+    if (event.pointerId !== active.pointerId) return
+    event.preventDefault()
+    moveTo(event.clientX, event.clientY)
+}
+
+function onPointerUp(event) {
+    if (event.pointerId === active.pointerId) release()
+}
+
 function onPointerCancel(event) {
     if (event.pointerId === active.pointerId) cancelSessionLinkDrag()
+}
+
+// Touch: touch events, which keep coming even when the browser scrolls the list
+// under the finger (pointer events would be cancelled). A second finger cancels.
+function onTouchMove(event) {
+    if (event.touches.length !== 1) return cancelSessionLinkDrag()
+    moveTo(event.touches[0].clientX, event.touches[0].clientY)
+}
+
+function onTouchEnd(event) {
+    if (event.touches.length > 0) return
+    if (event.type === 'touchcancel') return cancelSessionLinkDrag()
+    const touch = event.changedTouches[0]
+    if (touch) moveTo(touch.clientX, touch.clientY)
+    release()
 }
 
 function onKeydown(event) {
@@ -102,6 +125,9 @@ function finish() {
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
     window.removeEventListener('pointercancel', onPointerCancel)
+    window.removeEventListener('touchmove', onTouchMove)
+    window.removeEventListener('touchend', onTouchEnd)
+    window.removeEventListener('touchcancel', onTouchEnd)
     window.removeEventListener('keydown', onKeydown)
     document.body.style.userSelect = active.previousUserSelect
     document.body.classList.remove('session-link-dragging')
@@ -112,8 +138,9 @@ function finish() {
 }
 
 /**
- * Start dragging a sidebar session (same model as the layout tab drag: pointer
- * events followed on the window). `session` is `{ id, title, projectId, markdown }`.
+ * Start dragging a sidebar session, followed on the window: pointer events for
+ * the mouse (`pointerId` required), touch events for touch. `session` is
+ * `{ id, title, projectId, markdown }`.
  * Emits `twicc:session-link-drag-start` and, when it ends, `twicc:session-link-drag-end`
  * with `{ inserted }`, so the mobile drawer can close and reopen.
  */
@@ -131,9 +158,15 @@ export function startSessionLinkDrag(session, { pointerId, pointerType, x, y }) 
     Object.assign(sessionLinkDrag, { session, x, y, pointerType, overSessionId: null })
     document.body.style.userSelect = 'none'
     document.body.classList.add('session-link-dragging')
-    window.addEventListener('pointermove', onPointerMove, { passive: false })
-    window.addEventListener('pointerup', onPointerUp)
-    window.addEventListener('pointercancel', onPointerCancel)
+    if (pointerType === 'mouse') {
+        window.addEventListener('pointermove', onPointerMove, { passive: false })
+        window.addEventListener('pointerup', onPointerUp)
+        window.addEventListener('pointercancel', onPointerCancel)
+    } else {
+        window.addEventListener('touchmove', onTouchMove, { passive: true })
+        window.addEventListener('touchend', onTouchEnd)
+        window.addEventListener('touchcancel', onTouchEnd)
+    }
     window.addEventListener('keydown', onKeydown)
     window.dispatchEvent(new CustomEvent('twicc:session-link-drag-start'))
 }
