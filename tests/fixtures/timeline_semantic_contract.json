@@ -1,0 +1,257 @@
+{
+  "prompt_sha256": {
+    "message": "b7c581232f7c2bbd9d6f4121c8ea0a5bcb39629a7fc37bed83ed68956f997798",
+    "ending": "524d9bb1ae836295e83123f6ebc0470beb80a5057dcbbffb553f8813cf90dce1"
+  },
+  "cases": [
+    {
+      "name": "four-entry-notice-window",
+      "kind": "message",
+      "input": {
+        "target": {
+          "text": "Complete candidate\nEnd."
+        },
+        "source_boundary": 9,
+        "previous_messages": [
+          {
+            "role": "user",
+            "text": "Actual request",
+            "line": 1
+          },
+          {
+            "role": "assistant",
+            "text": "Work",
+            "line": 2
+          },
+          {
+            "role": "system_notice",
+            "text": "Shell active",
+            "line": 3
+          },
+          {
+            "role": "assistant",
+            "text": "Checking",
+            "line": 4
+          },
+          {
+            "role": "assistant",
+            "text": "Ready",
+            "line": 5
+          }
+        ]
+      },
+      "expected": {
+        "kind": "message",
+        "latest_user_request": {
+          "role": "user",
+          "text": "Actual request"
+        },
+        "preceding_messages": [
+          {
+            "role": "assistant",
+            "text": "Work"
+          },
+          {
+            "role": "system_notice",
+            "text": "Shell active"
+          },
+          {
+            "role": "assistant",
+            "text": "Checking"
+          },
+          {
+            "role": "assistant",
+            "text": "Ready"
+          }
+        ],
+        "candidate": {
+          "text": "Complete candidate\nEnd."
+        }
+      }
+    },
+    {
+      "name": "merged-ordinary-input",
+      "kind": "message",
+      "input": {
+        "target": {
+          "text": "Status answer"
+        },
+        "previous_messages": [
+          {
+            "role": "assistant",
+            "text": "Work",
+            "line": 1
+          },
+          {
+            "role": "user",
+            "text": "Captured ordinary input",
+            "line": 2
+          }
+        ]
+      },
+      "expected": {
+        "kind": "message",
+        "preceding_messages": [
+          {
+            "role": "assistant",
+            "text": "Work"
+          },
+          {
+            "role": "user",
+            "text": "Captured ordinary input"
+          }
+        ],
+        "candidate": {
+          "text": "Status answer"
+        }
+      }
+    },
+    {
+      "name": "no-user-history",
+      "kind": "message",
+      "input": {
+        "target": {
+          "text": "Result"
+        },
+        "previous_messages": [
+          {
+            "role": "system_notice",
+            "text": "Not a user request",
+            "line": 1
+          }
+        ]
+      },
+      "expected": {
+        "kind": "message",
+        "preceding_messages": [
+          {
+            "role": "system_notice",
+            "text": "Not a user request"
+          }
+        ],
+        "candidate": {
+          "text": "Result"
+        }
+      }
+    },
+    {
+      "name": "root-subagent-no-observations",
+      "kind": "ending",
+      "input": {
+        "candidate": {
+          "turn_id": "PRIVATE",
+          "revision": 2
+        },
+        "snapshot": {
+          "private": "do not send"
+        },
+        "target": {
+          "shells": [
+            {
+              "key": "task-1",
+              "owner": "root",
+              "command": "npm run serve --full-command",
+              "description": null,
+              "started_at": "2026-11-09T09:56:05.624Z",
+              "start_line": 320
+            },
+            {
+              "key": "thread:2",
+              "owner": "subagent",
+              "command": "uv run pytest all-tests",
+              "description": "tests",
+              "started_at": null,
+              "start_line": null
+            }
+          ]
+        },
+        "previous_messages": [
+          {
+            "role": "user",
+            "text": "Deliver service",
+            "line": 1
+          },
+          {
+            "role": "assistant",
+            "text": "Complete response",
+            "line": 9
+          }
+        ],
+        "tool_evidence": []
+      },
+      "expected": {
+        "kind": "ending",
+        "latest_user_request": {
+          "role": "user",
+          "text": "Deliver service"
+        },
+        "latest_assistant_response": "Complete response",
+        "related_tool_observations": [],
+        "candidate": {
+          "shells": [
+            {
+              "key": "task-1",
+              "owner": "root",
+              "command": "npm run serve --full-command",
+              "description": null,
+              "started_at": "2026-11-09T09:56:05.624Z",
+              "start_line": 320
+            },
+            {
+              "key": "thread:2",
+              "owner": "subagent",
+              "command": "uv run pytest all-tests",
+              "description": "tests",
+              "started_at": null,
+              "start_line": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "ending-no-user",
+      "kind": "ending",
+      "input": {
+        "target": {
+          "shells": [
+            {
+              "key": "one",
+              "owner": "root",
+              "command": "server",
+              "description": null,
+              "started_at": null,
+              "start_line": null
+            }
+          ]
+        },
+        "previous_messages": [
+          {
+            "role": "assistant",
+            "text": "Delivered",
+            "line": 1
+          }
+        ],
+        "tool_evidence": []
+      },
+      "expected": {
+        "kind": "ending",
+        "latest_user_request": null,
+        "latest_assistant_response": "Delivered",
+        "related_tool_observations": [],
+        "candidate": {
+          "shells": [
+            {
+              "key": "one",
+              "owner": "root",
+              "command": "server",
+              "description": null,
+              "started_at": null,
+              "start_line": null
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
