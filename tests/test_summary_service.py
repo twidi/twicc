@@ -7,12 +7,21 @@ from asgiref.sync import sync_to_async
 from django.utils import timezone
 
 from tests import test_timeline_messages
+from tests.timeline_decision_helpers import accept_legacy_message_decisions
 
 from twicc.core.models import MessageSummary, Project, Session
 from twicc.summaries.sources import SummarySource
 
 live_session = test_timeline_messages.live_session
 pytestmark = pytest.mark.django_db(transaction=True)
+
+# Export imported fixtures for pytest discovery.
+__all__ = ['accept_legacy_message_decisions']
+
+
+@pytest.fixture(autouse=True)
+def legacy_semantic_acceptance(accept_legacy_message_decisions):
+    """Summary sources need published Claude messages: approve every eligible candidate."""
 
 
 @pytest.fixture

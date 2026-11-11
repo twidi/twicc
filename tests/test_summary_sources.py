@@ -9,11 +9,20 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from tests import content_storage_helpers, test_timeline_messages
+from tests.timeline_decision_helpers import accept_legacy_message_decisions
 from twicc.core.models import LogicalTurn, Session, SessionItem
 
 live_session = test_timeline_messages.live_session
 content_row_factory = content_storage_helpers.content_row_factory
 pytestmark = pytest.mark.django_db
+
+# Export imported fixtures for pytest discovery.
+__all__ = ['accept_legacy_message_decisions']
+
+
+@pytest.fixture(autouse=True)
+def legacy_semantic_acceptance(accept_legacy_message_decisions):
+    """Summary sources need published Claude messages: approve every eligible candidate."""
 
 
 def resolve(session, line=1):

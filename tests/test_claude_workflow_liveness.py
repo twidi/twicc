@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 from claude_agent_sdk import SystemMessage
 
+from twicc.agent.completion import CompletionController
 from twicc.core.ui_messages import ui_message
 from twicc.providers.claude_code.agent.agent import ClaudeCodeAgent
 
@@ -62,6 +63,8 @@ def _agent() -> ClaudeCodeAgent:
     agent._waiting_label_active = False
     agent._broadcast_process_label = AsyncMock()
     agent._pending_requests = {}
+    # A closed turn: forgetting a shell task has no completion delivery to note.
+    agent.completion_controller = CompletionController(run_id="run-1")
     agent._init_shell_notice_state()
     agent._init_claude_shell_notice_state()
     return agent

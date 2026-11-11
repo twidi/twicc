@@ -433,11 +433,13 @@ def test_live_sync_matches_golden_record(scenario, tmp_path, django_capture_on_c
 BUDGETS: dict[tuple[str, str], int] = {
     # One intentional lookup detects newly admitted unbound logical intervals.
     # A second lookup detects explicit pending timeline message references.
-    # Do not negative-cache either read: later references must be discovered.
-    ("claude_code", "root"): 37,
-    ("codex", "root"): 39,
-    ("claude_code", "child"): 44,
-    ("codex", "child"): 36,
+    # A third lookup finds accepted endings whose exact final message is still
+    # unpublished (``force_pending``), so a late indexed source fulfils them.
+    # Do not negative-cache these reads: later references must be discovered.
+    ("claude_code", "root"): 38,
+    ("codex", "root"): 40,
+    ("claude_code", "child"): 45,
+    ("codex", "child"): 37,
 }
 
 
