@@ -95,6 +95,14 @@ const markUnreadCandidates = computed(() =>
     })
 )
 
+/** Drafts and ephemeral sessions can't be muted (same rule as the per-item menu). */
+const muteTargets = computed(() =>
+    selectedSessions.value.filter(s => !s.draft && !s.ephemeral && !s.mute_on_user_turn)
+)
+const unmuteTargets = computed(() =>
+    selectedSessions.value.filter(s => !s.draft && !s.ephemeral && s.mute_on_user_turn)
+)
+
 const archiveTargets = computed(() =>
     selectedSessions.value.filter(s => !s.archived && !s.draft && !s.ephemeral)
 )
@@ -241,6 +249,11 @@ function handleActionSelect(event) {
         }
         const active = candidates.find(s => s.id === props.activeSessionId)
         if (active) emit('deselect-session', active)
+    } else if (action === 'mute' || action === 'unmute') {
+        const targets = action === 'mute' ? muteTargets.value : unmuteTargets.value
+        for (const s of targets) {
+            store.setSessionMuteOnUserTurn(s.project_id, s.id, action === 'mute')
+        }
     } else if (action === 'archive') {
         requestArchive()
     } else if (action === 'unarchive') {
@@ -305,6 +318,16 @@ function handleActionSelect(event) {
                     <wa-icon slot="icon" name="eye"></wa-icon>
                     {{ $t('session.actions.markUnread') }}
                     <span slot="details" class="affected-count">{{ n(markUnreadCandidates.length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item :disabled="muteTargets.length === 0" value="mute">
+                    <wa-icon slot="icon" name="bell-slash"></wa-icon>
+                    {{ $t('session.list.mute') }}
+                    <span slot="details" class="affected-count">{{ n(muteTargets.length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item :disabled="unmuteTargets.length === 0" value="unmute">
+                    <wa-icon slot="icon" name="bell"></wa-icon>
+                    {{ $t('session.list.unmute') }}
+                    <span slot="details" class="affected-count">{{ n(unmuteTargets.length) }}</span>
                 </wa-dropdown-item>
                 <wa-dropdown-item :disabled="archiveTargets.length === 0" value="archive">
                     <wa-icon slot="icon" name="box-archive"></wa-icon>
