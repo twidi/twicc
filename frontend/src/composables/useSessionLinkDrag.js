@@ -4,6 +4,7 @@
 
 import { computed, reactive, shallowReactive } from 'vue'
 import { useRoute } from 'vue-router'
+import { useFramePoolStore } from '../stores/framePool.js'
 
 // sessionId -> { el: () => HTMLElement | null, insert: (markdown, { input }) => Promise<boolean> }
 // Shallow: entries stay raw objects, so an unregister can compare them by identity.
@@ -104,6 +105,7 @@ function finish() {
     window.removeEventListener('keydown', onKeydown)
     document.body.style.userSelect = active.previousUserSelect
     document.body.classList.remove('session-link-dragging')
+    active.framePool.endDividerDrag()
     suppressClickUntil = Date.now() + 500
     active = null
     Object.assign(sessionLinkDrag, { session: null, pointerType: null, overSessionId: null })
@@ -121,7 +123,11 @@ export function startSessionLinkDrag(session, { pointerId, pointerType, x, y }) 
         window.addEventListener('click', onCapturedClick, true)
         clickGuardInstalled = true
     }
-    active = { pointerId, travel: 0, previousUserSelect: document.body.style.userSelect }
+    // Like the layout tab drag: the pooled iframes (inline artifacts, previews) stop taking
+    // pointer events, so the drag keeps receiving them and sees the chat under an iframe.
+    const framePool = useFramePoolStore()
+    framePool.beginDividerDrag()
+    active = { pointerId, travel: 0, previousUserSelect: document.body.style.userSelect, framePool }
     Object.assign(sessionLinkDrag, { session, x, y, pointerType, overSessionId: null })
     document.body.style.userSelect = 'none'
     document.body.classList.add('session-link-dragging')

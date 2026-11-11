@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { createPinia, setActivePinia } from 'pinia'
+import { useFramePoolStore } from '../stores/framePool.js'
 import {
     registerSessionLinkComposer, getSessionLinkComposer, useSessionLinkTarget,
     sessionLinkDrag, startSessionLinkDrag, cancelSessionLinkDrag, isSessionLinkDragActive,
@@ -15,6 +17,8 @@ globalThis.document = {
     elementFromPoint: (x, y) => zoneAt(x, y),
     body: { style: { userSelect: '' }, classList: { add() {}, remove() {} } },
 }
+
+setActivePinia(createPinia())
 
 const session = { id: 'src', title: 'Source', projectId: 'p', markdown: '[Source](/project/p/session/src)' }
 const move = (type, x, y) => Object.assign(new Event(type), { pointerId: 7, clientX: x, clientY: y })
@@ -85,4 +89,13 @@ test('a click right after a drag is swallowed', () => {
     const click = new Event('click', { cancelable: true })
     win.dispatchEvent(click)
     assert.equal(click.defaultPrevented, true)
+})
+
+test('pooled iframes stop taking pointer events during the drag', () => {
+    const framePool = useFramePoolStore()
+    const before = framePool.dividerDragDepth
+    startSessionLinkDrag(session, { pointerId: 7, pointerType: 'mouse', x: 0, y: 0 })
+    assert.equal(framePool.dividerDragDepth, before + 1)
+    cancelSessionLinkDrag()
+    assert.equal(framePool.dividerDragDepth, before)
 })
