@@ -36,7 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Turn completion** — Better detection of ongoing background tasks reduces premature completion notifications.
+- **Turn completion** — Improved detection of turn completion reduces premature status changes and notifications.
 - **Stale sessions** — Sessions whose conversation files no longer exist can now be archived, pinned, hidden, renamed and annotated through the CLI and MCP, not only from the interface.
 
 ## [1.96.2] - 2026-10-09
