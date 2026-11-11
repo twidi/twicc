@@ -13,7 +13,8 @@ Private payload contract (never sent verbatim):
   values must use the same captured ordering, including subagent observations.
 
 Ingress owns bounded native-source reads. This module never reads a live tail,
-owner transcript, or output file. Missing complete evidence raises
+owner transcript, or output file. Shells without commands are omitted from
+model input; at least one command is required. Missing required evidence raises
 ClassificationError; the runtime owns durable fail-open resolution.
 """
 
@@ -171,11 +172,15 @@ def build_classifier_payload(request: DecisionRequest) -> dict:
                 raise ClassificationError("context_incomplete")
             shells = []
             for shell in target["shells"]:
-                if (not isinstance(shell["command"], str) or not shell["command"]
-                        or not isinstance(shell["key"], str) or not shell["key"]
+                command = shell.get("command")
+                if not isinstance(command, str) or not command.strip():
+                    continue
+                if (not isinstance(shell["key"], str) or not shell["key"]
                         or shell["owner"] not in ("root", "subagent")):
                     raise ClassificationError("context_incomplete")
                 shells.append({field: shell[field] for field in _SHELL_FIELDS})
+            if not shells:
+                raise ClassificationError("context_incomplete")
             payload["latest_user_request"] = latest_user
             payload["latest_assistant_response"] = assistant
             payload["related_tool_observations"] = _observations(shells, evidence)

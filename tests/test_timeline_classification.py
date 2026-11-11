@@ -253,6 +253,48 @@ def test_mixed_shells_use_one_aggregate_no(monkeypatch):
     assert 'serve app' in calls[0] and 'run tests' in calls[0]
 
 
+@pytest.mark.parametrize('missing_command', [None, '', ' \n ', 'absent'])
+def test_known_shell_commands_are_classified_despite_an_unknown_command(monkeypatch, missing_command):
+    configure_routes(monkeypatch)
+    payload = ending_payload()
+    unknown = {'key': 'unknown', 'owner': 'subagent', 'command': missing_command,
+               'description': 'Wait for tests', 'started_at': None, 'start_line': 3}
+    if missing_command == 'absent':
+        unknown.pop('command')
+    payload['target']['shells'].insert(1, unknown)
+    payload['shell_refs'].append({'key': 'unknown', 'generation': 4})
+    captured = request(payload, kind='ending')
+    original = orjson.dumps(payload)
+    sent = []
+
+    async def claude(prompt, *, model):
+        wire = orjson.loads(prompt.removeprefix(classifier.ENDING_SYSTEM_PROMPT + '\n'))
+        sent.append(wire['candidate'])
+        return SimpleNamespace(text='NO\nTests remain active', is_error=False, assistant_error=None)
+
+    monkeypatch.setattr(classifier, 'run_hermetic_claude', claude)
+    assert run_classify(captured) == (Classification('NO', 'Tests remain active'), 'haiku')
+    assert sent == [{'shells': [
+        {'key': 'one', 'owner': 'root', 'command': 'serve app', 'description': None,
+         'started_at': None, 'start_line': 1},
+        {'key': 'two', 'owner': 'subagent', 'command': 'run tests', 'description': None,
+         'started_at': None, 'start_line': 2}]}]
+    # The durable capture retains every shell for source and lifecycle checks.
+    assert orjson.dumps(payload) == original
+
+
+@pytest.mark.parametrize('missing_command', [None, '', ' \n ', 'absent'])
+def test_ending_without_any_shell_command_remains_incomplete(missing_command):
+    payload = ending_payload()
+    for shell in payload['target']['shells']:
+        if missing_command == 'absent':
+            shell.pop('command')
+        else:
+            shell['command'] = missing_command
+    with pytest.raises(classifier.ClassificationError, match='context_incomplete'):
+        classifier.build_classifier_payload(request(payload, kind='ending'))
+
+
 def semantic_records(caplog):
     return [orjson.loads(record.getMessage().split('semantic_decision ', 1)[1])
             for record in caplog.records if 'semantic_decision ' in record.getMessage()]
@@ -423,13 +465,9 @@ def test_isolated_calls_create_no_session_transcript_or_timeline_event(monkeypat
     assert (Session.objects.count(), SessionItem.objects.count(), TimelineEvent.objects.count()) == counts
 
 
-def test_ending_requires_complete_assistant_and_shell_command():
+def test_ending_requires_assistant_context():
     payload = ending_payload()
     payload['previous_messages'] = []
-    with pytest.raises(classifier.ClassificationError, match='context_incomplete'):
-        classifier.build_classifier_payload(request(payload, kind='ending'))
-    payload = ending_payload()
-    payload['target']['shells'][1]['command'] = None
     with pytest.raises(classifier.ClassificationError, match='context_incomplete'):
         classifier.build_classifier_payload(request(payload, kind='ending'))
 
