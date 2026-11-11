@@ -5,6 +5,7 @@ import { ref, computed, watch, inject } from 'vue'
 import { onClickOutside } from '@vueuse/core'
 import { ALL_PROJECTS_ID, useDataStore } from '../../../stores/data'
 import { useTimelineFiltersStore } from '../../../stores/timelineFilters'
+import { createRailScopeNavigation } from '../../../utils/railScopeNavigation'
 import { toast } from '../../../composables/useToast'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
@@ -51,6 +52,8 @@ const props = defineProps({
 const store = useDataStore()
 const router = useRouter()
 const timelineFiltersStore = useTimelineFiltersStore()
+// Same navigation as the rail's Timeline button (it skips the scope memory and clears the workspace). No sidebar to open here.
+const navigateTimelineScope = createRailScopeNavigation(router, () => {})
 const settingsStore = useSettingsStore()
 const sharesStore = useSharesStore()
 const codeCommentsStore = useCodeCommentsStore()
@@ -478,7 +481,7 @@ function openSessionTimeline() {
     isCompactExpanded.value = false
     timelineFiltersStore.clearAll(ALL_PROJECTS_ID)
     timelineFiltersStore.setSession(ALL_PROJECTS_ID, { id: props.sessionId, title: session.value?.title || displayName.value })
-    router.push({ name: 'projects-all' })
+    navigateTimelineScope('all-projects')
 }
 
 const searchTooltip = computed(() => t('session.search.openTooltip', { shortcut: settingsStore.isMac ? '⌘F' : 'Ctrl+F' }))
