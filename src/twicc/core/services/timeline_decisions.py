@@ -343,6 +343,23 @@ def _matching_open_turn(row: TimelineDecision) -> LogicalTurn | None:
         outcome__isnull=True, closed_at__isnull=True).first()
 
 
+def pending_normal_ending_turns() -> set:
+    """Keep exact accepted closures out of exceptional boot settlement."""
+    protected = set()
+    rows = TimelineDecision.objects.filter(kind='ending', status='accepted', applied_at__isnull=True,
+        turn_id__isnull=False, run_id__isnull=False).select_related('session')
+    for row in rows.iterator(chunk_size=100):
+        session = row.session
+        if (session.stale or row.provider != session.provider
+                or row.storage_incarnation is not None and row.storage_incarnation != session.storage_incarnation
+                or row.history_epoch is not None and row.history_epoch != session.history_epoch):
+            continue
+        turn = _matching_open_turn(row)
+        if turn is not None:
+            protected.add(turn.pk)
+    return protected
+
+
 def _try_recovered_effect(function, **kwargs):
     """A failed source/publication attempt retains the committed retry obligation."""
     try:
@@ -410,7 +427,7 @@ def recover_semantic_decisions(*, now: datetime) -> int:
                     continue
                 count += accept_fallback(decision_id=str(row.pk), reason='boot_recovery', now=now)
                 if row.kind == 'ending':
-                    apply_accepted_ending(decision_id=str(row.pk), now=now)
+                    _try_recovered_effect(apply_accepted_ending, decision_id=str(row.pk), now=now)
                 else:
                     _try_recovered_effect(publish_message_if_ready, decision_id=str(row.pk))
         cursor = rows[-1].pk
@@ -431,7 +448,7 @@ def recover_semantic_decisions(*, now: datetime) -> int:
                 if row.status != 'accepted':
                     continue
                 if row.kind == 'ending':
-                    apply_accepted_ending(decision_id=str(row.pk), now=now)
+                    _try_recovered_effect(apply_accepted_ending, decision_id=str(row.pk), now=now)
                 else:
                     _try_recovered_effect(publish_message_if_ready, decision_id=str(row.pk))
         cursor = rows[-1].pk

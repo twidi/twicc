@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from tests.test_timeline_decisions import decision_fixture, ending_request, admit
 from tests.test_completion_publication import bridge
+from tests.test_timeline_messages import live_session, content_row_factory
 from twicc.core.models import LogicalTurn, TimelineDecision, TimelineEvent, ProcessRun
 from twicc.core.services import timeline_decisions as decisions
 
@@ -273,3 +274,113 @@ def test_permanent_source_deletion_wakes_owned_inference(decision_fixture):
     _apply_delete_sessions_payload(DeleteSessionsPayload(Provider(session.provider), [session.pk]))
     assert wakes
     assert not TimelineDecision.objects.exists()
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+@pytest.mark.parametrize('failure', ['database_error', 'failed_insert'])
+@pytest.mark.parametrize('live_session', ['claude_code'], indirect=True)
+def test_boot_cleanup_retains_normal_ending_after_boundary_failure(live_session, monkeypatch, accepted, failure):
+    from django.db import OperationalError
+    from twicc.agent.completion_types import NativeMessageRef, CompletionSnapshot
+    from twicc.agent.semantic_types import Classification, DecisionRequest, SourceScope
+    from twicc.agent.process_run_cleanup import _apply_cleanup_stale_process_runs_job
+    from twicc.core.services import session_timeline
+    from twicc.timeline_decision_task import _retry_effect
+
+    f = live_session
+    f.append(f.message('final', 'Exact final after crash'))
+    f.session.refresh_from_db()
+    message = TimelineDecision.objects.get(kind='message', session=f.session)
+    now = timezone.now()
+    decisions.resolve_decision(decision_id=str(message.pk), classification=Classification('NO', 'routine'),
+        effective_route='provider', now=now)
+    assert f.texts() == []
+    run = ProcessRun.objects.create(session_id=f.session.pk, provider=f.provider, state='assistant_turn',
+        started_at=now - timedelta(minutes=1), last_state_change_at=now)
+    ref = NativeMessageRef('claude_uuid', 'final')
+    snapshot = CompletionSnapshot(str(uuid4()), str(uuid4()), 1, 3, ref, (ref,), None)
+    turn = LogicalTurn.objects.create(id=snapshot.turn_id, session_id=f.session.pk, provider=f.provider,
+        run_id=snapshot.run_id, process_run_id=run.pk, ordinal=1, position=1, revision=snapshot.revision,
+        source_floor=0, storage_incarnation=f.session.storage_incarnation, history_epoch=f.session.history_epoch,
+        first_ref=ref._asdict(), final_refs=[ref._asdict()], opened_at=now - timedelta(minutes=1))
+    request = DecisionRequest(str(uuid4()), 'ending', f.session.pk,
+        SourceScope(f.provider, f.session.storage_incarnation, f.session.history_epoch),
+        {'run_id': snapshot.run_id, 'turn_id': snapshot.turn_id, 'source_floor': 0,
+         'candidate': {'turn_id': snapshot.turn_id, 'revision': snapshot.revision, 'deadline': 10.0},
+         'snapshot': {**snapshot._asdict(), 'first_ref': ref._asdict(), 'final_refs': [ref._asdict()]},
+         'message_refs': [ref._asdict()]}, now + timedelta(seconds=45), 'provider')
+    key = decisions.admit_decision(request, identity_key='crashed-ending', occurred_at=now, not_before=now)
+    if accepted:
+        decisions.accept_fallback(decision_id=key, reason='user_input', now=now)
+    original = session_timeline.record_event_sync
+    attempts = []
+    def fail_boundary(kind, **kwargs):
+        if kind == 'turn.ended':
+            attempts.append(kind)
+            if failure == 'database_error':
+                raise OperationalError('boundary unavailable during boot')
+            return None
+        return original(kind, **kwargs)
+    monkeypatch.setattr(session_timeline, 'record_event_sync', fail_boundary)
+
+    _apply_cleanup_stale_process_runs_job(None)
+
+    row = TimelineDecision.objects.get(pk=key)
+    turn.refresh_from_db()
+    assert attempts
+    assert row.status == 'accepted' and row.applied_at is None and row.force_pending
+    assert (turn.outcome, turn.closed_at, turn.revision) == (None, None, snapshot.revision)
+    assert not ProcessRun.objects.filter(pk=run.pk).exists()
+    assert TimelineEvent.objects.filter(session_id=f.session.pk, kind='process.ended').count() == 1
+    assert not TimelineEvent.objects.filter(session_id=f.session.pk, kind='turn.ended').exists()
+    assert f.texts() == []
+
+    monkeypatch.setattr(session_timeline, 'record_event_sync', original)
+    # The normal runtime's durable-effect retry must work with no live agent or process.
+    assert _retry_effect(row, now + timedelta(seconds=2))
+    assert _retry_effect(row, now + timedelta(seconds=3))
+    row.refresh_from_db()
+    turn.refresh_from_db()
+    assert row.status == 'accepted' and row.applied_at and not row.force_pending
+    assert (turn.outcome, turn.closed_at) == ('normal', now)
+    boundary = TimelineEvent.objects.get(session_id=f.session.pk, kind='turn.ended')
+    assert boundary.occurred_at == now
+    assert boundary.dedupe_key == f'turn:{snapshot.turn_id}:turn.ended'
+    assert f.texts() == ['Exact final after crash']
+    message.refresh_from_db()
+    assert message.forced and message.status == 'accepted'
+    assert TimelineEvent.objects.filter(session_id=f.session.pk, kind='assistant_message.sent').count() == 1
+    assert TimelineEvent.objects.filter(session_id=f.session.pk, kind='process.ended').count() == 1
+    assert not ProcessRun.objects.filter(session_id=f.session.pk).exists()
+
+
+@pytest.mark.parametrize('changed', ['later_open_turn', 'newer_revision', 'new_source'])
+def test_boot_pending_normal_protection_requires_exact_journal(decision_fixture, changed):
+    from twicc.core.services.logical_turns import settle_abandoned_turns
+    from twicc.core.services.timeline_boot import _reconcile_lost_processes
+    request, snapshot = ending_request(decision_fixture)
+    session, now, _ = decision_fixture
+    run = ProcessRun.objects.create(session_id=session.pk, provider=session.provider,
+        state='assistant_turn', started_at=now, last_state_change_at=now)
+    LogicalTurn.objects.filter(pk=snapshot.turn_id).update(process_run_id=run.pk)
+    key = admit(request, now)
+    decisions.accept_fallback(decision_id=key, reason='boot_recovery', now=now)
+    if changed == 'later_open_turn':
+        later = LogicalTurn.objects.create(id=uuid4(), session_id=session.pk, provider=session.provider,
+            run_id=snapshot.run_id, process_run_id=run.pk, ordinal=2, position=2, source_floor=0, opened_at=now)
+    elif changed == 'newer_revision':
+        LogicalTurn.objects.filter(pk=snapshot.turn_id).update(revision=snapshot.revision + 1)
+    else:
+        session.history_epoch += 1
+        session.save(update_fields=['history_epoch'])
+    _reconcile_lost_processes(now)
+    assert settle_abandoned_turns(at=now) == 1
+    old = LogicalTurn.objects.get(pk=snapshot.turn_id)
+    if changed == 'later_open_turn':
+        assert old.outcome is None and old.revision == snapshot.revision
+        later.refresh_from_db()
+        assert later.outcome == 'ended'
+    else:
+        assert old.outcome == 'ended'
+    assert TimelineEvent.objects.filter(kind='turn.ended', session_id=session.pk).count() == 1
+    assert TimelineEvent.objects.filter(kind='process.ended', session_id=session.pk).count() == 1

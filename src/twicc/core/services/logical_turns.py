@@ -90,7 +90,11 @@ def input_for_token(*, session_id: str, token: str) -> LogicalTurnInput | None:
 
 def settle_abandoned_turns(*, at: datetime) -> int:
     """End unconfirmed intervals at boot without reclassifying closed intervals."""
-    return LogicalTurn.objects.filter(outcome__isnull=True, closed_at__isnull=True).update(
+    from twicc.core.services.timeline_decisions import pending_normal_ending_turns
+
+    return LogicalTurn.objects.filter(outcome__isnull=True, closed_at__isnull=True).exclude(
+        pk__in=pending_normal_ending_turns(),
+    ).update(
         outcome="ended", closed_at=at, revision=F("revision") + 1,
     )
 

@@ -56,6 +56,9 @@ def _last_evidence(run: ProcessRun, session: Session | None, boot: datetime) -> 
 
 def _reconcile_lost_processes(now: datetime) -> None:
     """Spec §7 step 1. Must run before the bulk DEAD update."""
+    from twicc.core.services.timeline_decisions import pending_normal_ending_turns
+
+    retained_endings = pending_normal_ending_turns()
     for run in ProcessRun.objects.exclude(state=AgentState.DEAD.value).order_by("started_at"):
         session = Session.objects.filter(id=run.session_id).first()
         common = {
@@ -64,13 +67,17 @@ def _reconcile_lost_processes(now: datetime) -> None:
             "precision": TimelinePrecision.ESTIMATED, "actor": TimelineActor.SYSTEM, "provider": run.provider,
         }
         journal = LogicalTurn.objects.filter(process_run_id=run.pk)
-        managed_closed = journal.exists() and not journal.filter(outcome__isnull=True, closed_at__isnull=True).exists()
+        # A retained accepted ending owns its normal boundary even when its
+        # first insertion fails. Later genuinely open turns still settle lost.
+        journal_owns_ending = journal.exists() and not journal.filter(
+            outcome__isnull=True, closed_at__isnull=True,
+        ).exclude(pk__in=retained_endings).exists()
         for spec in process_transition_events(
             prev_state=run.state, prev_awaiting=run.awaiting_user_input,
             prev_work=run.background_work_in_progress,
             new_state=AgentState.DEAD.value, new_awaiting=False, new_work=None,
         ):
-            if spec.kind == TimelineKind.TURN_ENDED and managed_closed:
+            if spec.kind == TimelineKind.TURN_ENDED and journal_owns_ending:
                 continue
             record_event_sync(spec.kind, data=spec.data, **common)
         # Its workflows died with it (like the inner intervals above).
