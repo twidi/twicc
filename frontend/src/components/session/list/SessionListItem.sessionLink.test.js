@@ -14,12 +14,20 @@ const compiled = compileScript(descriptor, { id: 'session-link-test' }).content
     .replace(/import[\s\S]*?from ['"][^'"]+['"]\s*;?/g, '')
     .replace('export default', 'const component =')
 
+// Several fixtures can share one test: mock the timers once per test context.
+const mockedTimers = new WeakSet()
+
 function fixture(t, { target = 'open', props: extraProps = {} } = {}) {
-    t.mock.timers.enable({ apis: ['setTimeout'] })
+    if (!mockedTimers.has(t)) {
+        t.mock.timers.enable({ apis: ['setTimeout'] })
+        mockedTimers.add(t)
+    }
     setActivePinia(createPinia())
     const store = useSessionSelectionStore()
     const win = new EventTarget()
     const drags = []
+    const events = []
+    const targetRef = { value: target }
     const props = { session: { id: 'first', project_id: 'p', title: 'First' }, selectionEnabled: true, linkSource: true, ...extraProps }
     const context = {
         useI18n: () => ({}),
@@ -31,7 +39,7 @@ function fixture(t, { target = 'open', props: extraProps = {} } = {}) {
         useDataStore: () => ({}), useSettingsStore: () => ({}), useCodeCommentsStore: () => ({}),
         useSessionSelectionStore: () => store,
         useDragHover: () => ({ cancel() {} }),
-        useSessionLinkTarget: () => ({ targetSessionId: { value: target } }),
+        useSessionLinkTarget: () => ({ targetSessionId: targetRef }),
         isSessionLinkDragActive: () => false,
         startSessionLinkDrag: (session, pointer) => drags.push({ session, pointer }),
         buildSessionLinkMarkdown: session => `[${session.title}](/project/${session.project_id}/session/${session.id})`,
@@ -45,8 +53,8 @@ function fixture(t, { target = 'open', props: extraProps = {} } = {}) {
         }
     }
     const component = runInNewContext(`${compiled}; component`, context)
-    const row = component.setup(props, { expose() {}, emit() {} })
-    return { row, store, win, drags }
+    const row = component.setup(props, { expose() {}, emit: (...args) => events.push(args) })
+    return { row, store, win, drags, events, targetRef }
 }
 
 const touch = (x = 20, y = 20) => ({ touches: [{ clientX: x, clientY: y }], preventDefault() {} })
@@ -101,7 +109,6 @@ test('without an open chat, or for the open session itself, the long press selec
         longPress(f)
         assert.equal(f.row.linkArmed.value, false)
         assert.equal(f.store.active, true)
-        t.mock.timers.reset()
     }
 })
 
@@ -113,7 +120,6 @@ test('a mouse drag starts after 5 px, only when a chat can receive the link', t 
     f.win.dispatchEvent(pointer('pointermove', 15, 10, 'mouse'))
     assert.equal(f.drags.length, 1)
     assert.equal(f.drags[0].pointer.pointerType, 'mouse')
-    t.mock.timers.reset()
     const none = fixture(t, { target: null })
     none.row.handlePointerDown(pointer('pointerdown', 10, 10, 'mouse'))
     none.win.dispatchEvent(pointer('pointermove', 30, 10, 'mouse'))
@@ -134,7 +140,6 @@ test('no link drag in multi-select mode, for drafts, or outside the main sidebar
         let prevented = false
         f.row.handleDragStart({ preventDefault() { prevented = true } })
         assert.equal(prevented, false, 'the native URL drag stays')
-        t.mock.timers.reset()
     }
 })
 
@@ -143,4 +148,39 @@ test('the native drag of the row link gives way to the link drag', t => {
     let prevented = false
     f.row.handleDragStart({ preventDefault() { prevented = true } })
     assert.equal(prevented, true)
+})
+
+test('the menu entry shows for a linkable main-list row when another chat can receive the link', t => {
+    assert.equal(fixture(t).row.showInsertLinkEntry.value, true)
+    const selecting = fixture(t)
+    selecting.store.enter()
+    assert.equal(selecting.row.showInsertLinkEntry.value, true, 'multi-select keeps the entry')
+    for (const options of [{ target: null }, { target: 'first' }, { props: { linkSource: false } },
+        { props: { session: { id: 'first', ephemeral: true } } }]) {
+        assert.equal(fixture(t, options).row.showInsertLinkEntry.value, false)
+    }
+})
+
+test('the menu entry emits once, after the dropdown is hidden', t => {
+    const f = fixture(t)
+    const dropdown = new EventTarget()
+    const child = new EventTarget()
+    f.row.handleMenuSelect({ detail: { item: { value: 'insert-link' } }, target: dropdown })
+    assert.equal(f.events.length, 0)
+    dropdown.dispatchEvent(Object.assign(new Event('wa-after-hide'), {}))
+    assert.equal(f.events.length, 1)
+    assert.equal(f.events[0][0], 'insert-link')
+    assert.equal(f.events[0][1].id, 'first')
+    t.mock.timers.tick(600)
+    assert.equal(f.events.length, 1, 'the fallback timer does not emit again')
+    child.dispatchEvent(new Event('wa-after-hide'))
+    const late = fixture(t)
+    late.row.handleMenuSelect({ detail: { item: { value: 'insert-link' } }, target: new EventTarget() })
+    t.mock.timers.tick(600)
+    assert.equal(late.events.length, 1, 'the fallback emits when no wa-after-hide arrives')
+    const gone = fixture(t)
+    gone.row.handleMenuSelect({ detail: { item: { value: 'insert-link' } }, target: new EventTarget() })
+    gone.targetRef.value = null
+    t.mock.timers.tick(600)
+    assert.equal(gone.events.length, 0, 'no emit when the chat went away meanwhile')
 })

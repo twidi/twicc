@@ -28,6 +28,8 @@ import ProviderIcon from '../components/ui/ProviderIcon.vue'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
 import SessionList from '../components/session/list/SessionList.vue'
 import SessionLinkDragGhost from '../components/session/list/SessionLinkDragGhost.vue'
+import { useSessionLinkTarget } from '../composables/useSessionLinkDrag.js'
+import { buildSessionLinkMarkdown } from '../utils/sessionLink.js'
 import SessionsSidebarControls from '../components/session/SessionsSidebarControls.vue'
 import ArtifactBookmarksSidebarControls from '../components/artifacts/ArtifactBookmarksSidebarControls.vue'
 import ArtifactBookmarkList from '../components/artifacts/ArtifactBookmarkList.vue'
@@ -1699,6 +1701,18 @@ function onSessionLinkDragEnd(event) {
     syncSidebarState()
 }
 
+// Row menu "Insert link in message": the open chat receives the link through the
+// same hand-off as a drop on a session row (SessionView switches to the Chat tab).
+const { targetSessionId: sessionLinkTargetId } = useSessionLinkTarget(route)
+function handleInsertSessionLink(session) {
+    const targetId = sessionLinkTargetId.value
+    if (!targetId || targetId === session.id) return
+    pendingDropData.value = {
+        sessionId: targetId, files: [], text: buildSessionLinkMarkdown(session, router), sessionLink: true, input: null,
+    }
+    closeDrawerIfNarrowOpen()
+}
+
 onMounted(() => {
     window.addEventListener('twicc:session-link-drag-start', onSessionLinkDragStart)
     window.addEventListener('twicc:session-link-drag-end', onSessionLinkDragEnd)
@@ -2095,6 +2109,7 @@ function openPeerInbox() {
                         :show-active-across-filters="showActiveAcrossFilters"
                         @select="handleSessionSelect"
                         @drop-data="handleDropOnSession"
+                        @insert-link="handleInsertSessionLink"
                         @focus-search="focusSearchInput"
                     />
                 </div>

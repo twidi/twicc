@@ -1668,6 +1668,8 @@ watch(pendingDropData, (data) => {
     if (!data || data.sessionId !== sessionId.value) return
     // Consume the pending data
     pendingDropData.value = null
+    // A session link from the row menu: show the chat even if a maximized dock hides it.
+    if (data.sessionLink && layout.maximizedRegion.value && !layout.centerVisible.value) layout.restoreMaximized()
     // Ensure we're on the Chat tab
     if (activeTabId.value !== 'main') {
         switchToTab('main')

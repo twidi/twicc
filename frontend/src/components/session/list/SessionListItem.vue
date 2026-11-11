@@ -125,7 +125,7 @@ function rowId(name) {
     return `${props.idPrefix}${name}-${props.session.id}`
 }
 
-const emit = defineEmits(['select', 'drop-data', 'selection-click', 'toggle-tree'])
+const emit = defineEmits(['select', 'drop-data', 'selection-click', 'toggle-tree', 'insert-link'])
 
 /** Indentation steps of a tree row, capped. Carried by the wrapper, never by the button. */
 const treeIndentLevel = computed(() => props.treeRow ? Math.min(props.treeRow.depth, TREE_MAX_INDENT_LEVEL) : 0)
@@ -498,6 +498,30 @@ function beginLinkDrag(event) {
     startSessionLinkDrag(linkSessionSnapshot(), { pointerId, pointerType, x: event.clientX, y: event.clientY })
 }
 
+// Row menu entry "Insert link in message": same rules as the drag, minus the
+// multi-select restriction (it acts on this one session only).
+const showInsertLinkEntry = computed(() => {
+    const targetId = sessionLinkTarget.targetSessionId.value
+    return props.linkSource && isLinkable.value && !!targetId && targetId !== props.session.id
+})
+
+// The dropdown gives the focus back to its trigger once hidden: insert after
+// that, so the composer keeps the focus. The timer covers a missed event.
+function emitInsertLinkAfterMenu(dropdown) {
+    let done = false
+    let timer = null
+    const emitOnce = () => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        dropdown?.removeEventListener?.('wa-after-hide', onHide)
+        if (showInsertLinkEntry.value) emit('insert-link', props.session)
+    }
+    const onHide = (event) => { if (event.target === dropdown) emitOnce() }
+    dropdown?.addEventListener?.('wa-after-hide', onHide)
+    timer = setTimeout(emitOnce, 600)
+}
+
 // The link drag replaces the native drag of the row link (its URL).
 function handleDragStart(event) {
     if (canStartLinkDrag()) event.preventDefault()
@@ -651,6 +675,10 @@ const showTreeDetachEntry = computed(() =>
 function handleMenuSelect(event) {
     const action = event.detail.item.value
     const session = props.session
+    if (action === 'insert-link') {
+        emitInsertLinkAfterMenu(event.target)
+        return
+    }
     if (action === 'edit-project') {
         // Opens the globally-mounted ProjectEditDialog (App.vue) for the
         // session's own project — same event as the command palette's "Edit
@@ -977,6 +1005,10 @@ function handleMenuSelect(event) {
             <wa-dropdown-item v-if="!session.draft && !session.ephemeral && sharingEnabled" value="share">
                 <wa-icon slot="icon" name="share-nodes"></wa-icon>
                 {{ $t('session.list.share') }}
+            </wa-dropdown-item>
+            <wa-dropdown-item v-if="showInsertLinkEntry" value="insert-link">
+                <wa-icon slot="icon" name="link"></wa-icon>
+                {{ $t('session.list.insertLink') }}
             </wa-dropdown-item>
             <template v-if="!session.draft && !session.ephemeral">
                 <wa-divider></wa-divider>

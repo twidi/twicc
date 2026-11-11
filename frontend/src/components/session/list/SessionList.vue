@@ -687,7 +687,7 @@ function scrollToSession(targetSessionId, attempt = 0) {
     }).then(() => {}, () => {})
 }
 
-const emit = defineEmits(['select', 'drop-data', 'focus-search'])
+const emit = defineEmits(['select', 'drop-data', 'focus-search', 'insert-link'])
 
 function handleSelect(session) {
     // In multi-select mode, opening a session also anchors it: a following
@@ -1005,6 +1005,7 @@ defineExpose({
                     @toggle-tree="onToggleTree"
                     @select="handleSelect"
                     @drop-data="handleDropData"
+                    @insert-link="emit('insert-link', $event)"
                     @selection-click="handleSelectionClick"
                 />
             </template>
