@@ -475,6 +475,30 @@ function onMouseGestureMove(event) {
     startSessionLinkDrag(linkSessionSnapshot(), { pointerId: gesture.pointerId, pointerType: 'mouse', x: event.clientX, y: event.clientY })
 }
 
+// From the long press until the finger lifts, the sidebar list keeps its position:
+// it cannot scroll, a scroll the browser starts anyway is undone on each move, and
+// the position is restored at the end (the drawer reopens where it was).
+let touchScroller = null
+let scrollPin = null
+
+function pinListScroll() {
+    if (!touchScroller || scrollPin) return
+    scrollPin = { el: touchScroller, top: touchScroller.scrollTop, overflowY: touchScroller.style.overflowY }
+    touchScroller.style.overflowY = 'hidden'
+}
+
+function keepListPinned() {
+    if (scrollPin && scrollPin.el.scrollTop !== scrollPin.top) scrollPin.el.scrollTop = scrollPin.top
+}
+
+function unpinListScroll() {
+    if (!scrollPin) return
+    const { el, top, overflowY } = scrollPin
+    scrollPin = null
+    el.style.overflowY = overflowY
+    el.scrollTop = top
+}
+
 function beginTouchLinkDrag(x, y) {
     linkArmed.value = false
     linkDragStarted = true
@@ -519,6 +543,7 @@ function handleTouchCancel() {
     clearLongPressTimer()
     touchOrigin = null
     linkArmed.value = false
+    unpinListScroll()
 }
 
 function handleTouchStart(event) {
@@ -531,6 +556,7 @@ function handleTouchStart(event) {
     const touch = event.touches[0]
     touchOrigin = { x: touch.clientX, y: touch.clientY }
     lastTouchPoint = touchOrigin
+    touchScroller = event.currentTarget?.closest?.('.virtual-scroller') ?? null
     if (selectionStore.active) return
     longPressTimer = setTimeout(() => {
         longPressTimer = null
@@ -541,6 +567,7 @@ function handleTouchStart(event) {
             // Multi-select waits for the release: a move drags instead.
             linkArmPoint = lastTouchPoint
             linkArmed.value = true
+            pinListScroll()
             return
         }
         selectionStore.enter(props.session.id)
@@ -549,6 +576,7 @@ function handleTouchStart(event) {
 }
 
 function handleTouchMove(event) {
+    keepListPinned()
     const touch = event.touches[0]
     if (linkArmed.value) {
         if (event.touches.length !== 1) linkArmed.value = false
@@ -580,6 +608,7 @@ function handleTouchEnd(event) {
     touchOrigin = null
     longPressTriggered = false
     linkArmed.value = false
+    unpinListScroll()
 }
 
 function handleContextMenu(event) {

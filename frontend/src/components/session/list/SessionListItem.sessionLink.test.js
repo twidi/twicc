@@ -193,3 +193,20 @@ test('the menu entry emits once, after the dropdown is hidden', t => {
     t.mock.timers.tick(600)
     assert.equal(gone.events.length, 0, 'no emit when the chat went away meanwhile')
 })
+
+test('the sidebar list keeps its position from the long press until the finger lifts', t => {
+    const f = fixture(t); f.mock = t.mock
+    const scroller = { scrollTop: 120, style: { overflowY: '' } }
+    const start = { ...touch(), currentTarget: { closest: () => scroller } }
+    f.row.handleTouchStart(start)
+    t.mock.timers.tick(500)
+    assert.equal(scroller.style.overflowY, 'hidden', 'the list cannot scroll once armed')
+    scroller.scrollTop = 160
+    f.row.handleTouchMove(touch(20, 60))
+    assert.equal(scroller.scrollTop, 120, 'a scroll started anyway is undone on each move')
+    assert.equal(f.drags.length, 1)
+    scroller.scrollTop = 175
+    f.row.handleTouchEnd(touch(20, 60))
+    assert.equal(scroller.style.overflowY, '')
+    assert.equal(scroller.scrollTop, 120, 'the position is restored at the end')
+})
