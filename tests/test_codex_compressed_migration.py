@@ -193,6 +193,7 @@ def test_paginated_compressed_input_uses_logical_size_and_recovers_interrupted_r
     session.refresh_from_db()
     assert session.last_offset == len(content)
     assert session.history_epoch == int(offset_zero)
+    assert session.compressed_size == compressed.stat().st_size
 
 
 @pytest.mark.django_db(transaction=True)
@@ -450,3 +451,28 @@ def test_initial_plain_classification_preserves_existing_diagnoses(runtime, monk
     assert bool(resolutions) == (change == 'missing')
     assert any(name == 'MarkSessionUnavailableJob' for name, _ in jobs) == (change == 'missing')
     assert items == [record.decode() for record in content.splitlines()]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_cached_paginated_source_computes_without_full_decode(runtime, monkeypatch):
+    session, _, compressed, _ = _session(
+        runtime, 'cached', disk_paginated=True, database_paginated=True,
+    )
+    session.compressed_size = compressed.stat().st_size
+    session.mtime = compressed.stat().st_mtime
+    session.save(update_fields=['compressed_size', 'mtime'])
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail('Cached metadata compute must not decompress the full source')
+
+    monkeypatch.setattr(background_compute, 'prepare_rollout', unexpected_decode)
+
+    async def run():
+        owner = CodexComputeCoordinator(SimpleNamespace(compute_version=2, stop_event=asyncio.Event()), asyncio.Event())
+        owner._is_agent_active = lambda _sid: False
+        candidate = (await background_compute._load_stale_candidates(2, source_ids=[session.id]))[0]
+        return await owner.prepare_candidate(candidate)
+
+    result = asyncio.run(run())
+    assert isinstance(result, PreparedCandidate), result
+    assert result.kind == 'compute'

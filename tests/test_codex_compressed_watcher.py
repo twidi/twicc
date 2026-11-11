@@ -284,7 +284,7 @@ def test_compressed_drain_decodes_once_across_slices(stored, monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_distinct_temp_files_for_unchanged_zst_preserve_generation(stored, monkeypatch):
+def test_unchanged_zst_preserves_generation_without_another_temp_file(stored, monkeypatch):
     from twicc.providers import db_writer
     watcher, path, _ = stored
     original = module.prepare_rollout
@@ -307,7 +307,7 @@ def test_distinct_temp_files_for_unchanged_zst_preserve_generation(stored, monke
             await settle(watcher)
             assert watcher._queue.source_generation(path) is generation
             assert path not in watcher._replaced_paths
-            assert len(read_paths) == 2 and read_paths[0] != read_paths[1]
+            assert len(read_paths) == 1
             assert all(not read_path.exists() for read_path in read_paths)
         finally:
             watcher.stop_watcher()
@@ -330,6 +330,7 @@ def test_late_root_enumerates_both_extensions_once(provider_home, monkeypatch):
 
 
 def lightweight(watcher, monkeypatch):
+    monkeypatch.setattr(watcher, '_get_compressed_session', AsyncMock(return_value=None))
     async def call(callback, **kwargs):
         return await callback()
     monkeypatch.setattr(base, 'run_under_db_write_lock', call)
@@ -1048,4 +1049,34 @@ def test_fingerprint_permission_failure_remains_terminal(provider_home, monkeypa
         finally:
             watcher.stop_watcher()
             await watcher._drain_changes()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_imported_compressed_source_skips_repeated_decode(stored, monkeypatch):
+    from twicc.core.models import Session
+    from twicc.providers import db_writer
+    watcher, path, _ = stored
+
+    async def run():
+        db_writer.start_db_writer()
+        try:
+            await watcher.process_path(path)
+            compressed = compress(path)
+            await watcher.process_path(compressed)
+            await settle(watcher)
+            row = await Session.objects.aget(id=SID)
+            assert row.compressed_size == compressed.stat().st_size
+
+            def unexpected_decode(*args, **kwargs):
+                pytest.fail('Imported compressed source must not be decompressed again')
+
+            monkeypatch.setattr(module, 'prepare_rollout', unexpected_decode)
+            await asyncio.wait_for(watcher.process_path(compressed), 5)
+            await settle(watcher)
+        finally:
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+            await db_writer.stop_db_writer()
+
     asyncio.run(run())

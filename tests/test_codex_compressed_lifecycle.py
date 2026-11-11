@@ -66,6 +66,7 @@ def test_full_representation_lifecycle_preserves_durable_history(provider_home, 
             assert stats['inventory_complete'] == 1
             row, ids = await snapshot()
             assert row.file_path == relative + '.zst'
+            assert row.compressed_size == compressed.stat().st_size
             assert (row.last_offset, row.last_line) == (len(records()), 2)
             assert ids == item_ids
             assert (row.history_epoch, row.storage_incarnation, row.compute_version,
@@ -81,6 +82,7 @@ def test_full_representation_lifecycle_preserves_durable_history(provider_home, 
             await settle(watcher)
             row, ids = await snapshot()
             assert row.file_path == relative
+            assert row.compressed_size is None
             assert ids == item_ids
             assert (row.history_epoch, row.storage_incarnation, row.compute_version,
                     row.search_version, row.content_state_epoch, row.plaintext_verified_epoch) == stable
@@ -125,6 +127,7 @@ def test_full_representation_lifecycle_preserves_durable_history(provider_home, 
             row, final_ids = await snapshot()
             assert not row.stale and row.unavailable_reason is None
             assert row.file_path == relative + '.zst'
+            assert row.compressed_size == compressed.stat().st_size
             assert final_ids == ids
             updates = [call.args[1]['data']['session'] for call in channel.group_send.await_args_list
                        if call.args[1]['data']['type'] == 'session_updated']

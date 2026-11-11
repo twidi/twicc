@@ -110,6 +110,14 @@ def source_is_current(fingerprint: SourceFingerprint) -> bool:
         return False
 
 
+def compressed_source_unchanged(path: Path, mtime: float, compressed_size: int | None) -> bool:
+    """Compare an imported compressed source with its stored size and mtime."""
+    if path.suffix != ".zst" or compressed_size is None:
+        return False
+    source_stat = path.stat()
+    return source_stat.st_size == compressed_size and source_stat.st_mtime == mtime
+
+
 def _check_stop(stop: threading.Event | None) -> None:
     if stop is not None and stop.is_set():
         raise InterruptedError("Rollout preparation cancelled")

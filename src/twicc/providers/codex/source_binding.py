@@ -36,6 +36,8 @@ class CodexSourcePayload(NamedTuple):
     fingerprint: SourceFingerprint
     expected: SourceCheckpoint | None
     ingestion: CreateSessionPayload | UpdateSessionPayload | None
+    # Set only after full ingestion; association-only preparation invalidates it.
+    compressed_size: int | None = None
 
 
 class ReconcileCodexSourceJob(NamedTuple):
@@ -119,7 +121,8 @@ def _apply_codex_source_payload(payload: CodexSourcePayload, *, prepared=_UNPREP
             session = ingestion.session
         before = session_contribution(session)
         session.file_path = payload.physical_path
-        fields = ["file_path"]
+        session.compressed_size = payload.compressed_size if physical.suffix == ".zst" else None
+        fields = ["file_path", "compressed_size"]
         source_mtime = payload.fingerprint.mtime_ns / 1_000_000_000
         mtime_changed = ingestion is None and session.mtime != source_mtime
         if mtime_changed:

@@ -434,6 +434,8 @@ class Session(models.Model):
     last_offset = models.PositiveBigIntegerField(default=0)
     last_line = models.PositiveIntegerField(default=0)
     mtime = models.FloatField(default=0)
+    # Size of a fully imported compressed rollout; NULL requires validation.
+    compressed_size = models.PositiveBigIntegerField(null=True)
     stale = models.BooleanField(default=False)  # True if folder/file no longer exists on disk
     compute_version = models.PositiveIntegerField(null=True, blank=True)  # NULL = never computed
     search_version = models.PositiveIntegerField(null=True, blank=True)

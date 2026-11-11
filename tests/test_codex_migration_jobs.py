@@ -247,7 +247,7 @@ def test_replace_history_failure_leaves_the_offset_zero_repair_marker(session):
     coordinator repairs by replacing the history again (see
     ``_begin_replace_codex_history``)."""
     _seed_links(session)
-    Session.objects.filter(id=session.id).update(last_offset=333, last_line=2)
+    Session.objects.filter(id=session.id).update(last_offset=333, last_line=2, compressed_size=123)
     job = ReplaceCodexHistoryJob(
         Provider.CODEX,
         session.id,
@@ -266,6 +266,7 @@ def test_replace_history_failure_leaves_the_offset_zero_repair_marker(session):
     assert not ToolResultLink.objects.filter(session=session).exists()
     assert not AgentLink.objects.filter(session=session).exists()
     assert (session.last_offset, session.last_line) == (0, 0)
+    assert session.compressed_size is None
 
 
 @pytest.mark.django_db(transaction=True)

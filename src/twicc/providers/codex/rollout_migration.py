@@ -386,7 +386,7 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     SessionHistoryFact.objects.filter(session_id=job.session_id).delete()
     SessionItem.objects.filter(session_id=job.session_id).delete()
     Session.objects.filter(id=job.session_id).update(
-        last_offset=0, last_line=0, tasks={}, search_version=None, compute_version=None,
+        last_offset=0, last_line=0, compressed_size=None, tasks={}, search_version=None, compute_version=None,
         items_cost_computed_through_at=None, user_message_count=0,
         history_epoch=F("history_epoch") + 1, content_storage_version=None, plaintext_verified_epoch=None,
     )
@@ -462,7 +462,7 @@ def _apply_mark_session_unavailable_job(job: MarkSessionUnavailableJob) -> int:
 
 @transaction.atomic
 def _apply_mark_session_rebuild_job(job: MarkSessionRebuildJob) -> int:
-    count = Session.objects.filter(id=job.session_id).update(compute_version=None)
+    count = Session.objects.filter(id=job.session_id).update(compute_version=None, compressed_size=None)
     if count:
         from twicc.providers.compute_work import notify_committed_source_changed
         transaction.on_commit(lambda: notify_committed_source_changed(Provider.CODEX, job.session_id))

@@ -38,7 +38,7 @@ from twicc.providers.db_writer import (
 from twicc.providers.subagent_roots import resolve_flat_parent_id
 from twicc.sync_helpers import BackpressureSyncQueue, check_file_has_content, read_session_items_from_file
 from .rollout_migration import HistoryMode, history_mode_from_record
-from .rollout_sources import is_rollout_path, logical_rollout_path, prepare_rollout, read_rollout_meta, resolve_rollout
+from .rollout_sources import compressed_source_unchanged, is_rollout_path, logical_rollout_path, prepare_rollout, read_rollout_meta, resolve_rollout
 from .source_binding import CodexSourcePayload, MarkCodexSourcesMissingPayload, source_checkpoint
 
 logger = logging.getLogger(__name__)
@@ -261,6 +261,7 @@ def _build_create_payload(
             return CodexSourcePayload(
                 Provider.CODEX, entry.session_id,
                 str(source.physical_path.relative_to(codex_sessions_dir())), source.fingerprint, None, payload,
+                compressed_size=source.fingerprint.size,
             )
     except OSError:
         return None
@@ -451,6 +452,10 @@ def _build_existing_source_payload(entry, stats, *, stop_event=None) -> CodexSou
                 Provider.CODEX, entry.session.id,
                 str(source.physical_path.relative_to(codex_sessions_dir())),
                 source.fingerprint, source_checkpoint(entry.session), ingestion,
+                compressed_size=(source.fingerprint.size
+                                 if source.physical_path.suffix == ".zst"
+                                 and (to_insert.last_offset if to_insert is not None else entry.session.last_offset)
+                                 == source.logical_size else None),
             )
     except OSError:
         stats["inventory_complete"] = 0
@@ -522,6 +527,16 @@ def sync_project(
                 project_id, idx - 1, total_sessions,
             )
             return stats
+
+        if (entry.file_path.suffix == ".zst" and not entry.session.stale and not entry.session.unavailable_reason
+                and str(entry.file_path.relative_to(codex_sessions_dir())) == entry.session.file_path):
+            try:
+                if compressed_source_unchanged(entry.file_path, entry.session.mtime, entry.session.compressed_size):
+                    if on_session_progress:
+                        on_session_progress(entry.session.id, idx, total_sessions)
+                    continue
+            except OSError:
+                pass  # The normal source path reports errors and resolves transitions.
 
         special = (entry.file_path.suffix == ".zst"
                    or str(entry.file_path.relative_to(codex_sessions_dir())) != entry.session.file_path

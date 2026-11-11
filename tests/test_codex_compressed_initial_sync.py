@@ -636,3 +636,50 @@ def test_rejected_source_catch_up_retains_pending_work_until_watcher_activation(
             assert (turn.path, turn.change) == (path, Change.modified)
 
     asyncio.run(scenario())
+
+
+def test_unchanged_compressed_startup_does_not_decode_again(provider_home, monkeypatch):
+    path, raw = rollout(provider_home)
+    session = existing(provider_home, path, raw)
+    compressed = compress(path)
+    messages, _ = produce()
+    apply(messages)
+    session.refresh_from_db()
+    assert session.compressed_size == compressed.stat().st_size
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail('Unchanged compressed source must not be decompressed')
+
+    monkeypatch.setattr(initial_sync, 'prepare_rollout', unexpected_decode)
+    messages, stats = produce()
+    assert not any(type(message).__name__ == 'CodexSourcePayload' for message in messages)
+    assert stats['inventory_complete'] == 1
+
+
+@pytest.mark.parametrize('change', ['size', 'mtime'])
+def test_changed_compressed_startup_decodes_again(provider_home, monkeypatch, change):
+    path, raw = rollout(provider_home)
+    existing(provider_home, path, raw)
+    compressed = compress(path)
+    messages, _ = produce()
+    apply(messages)
+    previous = compressed.stat()
+    if change == 'size':
+        with compressed.open('ab') as stream:
+            stream.write(zstandard.ZstdCompressor().compress(b'{}\n'))
+        os.utime(compressed, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    else:
+        os.utime(compressed, ns=(previous.st_atime_ns, previous.st_mtime_ns + 1_000_000_000))
+    calls = []
+    original = initial_sync.prepare_rollout
+
+    def decode(*args, **kwargs):
+        calls.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(initial_sync, 'prepare_rollout', decode)
+    messages, _ = produce()
+    apply(messages)
+    assert calls == [compressed]
+    session = Session.objects.get(pk='thread')
+    assert session.compressed_size == compressed.stat().st_size

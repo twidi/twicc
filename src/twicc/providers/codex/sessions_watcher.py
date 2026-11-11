@@ -59,7 +59,7 @@ from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
 from .migration_gate import gate_for, is_migrating, request_rebuild
 from .rollout_sources import (
-    PreparedRollout, SourceFingerprint, is_rollout_path, logical_rollout_path, prepare_rollout,
+    PreparedRollout, SourceFingerprint, compressed_source_unchanged, is_rollout_path, logical_rollout_path, prepare_rollout,
     resolve_rollout, source_is_current,
 )
 from .source_binding import CodexSourcePayload, ReconcileCodexSourceJob, source_checkpoint
@@ -272,7 +272,9 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                 snapshot, replaced = await asyncio.to_thread(
                     _read_source_snapshot, prepared.read_path, previous, identity=identity,
                 )
-                if previous is None or replaced:
+                # A cached compressed source already owns the logical generation,
+                # even though skipping decoding leaves no byte sample to retain.
+                if (previous is None and path not in self._physical_sources) or replaced:
                     if previous is not None:
                         self._replaced_paths.add(path)
                     self._invalidate_parsed_path(path)
@@ -283,6 +285,11 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                 target = PathDrainTarget(self._queue.source_generation(path), snapshot.end_offset)
         self._settle_targets(path, target)
         return target
+
+    async def _get_compressed_session(self, selected: Path) -> Session | None:
+        return await Session.objects.filter(
+            provider=Provider.CODEX, file_path=str(selected.relative_to(self.projects_dir)),
+        ).afirst()
 
     async def _process_change(self, change_type: Change, path_str: str, channel_layer) -> SessionChangeResult:
         path = logical_rollout_path(Path(path_str))
@@ -309,6 +316,17 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                 prepared = None
             if prepared is None:
                 if selected.suffix == '.zst':
+                    session = await self._get_compressed_session(selected)
+                    if (session is not None and not session.stale and not session.unavailable_reason
+                            and not is_migrating(session.id)
+                            and await asyncio.to_thread(
+                                compressed_source_unchanged, selected, session.mtime, session.compressed_size,
+                            )):
+                        self._needs_resolution.discard(path)
+                        self._physical_sources[path] = selected
+                        target = PathDrainTarget(self._queue.source_generation(path), session.last_offset)
+                        self._settle_targets(path, target)
+                        return SessionChangeResult('drained', target.source_generation, target.end_offset)
                     if path not in self._preparations:
                         self._preparation_waiting[path] = None
                         self._start_preparations()
@@ -534,10 +552,22 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                     self._needs_resolution.add(path)
                     return SessionChangeResult('ready')
                 self._needs_resolution.discard(path)
-            return await super()._process_parsed_session_change(
+            result = await super()._process_parsed_session_change(
                 path, parsed, change_type, channel_layer,
                 **({'read_path': read_path} if read_path is not None else {}),
             )
+            if (result.disposition == 'drained' and prepared is not None
+                    and prepared.physical_path.suffix == '.zst'):
+                session = await get_session_by_id(parsed.session_id)
+                if (session is not None and session.file_path == parsed.file_path
+                        and session.last_offset == prepared.logical_size):
+                    payload = CodexSourcePayload(
+                        Provider.CODEX, session.id, parsed.file_path, prepared.fingerprint,
+                        source_checkpoint(session), None, compressed_size=prepared.fingerprint.size,
+                    )
+                    future = asyncio.get_running_loop().create_future()
+                    await submit_async_job(ReconcileCodexSourceJob(Provider.CODEX, payload, future))
+            return result
         finally:
             gate.release()
 
