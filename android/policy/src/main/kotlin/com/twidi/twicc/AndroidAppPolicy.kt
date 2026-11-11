@@ -3,7 +3,8 @@ package com.twidi.twicc
 enum class AppCommand(val wireName: String) {
     GET_STATE("getState"), MENU_VISIBILITY("menuVisibility"), SWITCH_INSTANCE("switchInstance"),
     MANAGE_INSTANCES("manageInstances"), RELOAD("reload"), FORCE_REFRESH("forceRefresh"),
-    SERVER_HOME("serverHome"), OPEN_IN_BROWSER("openInBrowser");
+    SERVER_HOME("serverHome"), OPEN_IN_BROWSER("openInBrowser"),
+    COPY_TERMINAL_CLIPBOARD_DIAGNOSTICS("copyTerminalClipboardDiagnostics");
     companion object { fun fromWire(value: String): AppCommand? = entries.find { it.wireName == value } }
 }
 

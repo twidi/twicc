@@ -6,7 +6,10 @@ import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
+import { ClipboardAddon, BrowserClipboardProvider } from '@xterm/addon-clipboard'
+import { isAndroidApp } from '../utils/androidEnvironment.js'
+import { getAndroidAppClient } from '../utils/androidAppClient.js'
+import { createTerminalClipboardObserver } from '../utils/terminalClipboardDiagnostics.js'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { toast } from '../composables/useToast'
@@ -539,10 +542,22 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         return { col, row: bufferRow }
     }
 
-    /**
-     * Copy text to clipboard with execCommand fallback for mobile reliability.
-     */
-    function clipboardWrite(text) {
+    // The ordinary web client runs clipboard calls directly and collects no diagnostics.
+    const observeClipboard = createTerminalClipboardObserver({
+        enabled: () => isAndroidApp.value,
+        context: () => ({
+            focused: document.hasFocus(), visibility: document.visibilityState,
+            secureContext: window.isSecureContext, userActivation: navigator.userActivation?.isActive ?? null,
+            clipboardRead: typeof navigator.clipboard?.readText === 'function',
+            clipboardWrite: typeof navigator.clipboard?.writeText === 'function',
+            userAgent: navigator.userAgent, websocketState: ws?.readyState ?? null,
+            terminalConnected: isConnected.value,
+        }),
+        report: diagnostic => getAndroidAppClient().request('terminalClipboard.record', { diagnostic }),
+    })
+
+    /** Copy text with the existing execCommand-first fallback. */
+    function clipboardWrite(text, trigger = 'button') {
         // Try execCommand first — synchronous, more reliable on mobile
         try {
             const textArea = document.createElement('textarea')
@@ -554,14 +569,16 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
             document.body.appendChild(textArea)
             textArea.focus()
             textArea.select()
-            const success = document.execCommand('copy')
+            const success = observeClipboard({ operation: 'copy', trigger, method: 'execCommand', text },
+                () => document.execCommand('copy'))
             document.body.removeChild(textArea)
             if (success) return
         } catch {
             // Fall through to async API
         }
         // Fallback to async clipboard API
-        navigator.clipboard.writeText(text).catch(() => {})
+        observeClipboard({ operation: 'copy', trigger, method: 'writeText', text },
+            () => navigator.clipboard.writeText(text)).catch(() => {})
     }
 
     /** Whether the current touch gesture is a selection (vs scrollbar drag). */
@@ -1459,9 +1476,10 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         // neither problem. Fall back to the textarea helper only when the async
         // API is unavailable (non-secure contexts).
         if (navigator.clipboard?.writeText) {
-            navigator.clipboard.writeText(selection).catch(() => {})
+            observeClipboard({ operation: 'copy', trigger: 'selection', method: 'writeText', text: selection },
+                () => navigator.clipboard.writeText(selection)).catch(() => {})
         } else {
-            clipboardWrite(selection)
+            clipboardWrite(selection, 'selection')
         }
     }
 
@@ -1592,7 +1610,15 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         terminal.loadAddon(fitAddon)
         // Android engines must receive the URL before they handle the new window.
         terminal.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener,noreferrer')))
-        terminal.loadAddon(new ClipboardAddon())
+        if (isAndroidApp.value) {
+            const provider = new BrowserClipboardProvider()
+            terminal.loadAddon(new ClipboardAddon(undefined, {
+                readText: selection => observeClipboard({ operation: 'paste', trigger: 'osc52', method: 'readText' },
+                    () => provider.readText(selection)),
+                writeText: (selection, text) => observeClipboard({ operation: 'copy', trigger: 'osc52', method: 'writeText', text },
+                    () => provider.writeText(selection, text)),
+            }))
+        } else terminal.loadAddon(new ClipboardAddon())
 
         Terminal.strings.promptLabel = i18n.global.t('session.terminal.input')
         Terminal.strings.tooMuchOutput = i18n.global.t('session.terminal.tooMuchOutput')
@@ -1693,7 +1719,8 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
             if (event.ctrlKey && (event.code === 'KeyC')) {
                 const selection = getTmuxScrollSelectionText() || terminal.getSelection()
                 if (selection) {
-                    navigator.clipboard.writeText(selection)
+                    observeClipboard({ operation: 'copy', trigger: 'shortcut', method: 'writeText', text: selection },
+                        () => navigator.clipboard.writeText(selection))
                     terminal.clearSelection()
                     resetTmuxScrollSelection()
                     toast.success(localUiMessage('session.terminal.copied'), { duration: 2000 })
@@ -1896,9 +1923,11 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
      */
     async function handleExtraKeyPaste() {
         try {
-            const text = await navigator.clipboard.readText()
+            const text = await observeClipboard({ operation: 'paste', trigger: 'button', method: 'readText' },
+                () => navigator.clipboard.readText())
             if (text) {
-                wsSend({ type: 'input', data: text })
+                observeClipboard({ operation: 'paste', trigger: 'button', method: 'terminalInput', text },
+                    () => wsSend({ type: 'input', data: text }))
             }
         } catch {
             toast.error(localUiMessage('session.terminal.clipboardDenied'))

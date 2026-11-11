@@ -116,7 +116,8 @@ class BrowserActivity : Activity() {
             { command, request -> AndroidPush.receive(this, instance, command, request) }, { id ->
                 notificationNavigation.acknowledge(id)
                 if (notificationNavigation.pending == null) clearNotificationIntent()
-            }, sessionVisibility = { id -> displayedSessionId = id; reportPushSession() }, appLanguage = languageBridge::receive)
+            }, sessionVisibility = { id -> displayedSessionId = id; reportPushSession() }, appLanguage = languageBridge::receive,
+            terminalClipboardDiagnostic = TerminalClipboardDiagnostics.process::record)
         languageObserver = languageStore.observe {
             // Store observers hold a shared lock. Post without waiting for the activity thread.
             ownerHandler.post {
@@ -360,6 +361,10 @@ class BrowserActivity : Activity() {
             true
         }
         item(R.id.browser_menu_external, "navigation.android.browser").setOnMenuItemClickListener { openExternal(safeUrl); true }
+        popup.menu.add(TerminalClipboardDiagnostics.MENU_LABEL).setOnMenuItemClickListener {
+            copyTerminalClipboardDiagnostics()
+            true
+        }
         popup.setOnDismissListener { if (nativeMenu === popup) { nativeMenu = null; menuMessages.clear() } }
         popup.show()
     }
@@ -404,6 +409,7 @@ class BrowserActivity : Activity() {
         .put("push", AndroidPush.state(this, instance))
         .put("capabilities", JSONObject().apply {
             put("androidPush", 1)
+            put("terminalClipboardDiagnostics", 1)
             if (browser?.nativeTtsSupported == true) put("nativeTts", 1)
         })
         .put("instances", JSONArray().apply {
@@ -451,10 +457,25 @@ class BrowserActivity : Activity() {
                 AppCommand.FORCE_REFRESH -> refresh(true)
                 AppCommand.SERVER_HOME -> { safeUrl = "${instance.address}/"; refresh(false) }
                 AppCommand.OPEN_IN_BROWSER -> openExternal(safeUrl)
+                AppCommand.COPY_TERMINAL_CLIPBOARD_DIAGNOSTICS -> copyTerminalClipboardDiagnostics()
                 else -> Unit
             }
         }
         return null
+    }
+
+    private fun copyTerminalClipboardDiagnostics() {
+        try {
+            val environment = JSONObject().put("appVersion", BuildConfig.VERSION_NAME)
+                .put("engine", EngineProvider.engine.displayName)
+                .put("androidVersion", android.os.Build.VERSION.RELEASE).put("androidApi", android.os.Build.VERSION.SDK_INT)
+            getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(
+                android.content.ClipData.newPlainText(TerminalClipboardDiagnostics.MENU_LABEL,
+                    TerminalClipboardDiagnostics.process.report(environment)))
+            if (android.os.Build.VERSION.SDK_INT < 33) toast(NativeMessages.text(this, UiMessage("session.terminal.copied")))
+        } catch (_: Exception) {
+            toast(NativeMessages.text(this, UiMessage("common.android.errors.actionFailed")))
+        }
     }
 
     private fun switchInstance(target: Instance, notification: Intent? = null) {

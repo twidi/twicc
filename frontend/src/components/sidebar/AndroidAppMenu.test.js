@@ -59,6 +59,16 @@ test('ordinary browser renders no Android control and starts no heartbeat', asyn
     assert.equal(hooks.stateChanged, undefined)
     hooks.unmount()
 })
+test('clipboard diagnostics are available only on a supporting Android app', async () => {
+    const oldApp = await load()
+    assert.doesNotMatch(await oldApp.html(), /Get terminal clipboard diagnostics/)
+    oldApp.hooks.unmount()
+    const supported = await load({ ...state, capabilities: { terminalClipboardDiagnostics: 1 } })
+    assert.match(await supported.html(), /Get terminal clipboard diagnostics/)
+    await supported.ctx.selectAction({ detail: { item: { value: 'copyTerminalClipboardDiagnostics' } } })
+    assert.equal(supported.calls.at(-1)[0], 'copyTerminalClipboardDiagnostics')
+    supported.hooks.unmount()
+})
 test('a native state change reads the pending notification immediately without waiting for the heartbeat', async () => {
     const { calls, hooks } = await load()
     calls.length = 0

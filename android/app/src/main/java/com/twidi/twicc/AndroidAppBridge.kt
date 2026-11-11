@@ -18,6 +18,7 @@ class AndroidAppBridge(
     private val acknowledgeNavigation: ((String) -> Unit)? = null,
     private val sessionVisibility: ((String?) -> Unit)? = null,
     private val appLanguage: ((String, JSONObject) -> LanguageSelection)? = null,
+    private val terminalClipboardDiagnostic: ((JSONObject) -> Unit)? = null,
 ) {
     fun receive(text: String): String {
         var id = ""
@@ -37,6 +38,11 @@ class AndroidAppBridge(
             id = (request.opt("id") as? String).orEmpty()
             if (id.isEmpty() || id.length > 96 || request.opt("protocol") != 1) return invalid("Unsupported Android protocol or request ID")
             val wire = request.optString("command")
+            if (wire == "terminalClipboard.record") {
+                val diagnostic = request.optJSONObject("diagnostic") ?: return invalid("Missing terminal clipboard diagnostic")
+                terminalClipboardDiagnostic?.invoke(diagnostic) ?: return invalid("Terminal clipboard diagnostics unavailable")
+                return reply()
+            }
             if (wire == "locale.get" || wire == "locale.set") {
                 val selection = appLanguage?.invoke(wire, request)
                     ?: return reply(uiMessage = UiMessage("android.language.errors.updateApp"))

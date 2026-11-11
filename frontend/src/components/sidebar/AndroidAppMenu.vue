@@ -26,7 +26,7 @@ const dropdown = ref(null)
 const confirmDialog = ref(null)
 let navigationId = null
 const owner = `rail-${Math.random().toString(36).slice(2)}`
-const actions = new Set(['manageInstances', 'reload', 'serverHome', 'openInBrowser'])
+const actions = new Set(['manageInstances', 'reload', 'serverHome', 'openInBrowser', 'copyTerminalClipboardDiagnostics'])
 let client, heartbeat, observer, placement, stopSessionWatch, stopStateWatch, disposed = false, intersects = false
 
 async function readState() {
@@ -175,6 +175,8 @@ async function confirmForceRefresh() {
                     <wa-dropdown-item value="forceRefresh"><wa-icon slot="icon" name="arrows-rotate" />{{ $t('navigation.android.forceRefresh') }}</wa-dropdown-item>
                     <wa-dropdown-item v-if="!railTarget" value="serverHome"><wa-icon slot="icon" name="house" />{{ $t('navigation.android.serverHome') }}</wa-dropdown-item>
                     <wa-dropdown-item value="openInBrowser"><wa-icon slot="icon" name="arrow-up-right-from-square" />{{ $t('navigation.android.browser') }}</wa-dropdown-item>
+                    <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- User-requested English-only diagnostic action. -->
+                    <wa-dropdown-item v-if="state.capabilities?.terminalClipboardDiagnostics === 1" value="copyTerminalClipboardDiagnostics">Get terminal clipboard diagnostics</wa-dropdown-item>
                     <wa-callout v-if="error" variant="danger" role="alert">{{ resolveUiMessage(error) }}</wa-callout>
                 </wa-dropdown>
             </div>
