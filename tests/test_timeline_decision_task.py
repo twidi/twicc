@@ -144,6 +144,7 @@ def test_fallback_and_ignored_late_result_are_distinguishable(decision_fixture, 
     _, now, request = decision_fixture
     key = admit(request, now)
     row = TimelineDecision.objects.get(pk=key)
+    monkeypatch.setattr(logging.getLogger('twicc.core.services.timeline_decisions'), 'disabled', False)
     caplog.set_level(logging.DEBUG, logger='twicc')
     async def scenario():
         worker = runtime.DecisionRuntime()
@@ -157,6 +158,107 @@ def test_fallback_and_ignored_late_result_are_distinguishable(decision_fixture, 
     assert [(item['event'], item['reason']) for item in logs] == [('fallback', 'timeout'), ('ignored', 'late_result')]
     assert logs[1]['verdict'] == 'NO'
     assert 'PRIVATE' not in caplog.text
+
+
+def test_result_diagnostics_keep_a_bounded_duplicate_window(decision_fixture, monkeypatch, caplog):
+    import logging
+    from uuid import uuid4
+    from twicc import timeline_decision_task as runtime
+
+    _, now, request = decision_fixture
+    rows = [TimelineDecision.objects.get(pk=admit(request._replace(id=str(uuid4())), now, identity=str(index)))
+            for index in range(5)]
+    monkeypatch.setattr(runtime, 'RESULT_CACHE_LIMIT', 3, raising=False)
+    monkeypatch.setattr(logging.getLogger('twicc.core.services.timeline_decisions'), 'disabled', False)
+    caplog.set_level(logging.DEBUG, logger='twicc')
+
+    async def scenario():
+        worker = runtime.DecisionRuntime()
+        for row in rows:
+            assert await worker.apply(row, fallback='timeout')
+            await worker.apply(row, classification=Classification('NO', 'late'), route='provider')
+        assert len(worker.seen_results) <= 3
+        count = caplog.text.count('late_result')
+        assert count == 5
+        await worker.apply(rows[-1], classification=Classification('NO', 'late'), route='provider')
+        assert caplog.text.count('late_result') == count
+        await worker.stop()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('finish', ['result', 'cancel', 'deadline'])
+def test_runtime_releases_agent_callbacks_after_owned_work(bridge, monkeypatch, finish):
+    import gc
+    import weakref
+    from uuid import uuid4
+    from tests.test_completion_publication import Agent
+    from tests.test_semantic_completion_integration import pending
+    from twicc import timeline_decision_task as runtime
+    from twicc.providers.helpers import AgentSettings
+
+    manager, original = bridge
+    agent = Agent(original.session_id, original.project_id, '/tmp', AgentSettings())
+    agent.process_run = original.process_run
+    manager._agents[agent.session_id] = agent
+    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+    monkeypatch.setattr(runtime, '_live_ending', lambda row: (manager, manager._agents[row.session_id])
+        if row.session_id in manager._agents and manager._agents[row.session_id]._completion_pending_ending else None)
+
+    async def scenario(agent):
+        _, context = await pending(manager, agent)
+        row = await asyncio.to_thread(TimelineDecision.objects.get, pk=context.id)
+        worker = runtime.DecisionRuntime()
+        previous = agent._completion_activity  # A real bound callback retains its agent.
+        agent._completion_cancel_inference = previous
+        entered, cleanup, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def infer(row):
+            entered.set()
+            try:
+                if finish != 'result':
+                    await asyncio.Event().wait()
+                return Classification('NO', 'blocked'), 'provider'
+            finally:
+                if finish != 'result':
+                    cleanup.set()
+                    await release.wait()
+        monkeypatch.setattr(worker, 'infer', infer)
+        task = asyncio.create_task(worker.worker(row))
+        await entered.wait()
+        if finish != 'result':
+            if finish == 'deadline':
+                # A concurrent admitted fallback owns the same callback while
+                # the worker still owns inference cleanup.
+                await worker.apply(row, fallback='timeout')
+            else:
+                agent._completion_cancel_inference(str(row.pk))
+            await cleanup.wait()
+            assert agent in worker.callbacks
+            assert agent._completion_cancel_inference == worker.cancel_call
+            # Message work for the same session does not release ending work.
+            message = await asyncio.to_thread(TimelineDecision.objects.create,
+                id=uuid4(), session_id=agent.session_id, provider=agent.provider.value, kind='message', identity_key='concurrent',
+                occurred_at=row.occurred_at, not_before=row.not_before, expires_at=row.expires_at, payload={})
+            await worker.apply(message, classification=Classification('NO', 'routine'), route='provider')
+            assert agent in worker.callbacks
+            release.set()
+        await task
+        agent._cancel_completion_timer()
+        if agent._completion_tasks:
+            await asyncio.gather(*tuple(agent._completion_tasks))
+        assert agent._completion_cancel_inference == previous
+        assert not worker.callbacks
+        assert not worker.calls
+        assert not worker.workers
+        manager._agents.pop(agent.session_id)
+        return worker
+
+    reference = weakref.ref(agent)
+    worker = asyncio.run(scenario(agent))
+    del agent
+    gc.collect()
+    assert reference() is None
+    assert not worker.callbacks
 
 
 def test_four_workers_and_per_session_fairness(decision_fixture, monkeypatch):

@@ -67,6 +67,49 @@ def test_mixed_owned_shells_remain_in_snapshot_without_notice_delay():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+def test_both_diagnostics_preserve_provider_shell_owner_identifiers(transactional_db, caplog, provider, monkeypatch):
+    import logging
+    import orjson
+    from twicc.agent.semantic_types import Classification, DecisionRequest
+    from twicc.core.models import TimelineDecision
+    from twicc.core.services.timeline_decisions import _record_after_commit
+    from twicc.timeline_classification import _log_model_result
+
+    async def scenario():
+        agent = claude_agent() if provider == 'claude_code' else codex_agent(ephemeral=False)
+        if provider == 'claude_code':
+            agent._agent_by_tool_use['spawn'] = 'child'
+            await shell(agent, 'root', 'SECRET command')
+            await shell(agent, 'child', 'SECRET command', parent='spawn')
+        else:
+            agent._track_shell((agent.session_id, 'root'), 1, 'SECRET command')
+            agent._track_shell(('child', 'process'), 1, 'SECRET command')
+        snapshots = agent.completion_shell_snapshot()
+        assert [item['owner_ref'] for item in snapshots] == [None, 'child']
+        return {'shell_refs': list(snapshots)}
+
+    payload = asyncio.run(scenario())
+    payload['shell_refs'].append({'key': 'bounded', 'owner_ref': 'x' * 700})
+    for name in ('twicc.timeline_classification', 'twicc.core.services.timeline_decisions'):
+        monkeypatch.setattr(logging.getLogger(name), 'disabled', False)
+    caplog.set_level(logging.DEBUG, logger='twicc')
+    scope = SourceScope(provider, 'source', 1)
+    request = DecisionRequest(str(uuid4()), 'ending', 'session', scope, payload, timezone.now(), 'provider')
+    _log_model_result(request, Classification('YES', 'delivered'), 'haiku')
+    row = TimelineDecision(id=request.id, session_id='session', provider=provider, kind='ending',
+        storage_incarnation='source', history_epoch=1, payload=payload, reason='delivered', requested_route='provider')
+    _record_after_commit(row, event='resolved', verdict='YES')
+    records = [orjson.loads(record.getMessage().split('semantic_decision ', 1)[1])
+               for record in caplog.records if 'semantic_decision ' in record.getMessage()]
+    assert len(records) == 2
+    for record in records:
+        assert [item['owner_ref'] for item in record['shell_refs']] == [None, 'child', 'x' * 500]
+        assert all(set(item) == {'key', 'owner_ref', 'generation', 'started_at'} for item in record['shell_refs'][:2])
+    assert 'SECRET' not in caplog.text
+    assert 'x' * 501 not in caplog.text
+
+
 def test_shell_exits_during_pending_analysis_waits_for_root(monkeypatch):
     async def scenario():
         agent = claude_agent()

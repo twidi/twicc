@@ -815,6 +815,32 @@ Task 7 review remains pending. No live benchmark or model comparison is repeated
 - No frontend build or live diagnostic applies. No SDK or small-model constant changes.
 - Migration application and backend restart remain user-run operations. Neither runs during validation.
 
+### Final whole-feature correction evidence — 2026-11-11
+
+- The final correction wave addresses review findings I1–I3 and M1–M2 together.
+- Source-invalidated local closures settle the exact open journal as exceptional `ended`, at the captured boundary timestamp.
+  Newer or terminal journals and published boundaries remain unchanged. Old input associations retain their original turn.
+  Publication ownership then releases. Later snapshots and accepted input receipts persist without obsolete normal completion or final forcing.
+- Unknown ending scopes bind through exact current native references and the existing journal source binder.
+  Live contexts, opening caches and durable decisions retain the proven scope. Boot still requires the exact open journal.
+  Native indexing after admission can bind a pending decision before that boot comparison.
+  Stable decision identities preserve root-first cancellation and stale-snapshot cleanup when immutable contexts receive their proven scope.
+- Callback ownership now counts active workers and admitted applications. Each owner releases in `finally`.
+  The final release restores the previous callback and removes the agent reference, including cancellation cleanup.
+  Result-diagnostic deduplication retains at most 256 identifiers.
+- Both diagnostic serializers share bounded identifier serialization. Real Claude and Codex shell-owner strings remain visible.
+  Native-reference dictionaries retain their three identifier fields. Commands, paths and payloads remain excluded.
+- Initial focused RED: **11 failed**, covering all five findings. Additional RED cases cover late binding and ownership cleanup.
+- Selected semantic verification: **284 passed, 31 skipped** before the final publication-ownership drain correction.
+- Final combined verification: **969 passed, 48 skipped** across 28 semantic, completion, journal and relevant timeline suites.
+  The final run reports no warnings. DEBUG tests locally restore their loggers after unrelated ASGI logger configuration.
+- Ruff on the nine amended Python files: **All checks passed!** `git diff --check` also passes.
+  The four documented pre-feature Ruff diagnostics remain untouched.
+- Prompts, context selection, routes, models and generation options remain unchanged.
+  No live call, migration command, installation, server restart, frontend change, push or CHANGELOG edit runs.
+- Full RED/GREEN commands and settlement details: `.superpowers/sdd/2026-11-10-timeline-semantic-decisions-plan/final-fix-report.md`.
+  Independent final re-review follows this correction commit.
+
 ## Execution and review boundaries
 
 Execute tasks in order because interfaces and controller files are shared.

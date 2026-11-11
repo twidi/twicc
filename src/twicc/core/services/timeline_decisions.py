@@ -21,7 +21,7 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from twicc.agent.completion_types import CompletionSnapshot, NativeMessageRef
-from twicc.agent.semantic_types import Classification, DecisionRequest, SourceScope
+from twicc.agent.semantic_types import Classification, DecisionRequest, SourceScope, diagnostic_ref
 from twicc.core.models import LogicalTurn, Session, TimelineDecision
 from twicc.core.services.logical_turns import store_turn_snapshot
 
@@ -48,24 +48,18 @@ def _reason(reason: str) -> str:
     return " ".join(reason.split())[:500]
 
 
-def _native_ref(ref: dict | None) -> dict | None:
-    if not isinstance(ref, dict):
-        return None
-    return {key: ref.get(key) for key in ("kind", "native_id", "turn_id")}
-
-
 def _record_after_commit(row: TimelineDecision, *, event: str, verdict: str | None = None) -> None:
     """Capture safe references now; log no database reads or private evidence."""
     shells = []
     for ref in row.payload.get("shell_refs", []):
         shells.append({
             **{key: ref[key] for key in ("key", "started_at", "generation") if key in ref},
-            "owner_ref": _native_ref(ref.get("owner_ref")),
+            "owner_ref": diagnostic_ref(ref.get("owner_ref")),
         })
     record = {
         "event": event, "session_id": row.session_id, "decision_id": str(row.pk), "kind": row.kind,
         "source_scope": SourceScope(row.provider, row.storage_incarnation, row.history_epoch)._asdict(),
-        "message_refs": [_native_ref(ref) for ref in row.payload.get("message_refs", [])],
+        "message_refs": [diagnostic_ref(ref) for ref in row.payload.get("message_refs", [])],
         "shell_refs": shells, "requested_route": row.requested_route, "effective_route": row.effective_route,
         "model": None, "verdict": verdict, "outcome": row.status, "reason": _reason(row.reason),
     }
@@ -338,7 +332,7 @@ def _matching_open_turn(row: TimelineDecision) -> LogicalTurn | None:
     return LogicalTurn.objects.filter(pk=row.turn_id, session_id=row.session_id, provider=row.provider,
         run_id=row.run_id, ordinal=snapshot.ordinal, revision=snapshot.revision,
         storage_incarnation=row.storage_incarnation, history_epoch=row.history_epoch,
-        first_ref=snapshot.first_ref._asdict() if snapshot.first_ref else None,
+        **({"first_ref": snapshot.first_ref._asdict()} if snapshot.first_ref else {"first_ref__isnull": True}),
         final_refs=[ref._asdict() for ref in dict.fromkeys(snapshot.final_refs)],
         outcome__isnull=True, closed_at__isnull=True).first()
 
@@ -422,6 +416,12 @@ def recover_semantic_decisions(*, now: datetime) -> int:
                     if row.status == 'invalidated':
                         count += 1
                         continue
+                if row.kind == 'ending' and (row.storage_incarnation is None or row.history_epoch is None):
+                    from twicc.core.services.timeline_messages import _ensure_decision_source
+
+                    # Native indexing can bind the open journal after admission.
+                    # Bind only proven captured refs before the exact boot match.
+                    _ensure_decision_source(row)
                 if row.kind == 'ending' and _matching_open_turn(row) is None:
                     count += cancel_decision(decision_id=str(row.pk), reason='stale_snapshot')
                     continue

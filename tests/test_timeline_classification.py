@@ -259,6 +259,7 @@ def semantic_records(caplog):
 
 
 def test_model_result_log_has_route_model_verdict_and_reason(monkeypatch, caplog):
+    monkeypatch.setattr(logging.getLogger('twicc.timeline_classification'), 'disabled', False)
     configure_routes(monkeypatch)
     caplog.set_level(logging.DEBUG, logger='twicc.timeline_classification')
 
@@ -277,6 +278,7 @@ def test_model_result_log_has_route_model_verdict_and_reason(monkeypatch, caplog
 
 
 def test_debug_log_excludes_context_payload(monkeypatch, caplog):
+    monkeypatch.setattr(logging.getLogger('twicc.timeline_classification'), 'disabled', False)
     configure_routes(monkeypatch)
     caplog.set_level(logging.DEBUG, logger='twicc.timeline_classification')
 
@@ -290,6 +292,7 @@ def test_debug_log_excludes_context_payload(monkeypatch, caplog):
 
 
 def test_semantic_debug_records_are_absent_at_info_level(monkeypatch, caplog):
+    monkeypatch.setattr(logging.getLogger('twicc.timeline_classification'), 'disabled', False)
     configure_routes(monkeypatch)
     caplog.set_level(logging.INFO, logger='twicc.timeline_classification')
 
@@ -448,6 +451,7 @@ def test_parser_accepts_exact_response_byte_ceiling():
 
 
 def test_model_logger_keeps_only_safe_captured_references(monkeypatch, caplog):
+    monkeypatch.setattr(logging.getLogger('twicc.timeline_classification'), 'disabled', False)
     configure_routes(monkeypatch)
     caplog.set_level(logging.DEBUG, logger='twicc.timeline_classification')
     payload = ending_payload()

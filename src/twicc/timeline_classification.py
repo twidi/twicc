@@ -24,7 +24,7 @@ import re
 import orjson
 from openai_codex.generated.v2_all import ReasoningEffort
 
-from twicc.agent.semantic_types import Classification, DecisionRequest
+from twicc.agent.semantic_types import Classification, DecisionRequest, diagnostic_ref
 from twicc.core.enums import Provider
 from twicc.core.services.title_suggestion import (
     PROVIDER_TITLE_MODELS,
@@ -293,16 +293,13 @@ async def _attempt(route: str, system_text: str, user_json: str, *, deadline: fl
 
 
 def _log_model_result(request: DecisionRequest, classification: Classification, route: str) -> None:
-    def native_ref(ref):
-        return {key: ref.get(key) for key in ("kind", "native_id", "turn_id")} if isinstance(ref, dict) else None
-
     shell_refs = [{**{key: shell[key] for key in ("key", "started_at", "generation") if key in shell},
-                   "owner_ref": native_ref(shell.get("owner_ref"))}
+                   "owner_ref": diagnostic_ref(shell.get("owner_ref"))}
                   for shell in request.payload.get("shell_refs", [])]
     record = {
         "event": "model_result", "session_id": request.session_id, "decision_id": request.id, "kind": request.kind,
         "source_scope": request.scope._asdict(),
-        "message_refs": [native_ref(ref) for ref in request.payload.get("message_refs", [])],
+        "message_refs": [diagnostic_ref(ref) for ref in request.payload.get("message_refs", [])],
         "shell_refs": shell_refs, "requested_route": request.requested_route, "effective_route": route,
         "model": OPENROUTER_TEXT_MODEL.model if route == "openrouter" else TITLE_MODEL if route == "luna" else "haiku",
         "verdict": classification.verdict, "outcome": None, "reason": classification.reason,

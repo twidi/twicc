@@ -347,6 +347,307 @@ def test_result_needs_current_source_and_exact_proof_for_nullable_scope(bridge, 
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize('claim_first', [False, True])
+@pytest.mark.parametrize('continuation', ['idle', 'retry', 'newer_snapshot'])
+def test_invalidated_local_claim_releases_later_input_journal(bridge, live_session, claim_first, continuation):
+    from tests.test_completion_integration import drain
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.core.models import LogicalTurnInput
+    from twicc.core.services import timeline_decisions as decisions
+
+    manager, agent = bridge
+    f = live_session
+    f.append(f.message('last', 'Obsolete final'), capture=False)
+    f.session.refresh_from_db()
+    agent.session_id, agent.project_id = f.session.pk, f.session.project_id
+    agent.provider = manager.provider = Provider(f.provider)
+    agent.process_run.session_id, agent.process_run.provider = f.session.pk, f.provider
+    agent.process_run.save(update_fields=['session_id', 'provider'])
+    manager._agents = {f.session.pk: agent}
+    agent._completion_storage_incarnation = f.session.storage_incarnation
+    agent._completion_history_epoch = f.session.history_epoch
+
+    async def scenario():
+        open_candidate(manager, agent)
+        initial = str(uuid4())
+        agent._completion_input_pending(initial)
+        agent._completion_input_settled(initial, 'accepted')
+        native = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item', 'last',
+            None if f.provider == 'claude_code' else 'native-turn')
+        agent.completion_controller.provider_ended(0, final_ref=native)
+        ticket = agent.completion_controller.candidate()
+        agent._completion_capture_ending_evidence = evidence
+        agent._completion_shells_are_current = lambda context: True
+        await manager._confirm_completion(agent, ticket)
+        await drain(agent)
+        context = agent._completion_pending_ending
+        if claim_first:
+            agent._completion_claim_ending(context, reason='user_input')
+        await asyncio.to_thread(lambda: Session.objects.filter(pk=agent.session_id).update(history_epoch=2))
+        await asyncio.to_thread(decisions.invalidate_semantic_decisions, session_id=agent.session_id)
+        token = str(uuid4())
+        agent._timeline_input_origins[token] = RequestOrigin('user', 'ui', None, None)
+        agent._completion_input_pending(token, staged=True)
+        agent._completion_input_pending(token)
+        old = agent._completion_pending_publications[ticket.turn_id]
+        if continuation != 'idle':
+            agent._completion_activity()
+            new = agent.completion_controller.snapshot()
+            agent._completion_input_settled(token, 'accepted')
+        agent._cancel_completion_timer()
+        if continuation == 'newer_snapshot':
+            await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        else:
+            assert not await manager._retry_completion(agent, old)
+        assert ticket.turn_id not in agent._completion_pending_publications
+        assert ticket.turn_id not in agent._completion_endings
+        await drain(agent)
+        row = await asyncio.to_thread(TimelineDecision.objects.get, pk=context.id)
+        turn = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        initial_association = await asyncio.to_thread(LogicalTurnInput.objects.get, pk=initial)
+        assert str(initial_association.turn_id) == old.turn_id
+        assert row.status == 'invalidated' and not row.force_pending
+        assert turn.outcome == 'ended' and turn.closed_at == context.occurred_at
+        if continuation != 'idle':
+            association = await asyncio.to_thread(LogicalTurnInput.objects.get, pk=token)
+            assert str(association.turn_id) == new.turn_id
+            assert (await agent.wait_for_completion_input(token)).turn_id == new.turn_id
+            latest = await asyncio.to_thread(LogicalTurn.objects.get, pk=new.turn_id)
+            assert latest.revision == agent.completion_controller.snapshot().revision
+        assert agent.state == AgentState.ASSISTANT_TURN
+        manager._broadcast_info.assert_not_awaited()
+        assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT).exists())
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).count()) == 1
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('shells', [False, True])
+@pytest.mark.parametrize('restart', [False, True])
+def test_first_ending_binds_unknown_scope_with_exact_native_proof(bridge, live_session, shells, restart):
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.agent.semantic_types import SourceScope
+    from twicc.core.services.timeline_decisions import recover_semantic_decisions
+    from tests.test_completion_integration import drain
+
+    manager, agent = bridge
+    f = live_session
+    f.append(f.message('last', 'Exact first final'), capture=False)
+    f.session.refresh_from_db()
+    agent.session_id, agent.project_id = f.session.pk, f.session.project_id
+    agent.provider = manager.provider = Provider(f.provider)
+    agent.process_run.session_id, agent.process_run.provider = f.session.pk, f.provider
+    agent.process_run.save(update_fields=['session_id', 'provider'])
+    manager._agents = {f.session.pk: agent}
+    agent._completion_storage_incarnation = agent._completion_history_epoch = None
+    if shells:
+        agent._completion_capture_ending_evidence = evidence
+        agent._completion_shells_are_current = lambda context: True
+
+    async def scenario():
+        open_candidate(manager, agent)
+        native = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item', 'last',
+            None if f.provider == 'claude_code' else 'native-turn')
+        agent.completion_controller.provider_ended(0, final_ref=native)
+        ticket = agent.completion_controller.candidate()
+        await manager._confirm_completion(agent, ticket)
+        await drain(agent)
+        row = await asyncio.to_thread(lambda: TimelineDecision.objects.get(kind='ending'))
+        turn = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        scope = SourceScope(f.provider, f.session.storage_incarnation, f.session.history_epoch)
+        assert (row.storage_incarnation, row.history_epoch) == scope[1:]
+        assert (turn.storage_incarnation, turn.history_epoch) == scope[1:]
+        assert row.status == ('pending' if shells else 'accepted')
+        if shells:
+            assert agent._completion_pending_ending.scope == scope
+            assert agent._completion_endings[ticket.turn_id].scope == scope
+            if restart:
+                # Boot requires exact agreement after the existing native binder runs.
+                await asyncio.to_thread(recover_semantic_decisions, now=row.expires_at)
+            else:
+                assert await manager.apply_ending_decision(agent, str(row.pk), classification=Classification('YES', 'server'))
+            row = await asyncio.to_thread(TimelineDecision.objects.get, pk=row.pk)
+            assert row.status == 'accepted' and row.applied_at is not None
+        else:
+            assert agent.state == AgentState.USER_TURN
+            assert not agent._completion_pending_publications
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('restart', [False, True])
+def test_ending_binds_unknown_scope_after_late_native_indexing(bridge, live_session, restart):
+    from tests.test_completion_integration import drain
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.core.services.timeline_decisions import recover_semantic_decisions
+
+    manager, agent = bridge
+    f = live_session
+    agent.session_id, agent.project_id = f.session.pk, f.session.project_id
+    agent.provider = manager.provider = Provider(f.provider)
+    agent.process_run.session_id, agent.process_run.provider = f.session.pk, f.provider
+    agent.process_run.save(update_fields=['session_id', 'provider'])
+    manager._agents = {f.session.pk: agent}
+    agent._completion_storage_incarnation = agent._completion_history_epoch = None
+    agent._completion_capture_ending_evidence = evidence
+    agent._completion_shells_are_current = lambda context: True
+
+    async def scenario():
+        open_candidate(manager, agent)
+        native = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item', 'last',
+            None if f.provider == 'claude_code' else 'native-turn')
+        agent.completion_controller.provider_ended(0, final_ref=native)
+        ticket = agent.completion_controller.candidate()
+        await manager._confirm_completion(agent, ticket)
+        await drain(agent)
+        row = await asyncio.to_thread(lambda: TimelineDecision.objects.get(kind='ending'))
+        assert row.status == 'pending' and row.storage_incarnation is None
+        await asyncio.to_thread(f.append, f.message('last', 'Exact late final'), capture=False)
+        turn = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        assert turn.storage_incarnation is not None
+        if restart:
+            await asyncio.to_thread(recover_semantic_decisions, now=row.expires_at)
+        else:
+            assert await manager.apply_ending_decision(agent, str(row.pk), classification=Classification('YES', 'server'))
+            assert agent._completion_storage_incarnation == turn.storage_incarnation
+        row = await asyncio.to_thread(TimelineDecision.objects.get, pk=row.pk)
+        assert row.status == 'accepted' and row.applied_at is not None
+        assert row.storage_incarnation == turn.storage_incarnation
+        assert row.history_epoch == turn.history_epoch
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('foreign', ['incarnation', 'epoch', 'journal', 'newer'])
+def test_unknown_ending_never_binds_known_foreign_scope(bridge, live_session, foreign):
+    from tests.test_completion_integration import drain
+    from twicc.agent.completion_types import NativeMessageRef
+
+    manager, agent = bridge
+    f = live_session
+    f.append(f.message('last', 'Current final'), capture=False)
+    f.session.refresh_from_db()
+    agent.session_id, agent.project_id = f.session.pk, f.session.project_id
+    agent.provider = manager.provider = Provider(f.provider)
+    agent.process_run.session_id, agent.process_run.provider = f.session.pk, f.provider
+    agent.process_run.save(update_fields=['session_id', 'provider'])
+    manager._agents = {f.session.pk: agent}
+    agent._completion_storage_incarnation = str(uuid4()) if foreign == 'incarnation' else None
+    agent._completion_history_epoch = f.session.history_epoch + 1 if foreign == 'epoch' else None
+    agent._completion_capture_ending_evidence = evidence
+    agent._completion_shells_are_current = lambda context: True
+
+    async def scenario():
+        open_candidate(manager, agent)
+        native = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item', 'last',
+            None if f.provider == 'claude_code' else 'native-turn')
+        agent.completion_controller.provider_ended(0, final_ref=native)
+        ticket = agent.completion_controller.candidate()
+        if foreign in ('journal', 'newer'):
+            await manager._persist_completion(agent, agent.completion_controller.snapshot())
+            await drain(agent)
+            await asyncio.to_thread(lambda: LogicalTurn.objects.filter(pk=ticket.turn_id).update(
+                **({'history_epoch': 99} if foreign == 'journal' else {'revision': ticket.revision + 1})))
+        await manager._confirm_completion(agent, ticket)
+        await drain(agent)
+        row = await asyncio.to_thread(lambda: TimelineDecision.objects.get(kind='ending'))
+        if foreign == 'newer':
+            assert agent._completion_pending_ending is None
+        elif foreign == 'incarnation':
+            assert row.storage_incarnation != f.session.storage_incarnation
+        elif foreign == 'epoch':
+            assert row.history_epoch != f.session.history_epoch
+        assert not await manager.apply_ending_decision(agent, str(row.pk), classification=Classification('YES', 'foreign'))
+        await drain(agent)
+        row = await asyncio.to_thread(TimelineDecision.objects.get, pk=row.pk)
+        assert row.status == 'canceled' and not row.force_pending
+        assert agent._completion_pending_ending is None
+        assert agent.completion_controller.is_open
+        assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists())
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('journal_state', ['newer', 'ended', 'normal'])
+def test_invalidated_claim_preserves_newer_and_terminal_journals(bridge, journal_state):
+    from tests.test_completion_integration import drain
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.core.services import timeline_decisions as decisions
+    from twicc.core.services.logical_turns import store_turn_snapshot
+
+    async def scenario():
+        manager, agent = bridge
+        open_candidate(manager, agent)
+        agent.completion_controller.provider_ended(0, final_ref=NativeMessageRef('codex_item', 'late', 'native'))
+        ticket = agent.completion_controller.candidate()
+        agent._completion_capture_ending_evidence = evidence
+        agent._completion_shells_are_current = lambda context: True
+        await manager._confirm_completion(agent, ticket)
+        await drain(agent)
+        context = agent._completion_pending_ending
+        old = agent._completion_claim_ending(context, reason='user_input')
+        if journal_state == 'newer':
+            await asyncio.to_thread(store_turn_snapshot, old._replace(outcome=None), closed_at=None)
+        else:
+            snapshot = old._replace(outcome=journal_state)
+            assert await manager._persist_completion_admitted(agent, snapshot, state=AgentState.ASSISTANT_TURN)
+        before = await asyncio.to_thread(lambda: LogicalTurn.objects.filter(pk=ticket.turn_id).values().get())
+        events = await asyncio.to_thread(lambda: list(TimelineEvent.objects.values()))
+        await asyncio.to_thread(lambda: Session.objects.filter(pk=agent.session_id).update(history_epoch=2))
+        await asyncio.to_thread(decisions.invalidate_semantic_decisions, session_id=agent.session_id)
+        assert not await manager._retry_completion(agent, old)
+        await drain(agent)
+        assert ticket.turn_id not in agent._completion_pending_publications
+        after = await asyncio.to_thread(lambda: LogicalTurn.objects.filter(pk=ticket.turn_id).values().get())
+        assert after == before
+        assert await asyncio.to_thread(lambda: list(TimelineEvent.objects.values())) == events
+        manager._broadcast_info.assert_not_awaited()
+    asyncio.run(scenario())
+
+
+def test_source_binding_preserves_root_cancellation_cleanup(bridge, live_session):
+    from tests.test_completion_integration import drain
+    from twicc.agent.base_manager import run_under_db_write_lock
+    from twicc.agent.completion_types import NativeMessageRef
+
+    manager, agent = bridge
+    f = live_session
+    f.append(f.message('last', 'Captured final'), capture=False)
+    agent.session_id, agent.project_id = f.session.pk, f.session.project_id
+    agent.provider = manager.provider = Provider(f.provider)
+    agent.process_run.session_id, agent.process_run.provider = f.session.pk, f.provider
+    agent.process_run.save(update_fields=['session_id', 'provider'])
+    manager._agents = {f.session.pk: agent}
+    agent._completion_storage_incarnation = agent._completion_history_epoch = None
+    agent._completion_capture_ending_evidence = evidence
+    agent._completion_shells_are_current = lambda context: True
+
+    async def scenario():
+        open_candidate(manager, agent)
+        native = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item', 'last',
+            None if f.provider == 'claude_code' else 'native-turn')
+        agent.completion_controller.provider_ended(0, final_ref=native)
+        ticket = agent.completion_controller.candidate()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def blocked(factory, **kwargs):
+            entered.set()
+            await release.wait()
+            return await run_under_db_write_lock(factory, **kwargs)
+
+        with patch('twicc.agent.base_manager.run_under_db_write_lock', side_effect=blocked):
+            confirmation = asyncio.create_task(manager._confirm_completion(agent, ticket))
+            await entered.wait()
+            agent._completion_activity()
+            release.set()
+            await confirmation
+            await drain(agent)
+        assert agent._completion_pending_ending is None
+        assert ticket.turn_id not in agent._completion_endings
+        row = await asyncio.to_thread(lambda: TimelineDecision.objects.get(kind='ending'))
+        assert (row.status, row.reason) == ('canceled', 'root_activity')
+        assert agent.completion_controller.is_open
+    asyncio.run(scenario())
+
+
 def test_failed_delivery_does_not_reopen_claimed_old_turn(bridge):
     async def scenario():
         manager, agent = bridge

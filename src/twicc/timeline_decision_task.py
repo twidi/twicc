@@ -6,6 +6,7 @@ publication lock. The deadline path never queues behind inference capacity.
 
 import asyncio
 import logging
+from collections import OrderedDict
 from contextlib import suppress
 
 from django.db import transaction
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 WORKERS = 4
 BATCH_SIZE = 100
 RETRY_SECONDS = 5
+RESULT_CACHE_LIMIT = 256
 
 
 async def _admitted(function, *args, **kwargs):
@@ -150,7 +152,7 @@ class DecisionRuntime:
         self.calls = {}
         self.occupied = set()
         self.callbacks = {}
-        self.seen_results = set()
+        self.seen_results = OrderedDict()
         self.effect_cursor = None
         self.effects_pending = False
         self.deadline_retries = {}
@@ -170,8 +172,20 @@ class DecisionRuntime:
         # The callback targets inference children only. An accepted ending also
         # invokes it while its worker is applying the admitted publication.
         if agent not in self.callbacks:
-            self.callbacks[agent] = agent._completion_cancel_inference
+            self.callbacks[agent] = (agent._completion_cancel_inference, 1)
             agent._completion_cancel_inference = self.cancel_call
+        else:
+            previous, owners = self.callbacks[agent]
+            self.callbacks[agent] = (previous, owners + 1)
+
+    def _release(self, agent):
+        previous, owners = self.callbacks[agent]
+        if owners > 1:
+            self.callbacks[agent] = (previous, owners - 1)
+            return
+        self.callbacks.pop(agent)
+        if agent._completion_cancel_inference == self.cancel_call:
+            agent._completion_cancel_inference = previous
 
     async def apply(self, row, *, classification=None, route=None, fallback=None):
         ignored = False
@@ -181,8 +195,11 @@ class DecisionRuntime:
                 manager, agent = live
                 self._bind(agent)
                 context = agent._completion_pending_ending
-                changed = await manager.apply_ending_decision(agent, str(row.pk), classification=classification,
-                    effective_route=route, fallback_reason=fallback)
+                try:
+                    changed = await manager.apply_ending_decision(agent, str(row.pk), classification=classification,
+                        effective_route=route, fallback_reason=fallback)
+                finally:
+                    self._release(agent)
                 # A normal NO defers the same open controller without a local
                 # cancellation/claim. All guard winners retain their local
                 # resolution or change that snapshot. No lookup is for logging.
@@ -198,7 +215,9 @@ class DecisionRuntime:
             changed = await _admitted(_message_result, row, classification, route, fallback)
             ignored = not changed
         if classification is not None and str(row.pk) not in self.seen_results:
-            self.seen_results.add(str(row.pk))
+            self.seen_results[str(row.pk)] = None
+            while len(self.seen_results) > RESULT_CACHE_LIMIT:
+                self.seen_results.popitem(last=False)
             if ignored:
                 await asyncio.to_thread(_ignored, row, classification.verdict, route)
         return changed
@@ -213,13 +232,15 @@ class DecisionRuntime:
 
     async def worker(self, row):
         key = str(row.pk)
+        agent = None
         try:
             if row.kind == 'ending':
                 live = _live_ending(row)
                 if live is None:
                     await self.apply(row, fallback='stale_candidate')
                     return
-                self._bind(live[1])
+                agent = live[1]
+                self._bind(agent)
                 # Local activity can win before callback registration or insert.
                 if _live_ending(row) is None:
                     return
@@ -248,6 +269,8 @@ class DecisionRuntime:
             with suppress(Exception):
                 await self.apply(row, fallback='generation_failed')
         finally:
+            if agent is not None:
+                self._release(agent)
             self.calls.pop(key, None)
             self.workers.pop(key, None)
             self.occupied.discard((row.session_id, row.kind))
@@ -333,9 +356,8 @@ class DecisionRuntime:
         for worker in tuple(self.workers.values()):
             worker.cancel()
         await _join_cleanup(asyncio.gather(*tuple(self.workers.values()), return_exceptions=True))
-        for agent, previous in self.callbacks.items():
-            if agent._completion_cancel_inference == self.cancel_call:
-                agent._completion_cancel_inference = previous
+        # Every active callback owner releases in its own finally block.
+        # No completed agent or saved bound callback remains in this runtime.
         # Owned SDK cleanup can exceed response deadlines. A canceled drain
         # retains ownership and must finish before the inference loop closes.
         await _join_cleanup(asyncio.create_task(drain_classifier_calls()))

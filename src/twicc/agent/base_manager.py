@@ -882,8 +882,7 @@ class BaseAgentManager:
                 if earlier.ordinal < snapshot.ordinal:
                     if not await self._persist_completion_admitted(agent, earlier, state=agent.state):
                         return False
-                    agent._completion_pending_publications.pop(earlier.turn_id, None)
-                    agent._completion_pending_snapshots.pop(earlier.turn_id, None)
+                    self._release_completion_publication(agent, earlier.turn_id)
         try:
             ending = agent._completion_endings.get(snapshot.turn_id) if snapshot.outcome == "normal" else None
             message_refs = ending.payload["boundary_refs"] if ending else agent._timeline_refs_for_turn(snapshot)
@@ -963,6 +962,18 @@ class BaseAgentManager:
         with self._completion_transaction(agent):
             if ending is not None:
                 self._admit_ending_admitted(agent, ending, apply_claim=False)
+                # Admission can create and source-bind the captured open turn.
+                # Reuse that journal instead of reopening its old nullable scope.
+                needs_open = snapshot.turn_id not in agent._completion_opened_ids
+                opened_at, source_floor, incarnation, epoch = agent._completion_openings[snapshot.turn_id]
+                from twicc.core.services.timeline_decisions import invalidate_semantic_decisions
+                from twicc.core.models import TimelineDecision
+
+                invalidate_semantic_decisions(session_id=agent.session_id)
+                decision = TimelineDecision.objects.get(pk=ending.id)
+                if decision.status == "invalidated" and decision.reason == "source_changed":
+                    self._settle_invalidated_completion_admitted(agent, snapshot, ending, decision, inputs)
+                    return True
             if needs_open:
                 open_logical_turn(
                     turn_id=snapshot.turn_id, session_id=agent.session_id, provider=agent.provider.value,
@@ -1056,6 +1067,32 @@ class BaseAgentManager:
         )
         return stored
 
+    def _settle_invalidated_completion_admitted(self, agent, snapshot, ending, decision, inputs):
+        """Release an obsolete local claim through the existing exceptional journal path."""
+        from twicc.agent.timeline_hooks import record_logical_turn_boundary
+        from twicc.core.models import TimelineEvent, TimelineKind
+        from twicc.core.services.logical_turns import bind_turn_input, store_turn_snapshot
+        from twicc.core.services.timeline_decisions import _matching_open_turn
+
+        # Never overwrite a newer/terminal journal or an already published
+        # boundary. The old source scope and input ownership remain immutable.
+        turn = _matching_open_turn(decision)
+        key = f"turn:{snapshot.turn_id}:{TimelineKind.TURN_ENDED}"
+        if turn is not None and not TimelineEvent.objects.filter(session_id=agent.session_id, dedupe_key=key).exists():
+            for token, cursor, status in inputs:
+                bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
+            exceptional = snapshot._replace(outcome="ended")
+            if store_turn_snapshot(exceptional, closed_at=ending.occurred_at):
+                event = record_logical_turn_boundary(agent=agent, snapshot=exceptional, kind=TimelineKind.TURN_ENDED,
+                    occurred_at=ending.occurred_at, background_work=ending.payload.get("background_work"))
+                if event is None:
+                    raise RuntimeError("Invalidated logical turn ending was not persisted")
+            agent._completion_durable_inputs.update(
+                (token, CompletionInput(snapshot.turn_id, cursor, status)) for token, cursor, status in inputs)
+        # This is a successful terminal settlement, never a normal completion.
+        # The caller removes queue ownership after the transaction commits.
+        agent._completion_ending_results[ending.id] = EndingResolution("invalidated", "source_changed")
+
     def _completion_process_is_current(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
         """Recheck live ownership immediately before a completion ProcessRun write."""
         controller = agent.completion_controller
@@ -1079,7 +1116,8 @@ class BaseAgentManager:
                 agent._completion_publication_task = task
                 try:
                     status = await run_under_db_write_lock(lambda: asyncio.to_thread(self._admit_ending_admitted, agent, context))
-                    if status == "canceled" and agent._completion_pending_ending is context:
+                    pending = agent._completion_pending_ending
+                    if status == "canceled" and pending is not None and pending.id == context.id:
                         agent._completion_cancel_pending_ending("stale_snapshot")
                         agent.completion_controller.defer_due(candidate, asyncio.get_running_loop().time())
                 finally:
@@ -1100,6 +1138,12 @@ class BaseAgentManager:
 
         with self._completion_transaction(agent):
             if TimelineDecision.objects.filter(pk=context.id).exists():
+                context = self._bind_ending_source_admitted(agent, context)
+                from twicc.core.services.timeline_messages import _ensure_decision_source
+
+                row = TimelineDecision.objects.get(pk=context.id)
+                if row.status in ("pending", "running", "accepted"):
+                    _ensure_decision_source(row)
                 result = agent._completion_ending_results.get(context.id)
                 if result and result.status == "canceled":
                     cancel_decision(decision_id=context.id, reason=result.reason)
@@ -1113,6 +1157,7 @@ class BaseAgentManager:
                 and not LogicalTurn.objects.filter(pk=context.snapshot.turn_id).exists())
             self._store_completion_snapshot_admitted(agent, context.snapshot,
                 input_context=context.payload["input_context"])
+            context = self._bind_ending_source_admitted(agent, context)
             request = DecisionRequest(context.id, "ending", agent.session_id, context.scope, context.payload,
                 context.occurred_at + timedelta(seconds=45), "provider")
             decision_id = admit_decision(request,
@@ -1130,6 +1175,43 @@ class BaseAgentManager:
                         state=AgentState.USER_TURN if live == closed else AgentState.ASSISTANT_TURN)
             return TimelineDecision.objects.get(pk=context.id).status
 
+    def _bind_ending_source_admitted(self, agent: BaseAgent, context: EndingContext) -> EndingContext:
+        """Bind unknown live scope only through exact native proof and its journal."""
+        from twicc.agent.completion_types import NativeMessageRef
+        from twicc.agent.semantic_types import SourceScope
+        from twicc.core.models import Session
+        from twicc.core.services.logical_turns import bind_turn_source
+        from twicc.core.services.timeline_messages import _resolve_groups
+
+        if context.scope.storage_incarnation is not None and context.scope.history_epoch is not None:
+            return context
+        session = Session.objects.filter(pk=agent.session_id, provider=context.scope.provider, stale=False).first()
+        if (session is None or not session.storage_incarnation or session.history_epoch is None
+                or context.scope.storage_incarnation not in (None, session.storage_incarnation)
+                or context.scope.history_epoch not in (None, session.history_epoch)):
+            return context
+        refs = [NativeMessageRef(**ref) for ref in context.payload["message_refs"]]
+        groups = _resolve_groups(session, refs, floor=context.payload["source_floor"],
+            ceiling=context.payload.get("source_ceiling")) if refs else []
+        observed = next((ref for group in groups for _, _, aliases in group for ref in aliases if ref in refs), None)
+        if observed is None or not bind_turn_source(
+            turn_id=context.snapshot.turn_id, session_id=agent.session_id, provider=session.provider,
+            storage_incarnation=session.storage_incarnation, history_epoch=session.history_epoch, observed_ref=observed,
+        ):
+            return context
+        bound = context._replace(scope=SourceScope(session.provider, session.storage_incarnation, session.history_epoch))
+        if agent._completion_pending_ending is context:
+            agent._completion_pending_ending = bound
+        if agent._completion_endings.get(context.snapshot.turn_id) is context:
+            agent._completion_endings[context.snapshot.turn_id] = bound
+        opening = agent._completion_openings.get(context.snapshot.turn_id)
+        if opening is not None:
+            agent._completion_openings[context.snapshot.turn_id] = (*opening[:2], *bound.scope[1:])
+        if (agent._completion_storage_incarnation in (None, session.storage_incarnation)
+                and agent._completion_history_epoch in (None, session.history_epoch)):
+            agent._completion_storage_incarnation, agent._completion_history_epoch = bound.scope[1:]
+        return bound
+
     async def _cancel_ending(self, agent: BaseAgent, context: EndingContext, reason: str) -> None:
         if agent.ephemeral:
             return
@@ -1142,7 +1224,8 @@ class BaseAgentManager:
                 cancel_decision(decision_id=context.id, reason=reason)
 
         await run_under_db_write_lock(lambda: asyncio.to_thread(cancel))
-        if (agent._completion_endings.get(context.snapshot.turn_id) is context
+        ending = agent._completion_endings.get(context.snapshot.turn_id)
+        if (ending is not None and ending.id == context.id
                 and agent._completion_ending_results.get(context.id, EndingResolution("", "")).status == "canceled"):
             agent._completion_endings.pop(context.snapshot.turn_id, None)
             agent._completion_ending_results.pop(context.id, None)
@@ -1186,7 +1269,8 @@ class BaseAgentManager:
                     return
                 # Recheck every local fact after source proof. No await separates
                 # this check, the deadline decision, and the controller claim.
-                if current() is not context or row.status not in ("pending", "running", "accepted"):
+                context = current()
+                if context is None or row.status not in ("pending", "running", "accepted"):
                     return
                 now = timezone.now()
                 reason = "timeout" if now >= row.expires_at else fallback_reason
@@ -1242,6 +1326,14 @@ class BaseAgentManager:
             agent, lambda: agent._completion_pending_publications.get(snapshot.turn_id),
         )
 
+    def _release_completion_publication(self, agent: BaseAgent, turn_id: str) -> EndingResolution | None:
+        """Release all local publication ownership after its admitted effects settle."""
+        agent._completion_pending_publications.pop(turn_id, None)
+        agent._completion_published_ids.discard(turn_id)
+        agent._completion_pending_snapshots.pop(turn_id, None)
+        ending = agent._completion_endings.pop(turn_id, None)
+        return agent._completion_ending_results.pop(ending.id, None) if ending is not None else None
+
     async def _commit_completion(
         self, agent: BaseAgent, decide: Callable[[], CompletionSnapshot | None],
     ) -> bool:
@@ -1269,9 +1361,7 @@ class BaseAgentManager:
                         continue
                     if not await self._persist_completion_admitted(agent, earlier, state=AgentState.ASSISTANT_TURN):
                         return False
-                    agent._completion_pending_publications.pop(earlier.turn_id, None)
-                    agent._completion_published_ids.discard(earlier.turn_id)
-                    agent._completion_pending_snapshots.pop(earlier.turn_id, None)
+                    self._release_completion_publication(agent, earlier.turn_id)
                 state = (AgentState.USER_TURN if agent.completion_controller.snapshot() == snapshot
                          else agent.state)
                 return await self._persist_completion_admitted(agent, snapshot, state=state)
@@ -1296,12 +1386,12 @@ class BaseAgentManager:
             if not committed:
                 agent._completion_schedule_retry()
                 return False
-            agent._completion_pending_publications.pop(snapshot.turn_id, None)
-            agent._completion_published_ids.discard(snapshot.turn_id)
-            agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
-            ending = agent._completion_endings.pop(snapshot.turn_id, None)
-            if ending is not None:
-                agent._completion_ending_results.pop(ending.id, None)
+            result = self._release_completion_publication(agent, snapshot.turn_id)
+            if result is not None and result.status == "invalidated":
+                if agent.completion_controller.snapshot() == snapshot:
+                    agent._completion_last_queued = snapshot
+                agent._completion_refresh()
+                return False
             if agent.completion_controller.snapshot() != snapshot:
                 agent._completion_refresh()
                 return False
@@ -1815,9 +1905,7 @@ class BaseAgentManager:
                 agent, state, message_refs=agent._timeline_refs_for_turn(latest),
             )
         for snapshot in (*pending, latest):
-            agent._completion_pending_publications.pop(snapshot.turn_id, None)
-            agent._completion_published_ids.discard(snapshot.turn_id)
-            agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
+            self._release_completion_publication(agent, snapshot.turn_id)
         agent._completion_last_queued = latest
 
     def _persist_process_run_transition_admitted(
