@@ -96,7 +96,10 @@ def record_logical_turn_boundary(*, agent, snapshot: CompletionSnapshot, kind: s
 
 
 def _managed_specs(agent, specs):
-    if getattr(agent, "_completion_enabled", False):
+    # Ownership starts at manager registration, before the first provider fact.
+    # Send-time state changes must not create a second, legacy turn boundary.
+    if (getattr(agent, "_completion_enabled", False)
+            or getattr(agent, "_completion_persist_callback", None) is not None):
         return [spec for spec in specs if spec.kind not in (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED)]
     return specs
 

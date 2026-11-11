@@ -115,6 +115,59 @@ def waiting(f, *, registry=True, background=False):
                                    want_text=True, wait_background=background)
 
 
+@pytest.mark.parametrize("initial_state", ["starting", "user_turn"])
+def test_send_before_provider_activity_records_one_turn(integrated, monkeypatch, initial_state):
+    """The send-time state change must not compete with journal boundaries."""
+    f = integrated
+    ProcessRun.objects.filter(pk=f.agent.process_run.pk).update(state=initial_state)
+    f.agent.process_run.state = initial_state
+
+    async def scenario():
+        clock = [0.0]
+        monkeypatch.setattr(asyncio.get_running_loop(), "time", lambda: clock[0])
+        # Claude start()/send_message() publishes this before reading SDK traffic.
+        # The manager has already connected the completion callbacks.
+        f.agent._set_state(AgentState.ASSISTANT_TURN)
+        await f.agent._notify_state_change()
+        assert await asyncio.to_thread(lambda: ProcessRun.objects.get(
+            pk=f.agent.process_run.pk).state) == "assistant_turn"
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(
+            kind=TimelineKind.TURN_STARTED).count()) == 0
+
+        await physical(f, "done", "DONE")
+        ticket = f.agent.completion_controller.candidate()
+        clock[0] = ticket.deadline
+        await f.manager._confirm_completion(f.agent, ticket)
+        await drain(f.agent)
+        assert f.agent.state == AgentState.USER_TURN
+        assert await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
+            kind__in=[TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED],
+        ).order_by("id").values_list("kind", flat=True))) == ["turn.started", "turn.ended"]
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 1
+
+    asyncio.run(scenario())
+
+
+def test_stop_before_provider_activity_records_no_turn(integrated):
+    f = integrated
+    ProcessRun.objects.filter(pk=f.agent.process_run.pk).update(state="starting")
+    f.agent.process_run.state = "starting"
+
+    async def scenario():
+        f.agent._set_state(AgentState.ASSISTANT_TURN)
+        await f.agent._notify_state_change()
+        f.agent._set_state(AgentState.DEAD)
+        await f.manager._persist_process_run_transition(f.agent, AgentState.DEAD)
+        assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(
+            kind__in=[TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED],
+        ).exists())
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 0
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(
+            kind=TimelineKind.PROCESS_ENDED).count()) == 1
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("answer_fixture", ["claude_code"], indirect=True)
 @pytest.mark.parametrize("request_at,stream_at", [(.025183, 3.190), (.020158, 1.878), (.020960, .674)])
 def test_claude_requesting_prevents_early_completion(integrated, monkeypatch, request_at, stream_at):
