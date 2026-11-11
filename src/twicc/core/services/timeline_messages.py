@@ -466,7 +466,8 @@ def recover_referenced_messages(session_id: str, *, input_origins: Sequence[dict
 
 def _eligible_group(session, group, verified=()):
     """Return complete assistant source facts using the existing terminal rules."""
-    if not group or group[0][0].kind != ItemKind.ASSISTANT_MESSAGE:
+    # Claude can store thinking before text in the same native message.
+    if not any(item.kind == ItemKind.ASSISTANT_MESSAGE for item, _, _ in group):
         return None
     helpers = get_provider_helpers(session.provider)
     verdicts = [helpers.is_final_assistant_message(parsed) for _, parsed, _ in group]

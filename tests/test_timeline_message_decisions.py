@@ -104,6 +104,71 @@ def test_forcing_does_not_publish_all_progress_finals(live_session):
     assert f.texts() == (['final'] if f.provider == 'claude_code' else ['progress', 'final'])
 
 
+@pytest.mark.parametrize('thinking_final', [None, True])
+def test_thinking_prefix_allows_message_classification_and_publication(live_session, thinking_final):
+    from twicc.timeline_decision_task import _source_ready
+
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude split thinking block')
+    thinking = f.message('thinking', '', message_id='answer-group', final=thinking_final)
+    thinking['message']['content'] = [{'type': 'thinking', 'thinking': 'private reasoning'}]
+    f.append(thinking)
+    assert not TimelineDecision.objects.filter(kind='message').exists()
+    f.append(f.message('answer', 'Useful answer', message_id='answer-group'))
+    assert f.session.items.get(line_num=1).kind == 'content_items'
+    row = TimelineDecision.objects.get(kind='message')
+    assert row.payload['target'] == {'text': 'Useful answer'}
+    assert _source_ready(row)
+    assert f.texts() == []
+    assert decide(row)
+    assert f.texts() == ['Useful answer']
+
+    f.append(f.message('next', 'Next answer'))
+    next_row = TimelineDecision.objects.get(payload__target__text='Next answer')
+    assert next_row.payload['previous_messages'] == [
+        {'role': 'assistant', 'text': 'Useful answer', 'line': 1}]
+
+
+@pytest.mark.parametrize('late_text', [False, True])
+def test_final_with_thinking_prefix_does_not_force_rejected_progress(live_session, late_text):
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude split thinking block')
+    progress = f.message('progress', 'Review 5 is running')
+    progress['timestamp'] = (timezone.now() - timedelta(minutes=9)).isoformat()
+    f.append(progress, since=f.boundary - timedelta(minutes=10))
+    progress_row = TimelineDecision.objects.get(kind='message')
+    assert decide(progress_row, 'NO') is None
+
+    thinking = f.message('thinking', '', message_id='final-group')
+    thinking['message']['content'] = [{'type': 'thinking', 'thinking': 'private reasoning'}]
+    f.append(thinking)
+    if late_text:
+        e = ending(f, [ref(f, 'progress'), ref(f, 'final')])
+        assert not timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
+        assert f.texts() == []
+    final = f.message('final', 'Review 5 passes. Work is complete.', message_id='final-group')
+    f.append(final)
+    if not late_text:
+        final_row = TimelineDecision.objects.get(payload__target__text='Review 5 passes. Work is complete.')
+        assert decide(final_row, 'NO') is None
+        e = ending(f, [ref(f, 'progress'), ref(f, 'final')])
+    assert timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
+
+    assert f.texts() == ['Review 5 passes. Work is complete.']
+    event = f.events()[0]
+    assert event.occurred_at.isoformat() == final['timestamp']
+    assert {source['native_id'] for source in event.data['source_refs']} == {
+        'thinking', 'final-group', 'final'}
+    progress_row.refresh_from_db()
+    assert (progress_row.status, progress_row.forced, progress_row.published_event_id) == ('rejected', False, None)
+    final_row = TimelineDecision.objects.get(payload__target__text='Review 5 passes. Work is complete.')
+    assert final_row.forced and final_row.published_event_id == event.pk
+    e.refresh_from_db()
+    assert not e.force_pending
+
+
 def test_new_turn_message_is_never_forced_for_old_ending(live_session):
     f = live_session
     e = ending(f, [ref(f, 'missing')])
