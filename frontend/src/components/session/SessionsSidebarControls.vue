@@ -23,7 +23,6 @@ defineProps({
     multiSelectActive: { type: Boolean, default: false },
     showActiveAcrossFilters: { type: Boolean, default: false },
     trimmedSearchQuery: { type: String, default: '' },
-    isTouchDevice: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -107,10 +106,7 @@ defineExpose({ focus })
             >
                 {{ $t('session.list.showProviderIcons') }}
             </wa-dropdown-item>
-            <!-- Multi-select needs Shift/Ctrl modifier clicks, which
-                 have no touch equivalent yet — hide it on touch devices. -->
             <wa-dropdown-item
-                v-if="!isTouchDevice"
                 type="checkbox"
                 value="multi-select"
                 :checked="multiSelectActive"

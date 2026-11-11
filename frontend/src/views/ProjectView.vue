@@ -2050,7 +2050,6 @@ function openPeerInbox() {
                     :multi-select-active="selectionStore.active"
                     :show-active-across-filters="showActiveAcrossFilters"
                     :trimmed-search-query="trimmedSearchQuery"
-                    :is-touch-device="settingsStore.isTouchDevice"
                     @option-select="handleSessionOptionsSelect"
                     @search-keydown="handleSearchKeydown"
                 />
