@@ -94,6 +94,9 @@ uv run ./devctl.py kill-tmux   # worktrees only
 ### Worktrees
 
 - Each worktree has its own data dir: `.env` (ports), `.devctl/`, `db/`, `logs/`, JSON data files.
+- **Never share dependencies or build files through links.** Never create symbolic links or hard-linked copies of `node_modules` (at any depth), `.venv`, build outputs or caches between checkouts or verification directories. Each checkout owns these files. Use independent installations or independent copies, subject to the package-installation rules above.
+- **Python commands can trigger frontend installation.** `uv run` can build TwiCC through `hatch_build.py`, which runs `npm ci`. That command empties `node_modules` before reinstalling. A link can therefore delete another checkout's dependencies even when the command only runs Python tests.
+- **No other ad hoc links for shared files or directories.** The existing exceptions are `artifacts/` and `scratch/`, linked to the main data dir by `devctl.py` (`SHARED_LINK_DIRS`). Let `devctl.py` manage those links. Do not extend these exceptions.
 - **Prefix every Bash command with `cd <worktree> && `.** A wrong cwd on `devctl stop/restart` or `migrate` hits the main servers and data.
 - Give the user the localhost URLs that devctl prints.
 - `start --empty-db`: fresh DB. `start --fresh-providers`: fresh DB plus the worktree's own empty provider homes. Otherwise the worktree shares the provider homes of its `.env` (by default the real `~/.claude` / `~/.codex`).
