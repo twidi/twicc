@@ -333,8 +333,8 @@ def test_live_indexing_uses_verified_replacement_finals_during_open_interval(bri
         replacement = asyncio.create_task(asyncio.Event().wait())
         agent._turn_task = replacement
         try:
-            await run(agent, [event("item/completed", thread_id=agent.session_id, item=dict(
-                type="agentMessage", id=final.native_id, phase=None, text="candidate", delivery=None)),
+            await run(agent, [event("item/completed", thread_id=agent.session_id, item={
+                "type": "agentMessage", "id": final.native_id, "phase": None, "text": "candidate", "delivery": None}),
                 event("turn/completed", thread_id=agent.session_id, status=status)])
             await manager._persist_process_run_transition(agent, AgentState.ASSISTANT_TURN)
             await manager._persist_completion(agent, agent.completion_controller.snapshot())

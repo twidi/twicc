@@ -201,7 +201,7 @@ def test_public_completion_sequence_waits_for_confirmation_and_exact_answer(brid
         agent._background_work_callback = manager._persist_background_work
         shell = {"subagents": 0, "shells": 1, "monitors": 0, "scheduled_wakeup_at": None, "goal": False}
         for work in (shell, {**shell, "shells": 2}, None):
-            agent.current_background_work = lambda: work
+            agent.current_background_work = lambda work=work: work
             await agent._publish_background_work()
             process = await asyncio.to_thread(ProcessRun.objects.get, pk=agent.process_run.pk)
             assert process.background_work_in_progress == work

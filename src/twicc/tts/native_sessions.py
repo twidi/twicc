@@ -12,7 +12,7 @@ from twicc.summaries import service as summaries
 from twicc.tts.native_protocol import parse_native_command
 from twicc.tts.service import SpeechError, open_speech
 from twicc.tts.streams import get_stream, release_stream, retain_stream
-from twicc.core.ui_messages import ui_message, ui_message_text
+from twicc.core.ui_messages import ui_message
 
 logger = logging.getLogger(__name__)
 DISCONNECT_TTL = 120.0

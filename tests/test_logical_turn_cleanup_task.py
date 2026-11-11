@@ -48,10 +48,9 @@ def test_batch_limit_and_transaction_rollback():
     now = timezone.now()
     for _ in range(3):
         turn(opened_at=now - timedelta(days=8))
-    with pytest.raises(RuntimeError):
-        with transaction.atomic():
-            assert purge_logical_turns(now=now, limit=2) == 2
-            raise RuntimeError("rollback")
+    with pytest.raises(RuntimeError), transaction.atomic():
+        assert purge_logical_turns(now=now, limit=2) == 2
+        raise RuntimeError("rollback")
     assert LogicalTurn.objects.count() == 3
     assert purge_logical_turns(now=now, limit=2) == 2
     assert LogicalTurn.objects.count() == 1

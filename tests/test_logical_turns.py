@@ -30,11 +30,11 @@ def journal_fixture():
         provider="codex", session_id=session.id, started_at=now, last_state_change_at=now,
     )
     turn_id, run_id = str(uuid4()), str(uuid4())
-    args = dict(
-        turn_id=turn_id, session_id=session.id, provider="codex", run_id=run_id,
-        process_run_id=process_run.pk, ordinal=1, source_floor=0,
-        storage_incarnation=session.storage_incarnation, history_epoch=session.history_epoch, opened_at=now,
-    )
+    args = {
+        "turn_id": turn_id, "session_id": session.id, "provider": "codex", "run_id": run_id,
+        "process_run_id": process_run.pk, "ordinal": 1, "source_floor": 0,
+        "storage_incarnation": session.storage_incarnation, "history_epoch": session.history_epoch, "opened_at": now,
+    }
     open_logical_turn(**args)
     final_ref = NativeMessageRef("codex_item", "answer", "native-turn")
     snapshot = CompletionSnapshot(turn_id, run_id, 1, 2, final_ref, (final_ref,), "normal")
@@ -184,8 +184,8 @@ def test_missing_scope_requires_matching_native_observation(journal_fixture):
                          "storage_incarnation": None, "history_epoch": None})
     snapshot = f.snapshot._replace(turn_id=turn_id, ordinal=2, outcome=None)
     assert store_turn_snapshot(snapshot, closed_at=None)
-    kwargs = dict(turn_id=turn_id, session_id=f.session.id, provider="codex",
-                  storage_incarnation=f.storage_incarnation, history_epoch=f.history_epoch)
+    kwargs = {"turn_id": turn_id, "session_id": f.session.id, "provider": "codex",
+              "storage_incarnation": f.storage_incarnation, "history_epoch": f.history_epoch}
     assert not bind_turn_source(**kwargs, observed_ref=NativeMessageRef("codex_item", "unrelated"))
     assert not bind_turn_source(**{**kwargs, "session_id": "other"}, observed_ref=snapshot.first_ref)
     assert not bind_turn_source(**{**kwargs, "history_epoch": 9}, observed_ref=snapshot.first_ref)

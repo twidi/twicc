@@ -329,9 +329,8 @@ def test_backlog_hint_does_not_decode_or_validate_stream(tmp_path):
 
 def test_context_error_cleans_prepared_file(tmp_path):
     path = compressed_file(tmp_path)
-    with pytest.raises(RuntimeError):
-        with rollout_sources.prepare_rollout(path):
-            raise RuntimeError("consumer failed")
+    with pytest.raises(RuntimeError), rollout_sources.prepare_rollout(path):
+        raise RuntimeError("consumer failed")
 
 
 def test_metadata_reads_only_bounded_prefix_of_large_source(tmp_path, monkeypatch):

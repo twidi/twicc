@@ -12,7 +12,7 @@ import tempfile
 import threading
 from collections.abc import Iterator
 from pathlib import Path
-from typing import BinaryIO, NamedTuple
+from typing import BinaryIO, NamedTuple, Self
 
 import orjson
 import zstandard
@@ -56,7 +56,7 @@ class PreparedRollout:
             self.read_path.unlink(missing_ok=True)
             self._temporary = False
 
-    def __enter__(self) -> PreparedRollout:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args) -> None:

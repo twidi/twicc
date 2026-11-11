@@ -42,7 +42,7 @@ from twicc.core.session_queries import (
 )
 from twicc.core.session_availability import all_unavailable_session_ids, arefuse_unavailable
 from twicc.core.text_filter import match_text_query
-from twicc.core.ui_messages import ui_error, ui_message
+from twicc.core.ui_messages import ui_error
 from twicc.core.services.project_mutation import clean_project_agent_defaults
 from twicc.core.services import timeline_feed
 from twicc.http_streams import AsyncFileResponse, prepare_download_response

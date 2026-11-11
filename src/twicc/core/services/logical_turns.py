@@ -24,11 +24,11 @@ def open_logical_turn(
     """Allocate session order under writer admission, before a Session row exists if needed."""
     if ordinal < 1 or source_floor < 0:
         raise ValueError("Invalid logical turn ordinal or source floor")
-    values = dict(
-        session_id=session_id, provider=provider, run_id=UUID(run_id), process_run_id=process_run_id,
-        ordinal=ordinal, source_floor=source_floor, storage_incarnation=storage_incarnation,
-        history_epoch=history_epoch, opened_at=opened_at,
-    )
+    values = {
+        "session_id": session_id, "provider": provider, "run_id": UUID(run_id), "process_run_id": process_run_id,
+        "ordinal": ordinal, "source_floor": source_floor, "storage_incarnation": storage_incarnation,
+        "history_epoch": history_epoch, "opened_at": opened_at,
+    }
     with transaction.atomic():
         existing = LogicalTurn.objects.filter(pk=turn_id).first()
         if existing is not None:
@@ -68,7 +68,7 @@ def bind_turn_input(*, token: str, turn_id: str, admission_cursor: int, status: 
         raise ValueError("Invalid input admission")
     with transaction.atomic():
         item, created = LogicalTurnInput.objects.get_or_create(
-            id=token, defaults=dict(turn_id=turn_id, admission_cursor=admission_cursor, status=status),
+            id=token, defaults={"turn_id": turn_id, "admission_cursor": admission_cursor, "status": status},
         )
         if created:
             return

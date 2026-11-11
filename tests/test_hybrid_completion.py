@@ -238,8 +238,8 @@ def test_completion_transport_import_does_not_load_agent_runtime(tmp_path):
     import subprocess
     import sys
 
-    result = subprocess.run([sys.executable, "-c", "import sys; import twicc.providers.live_sync; "
-        "assert 'twicc.agent' not in sys.modules; assert 'twicc.providers.db_writer' not in sys.modules"],
+    result = subprocess.run([sys.executable, "-c", ("import sys; import twicc.providers.live_sync; "
+        "assert 'twicc.agent' not in sys.modules; assert 'twicc.providers.db_writer' not in sys.modules")],
         cwd=tmp_path, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
 

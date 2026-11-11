@@ -478,9 +478,9 @@ def slice_query_count(provider: str, kind: str, tmp_path: Path, *, before_slice=
         before_slice(measured)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"{last}\n")
-    with commit_callbacks(execute=True) if commit_callbacks else nullcontext():
-        with CaptureQueriesContext(connection) as queries:
-            compute.sync_session_slice(measured, path, limits=LiveSyncLimits())
+    with (commit_callbacks(execute=True) if commit_callbacks else nullcontext(),
+          CaptureQueriesContext(connection) as queries):
+        compute.sync_session_slice(measured, path, limits=LiveSyncLimits())
     assert SessionItem.objects.filter(session_id=measured).count() == len(head) + 1
     statements = [query["sql"] for query in queries.captured_queries]
     return len(statements), statements

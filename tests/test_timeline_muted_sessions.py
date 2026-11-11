@@ -20,10 +20,10 @@ def test_muted_sessions_are_opt_in_on_all_pages(project, params):
     make_session(project, "shown")
     muted = [make_event(project=project, session_id="muted", at=index * 2) for index in range(3)]
     visible = [make_event(project=project, session_id="shown", at=index * 2 + 1) for index in range(3)]
-    assert not set(e.id for e in muted) & set(every_id({**params, "limit": 1}))
+    assert not {e.id for e in muted} & set(every_id({**params, "limit": 1}))
     expected = muted if params.get("session") else muted + visible
     assert set(every_id({**params, "include_muted": "1", "limit": 1})) == {e.id for e in expected}
-    assert not set(e.id for e in muted) & set(ids(call(**params, after_id=0).json()))
+    assert not {e.id for e in muted} & set(ids(call(**params, after_id=0).json()))
 
 
 def test_muted_opt_in_never_reveals_hidden_sessions(project):

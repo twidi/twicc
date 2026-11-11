@@ -37,13 +37,12 @@ def _collection_txn(token=None):
     if not is_telemetry_active():
         yield None
         return
-    with state_txn() as txn:
-        with _settings_lock:
-            if (txn.data.get('was_active') is False or not is_telemetry_active()
-                    or token is not None and token != _token(txn.data)):
-                yield None
-            else:
-                yield txn
+    with state_txn() as txn, _settings_lock:
+        if (txn.data.get('was_active') is False or not is_telemetry_active()
+                or token is not None and token != _token(txn.data)):
+            yield None
+        else:
+            yield txn
 
 
 def collection_token():

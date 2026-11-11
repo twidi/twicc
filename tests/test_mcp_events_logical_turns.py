@@ -7,7 +7,7 @@ from uuid import uuid4
 from django.utils import timezone
 import pytest
 
-from tests.test_mcp_events_turns import agent, env, opened, pending, stopped_ticks  # noqa: F401
+from tests.test_mcp_events_turns import agent, env, opened, pending, stopped_ticks
 from tests.test_mcp_events_payload import occurrence
 from tests.test_mcp_events_writer import apply
 from tests.test_wait_reply import api_error, managed_turn, native_assistant
@@ -19,6 +19,9 @@ from twicc.mcp.events.methods import SubscriptionSnapshot
 from twicc.mcp.events.runtime import EventsRuntime, LogicalProgressReset
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+# Export imported fixtures for pytest discovery.
+__all__ = ['agent', 'env', 'opened', 'pending', 'stopped_ticks']
 
 
 def reload_monitor(env):

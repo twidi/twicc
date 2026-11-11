@@ -116,7 +116,7 @@ def test_background_work_changes_while_idle_preserve_one_logical_turn_end(projec
     shell = {**WORK, "subagents": 0, "shells": 1}
     for snapshot in (shell, {**shell, "shells": 2}, None, None):
         agent._work = snapshot
-        run_with_direct_writes(lambda: manager._persist_background_work(agent, snapshot))
+        run_with_direct_writes(lambda snapshot=snapshot: manager._persist_background_work(agent, snapshot))
         agent.process_run.refresh_from_db()
         assert agent.process_run.background_work_in_progress == snapshot
         assert agent.process_run.last_state_change_at == changed_at

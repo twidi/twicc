@@ -36,8 +36,8 @@ def event(method, *, item=None, status="completed", turn_id="physical-1", thread
 
 
 def final(identity="answer", *, delivery=None, thread_id="completion-codex"):
-    return event("item/completed", item=dict(type="agentMessage", id=identity, text="answer",
-                                             phase="final_answer", delivery=delivery), thread_id=thread_id)
+    return event("item/completed", item={"type": "agentMessage", "id": identity, "text": "answer",
+                                         "phase": "final_answer", "delivery": delivery}, thread_id=thread_id)
 
 
 class Turn:
@@ -242,7 +242,7 @@ def test_plan_question_blocks_confirmation_and_stay_ends_immediately():
             agent._completion_awaiting_changed(False)
             return {"decision": "stay"}
         agent._await_pending_request = question
-        task = asyncio.create_task(run(agent, [final(), event("item/completed", item=dict(type="plan")),
+        task = asyncio.create_task(run(agent, [final(), event("item/completed", item={"type": "plan"}),
                                                event("turn/completed")]))
         await entered.wait()
         assert agent.completion_controller.candidate() is None
@@ -688,7 +688,7 @@ def test_empty_physical_final_retains_previous_relevant_final(earlier_answer):
         agent = make_agent()
         if earlier_answer:
             await run(agent, [final('earlier'), event('turn/completed')])
-        await run(agent, [event('item/completed', item=dict(type='agentMessage', id='empty', text='', phase='final_answer')),
+        await run(agent, [event('item/completed', item={'type': 'agentMessage', 'id': 'empty', 'text': '', 'phase': 'final_answer'}),
                           event('turn/completed')])
         refs = agent.completion_controller.snapshot().final_refs
         assert refs == ((NativeMessageRef('codex_item', 'earlier', 'physical-1'),) if earlier_answer else ())
@@ -720,8 +720,8 @@ def test_root_user_observation_reuses_reserved_client_alias():
         agent._completion_input_pending("token")
         reserved = NativeMessageRef("codex_client", "client")
         agent._timeline_reserve_input("token", reserved)
-        await agent._handle_stream_event(event("item/completed", item=dict(
-            type="userMessage", id="native", client_id="client", delivery=None)))
+        await agent._handle_stream_event(event("item/completed", item={
+            "type": "userMessage", "id": "native", "client_id": "client", "delivery": None}))
         assert agent._timeline_refs_for_turn(agent.completion_controller.snapshot()) == [reserved._asdict()]
         cleanup(agent)
     asyncio.run(scenario())
@@ -731,9 +731,9 @@ def test_root_user_observation_reuses_reserved_client_alias():
 def test_internal_user_observation_has_no_message_reference(text):
     async def scenario():
         agent = make_agent()
-        await agent._handle_stream_event(event("item/completed", item=dict(
-            type="userMessage", id="internal", delivery=None,
-            content=[SimpleNamespace(type="text", text=text)])))
+        await agent._handle_stream_event(event("item/completed", item={
+            "type": "userMessage", "id": "internal", "delivery": None,
+            "content": [SimpleNamespace(type="text", text=text)]}))
         assert agent._timeline_refs_for_turn(agent.completion_controller.snapshot()) == []
         cleanup(agent)
     asyncio.run(scenario())
@@ -745,8 +745,8 @@ def test_goal_end_verifies_candidate_only_after_completed_status(status, explici
     async def scenario():
         agent = make_agent()
         agent._codex = MagicMock()
-        answer = event("item/completed", item=dict(type="agentMessage", id="goal-candidate", text="answer",
-                       phase="final_answer" if explicit_final else None, delivery=None))
+        answer = event("item/completed", item={"type": "agentMessage", "id": "goal-candidate", "text": "answer",
+                       "phase": "final_answer" if explicit_final else None, "delivery": None})
         monitor = SimpleNamespace(stream=lambda: Turn([
             event("turn/started"), answer, event("turn/completed", status=status),
         ]).stream(), close=MagicMock())
@@ -771,8 +771,8 @@ def test_replaced_stream_end_verifies_candidate_only_after_completed_status(stat
         agent = make_agent()
         replacement = asyncio.create_task(asyncio.Event().wait())
         agent._turn_task = replacement
-        answer = event("item/completed", item=dict(type="agentMessage", id="replaced-candidate", text="answer",
-                       phase="final_answer" if explicit_final else None, delivery=None))
+        answer = event("item/completed", item={"type": "agentMessage", "id": "replaced-candidate", "text": "answer",
+                       "phase": "final_answer" if explicit_final else None, "delivery": None})
         try:
             await run(agent, [answer, event("turn/completed", status=status)])
             snapshot = agent.completion_controller.snapshot()
