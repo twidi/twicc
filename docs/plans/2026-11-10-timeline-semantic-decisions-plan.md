@@ -244,18 +244,18 @@ No successful status change may strand its effects until another provider event 
 The caller applies publication effects in the same admitted transaction, or explicitly schedules an idempotent retry.
 A DB failure is not an analysis failure and does not count as successful publication.
 
-- [ ] **Step 1:** Add failing tests `test_pending_is_not_public`, `test_scoped_identity_is_unique`, `test_force_beats_rejection`, and `test_late_result_cannot_reverse_fallback_or_cancel`.
+- [x] **Step 1:** Add failing tests `test_pending_is_not_public`, `test_scoped_identity_is_unique`, `test_force_beats_rejection`, and `test_late_result_cannot_reverse_fallback_or_cancel`.
 Assert no `TimelineEvent` or publication signal exists for pending/rejected candidates.
 Assert transaction rollback retains an unapplied obligation.
 Assert pending ending admission persists its exact captured open revision, or cancels against a newer durable revision.
 Assert the migration creates only the new table, with status/deadline and session/turn indexes.
 Add the Task 1 committed-resolution and rollback logging checks from Decision diagnostics.
-- [ ] **Step 2:** Run `uv run pytest tests/test_timeline_decisions.py -q`. Expected: missing-interface failures.
-- [ ] **Step 3:** Implement the model, migration, immutable types, and admitted compare-and-set mutations.
+- [x] **Step 2:** Run `uv run pytest tests/test_timeline_decisions.py -q`. Expected: missing-interface failures.
+- [x] **Step 3:** Implement the model, migration, immutable types, and admitted compare-and-set mutations.
 Keep source scope immutable; bind an initially unknown scope only from exact native proof.
 Emit DEBUG application records only after committed state transitions, using existing captured references.
-- [ ] **Step 4:** Run the same command. Expected: PASS.
-- [ ] **Step 5:** Commit task files with `feat(timeline): persist semantic publication decisions`.
+- [x] **Step 4:** Run the same command. Expected: PASS.
+- [x] **Step 5:** Commit task files with `feat(timeline): persist semantic publication decisions`.
 Use a body and the current model's required co-author trailer for every implementation commit.
 
 ## Task 2: Add bounded classification with existing model routes
@@ -310,19 +310,19 @@ A missing reason retains a valid first-line verdict; log an empty reason. Do not
 Collapse reason whitespace and clip it to 500 characters for storage/logging. Never log raw response wrappers.
 An empty/invalid decision line or a response over 8,192 bytes is an analysis failure and uses the bounded fallback policy.
 
-- [ ] **Step 1:** Add failing route-matrix tests for all four choices and both providers.
+- [x] **Step 1:** Add failing route-matrix tests for all four choices and both providers.
 Add `test_preparation_counts_toward_deadline`, `test_context_never_uses_newer_work`, and `test_mixed_shells_use_one_aggregate_no`.
 Add parser cases for BOM, blank lines, LF/CRLF/CR, case normalization, absent reason, invalid first lines, JSON wrappers, and oversized responses.
 Add exact request fixtures and prompt-hash checks specified below. Assert the reason cannot reverse a valid first-line verdict.
 Add the Task 2 model-result, payload-exclusion, reason-normalization, and INFO-level logging checks.
 Assert disabled providers never launch; observation clipping preserves candidate/shell metadata.
 Assert calls create no visible session, transcript event, or tool execution.
-- [ ] **Step 2:** Run `uv run pytest tests/test_timeline_classification.py -q`. Expected: missing classifier failures.
-- [ ] **Step 3:** Implement the listed interfaces using the normative text and context algorithm below.
+- [x] **Step 2:** Run `uv run pytest tests/test_timeline_classification.py -q`. Expected: missing classifier failures.
+- [x] **Step 3:** Implement the listed interfaces using the normative text and context algorithm below.
 Do not rewrite prompts or enrich owner context. Missing required source evidence uses `context_incomplete` fail-open.
 Preserve the existing hermetic guards, model routes, source validity, and deadline behavior.
-- [ ] **Step 4:** Run the same command. Expected: PASS with mocked runners and no live inference.
-- [ ] **Step 5:** Commit with `feat(timeline): classify messages and shells with bounded model calls`.
+- [x] **Step 4:** Run the same command. Expected: PASS with mocked runners and no live inference.
+- [x] **Step 5:** Commit with `feat(timeline): classify messages and shells with bounded model calls`.
 
 ### Normative input and transport contract
 
@@ -534,22 +534,22 @@ After `None`, verify the expected existing event by session/dedupe key and match
 An absent or conflicting event requires retry, not a published marker.
 Send timeline signals only after successful commit.
 
-- [ ] **Step 1:** Add failing Claude classification tests across indexed, verified, and recovery ingress.
+- [x] **Step 1:** Add failing Claude classification tests across indexed, verified, and recovery ingress.
 Add Codex regressions across the same ingress: no message decision, model call, or classification delay.
 Keep exact final-message forcing idempotent for both providers; Codex normally publishes before that forcing runs.
 Cover useful mid-work answers, routine progress, invalid-output/failure fallback, rejection recovery, and complete grouping.
 Add the Task 3 forced-publication logging checks from Decision diagnostics.
 Add `test_final_forcing_waits_for_exact_late_group`, `test_forcing_does_not_publish_all_progress_finals`, and `test_new_turn_message_is_never_forced_for_old_ending`.
 Inject insert rollback and swallowed insertion failure; assert retry produces exactly one event and signal.
-- [ ] **Step 2:** Run `uv run pytest tests/test_timeline_message_decisions.py tests/test_timeline_messages.py tests/test_timeline_message_associations.py tests/test_timeline_message_origins.py -q`.
+- [x] **Step 2:** Run `uv run pytest tests/test_timeline_message_decisions.py tests/test_timeline_messages.py tests/test_timeline_message_associations.py tests/test_timeline_message_origins.py -q`.
 Expected: new gate cases fail before implementation.
-- [ ] **Step 3:** Implement the gate, publication service, exact forcing, and late-source obligation fulfillment.
+- [x] **Step 3:** Implement the gate, publication service, exact forcing, and late-source obligation fulfillment.
 Store up to 12 outgoing input snapshots in the agent's existing live context; this is an internal buffer, not the model window.
 Merge ordinary human-origin input with available transcript messages, preserving order and deduplicating by existing input/native references.
 Then apply exactly the four-entry window and latest-user anchor from Task 2; preserve existing notice labels. Do not send the entire buffer.
 Do not add synthetic user timeline events. Freeze selected evidence so later inputs cannot change classification context.
-- [ ] **Step 4:** Run the same command. Expected: PASS.
-- [ ] **Step 5:** Commit with `feat(timeline): decide assistant message publication before insertion`.
+- [x] **Step 4:** Run the same command. Expected: PASS.
+- [x] **Step 5:** Commit with `feat(timeline): decide assistant message publication before insertion`.
 
 ## Task 4: Keep existing turns and apply both race policies
 
@@ -612,7 +612,7 @@ Keep existing exceptional outcome reasons/origins; exceptional endings do not fo
 Suppress duplicate managed turn boundaries in generic process-transition and process-end hooks.
 Keep unrelated process, background-work, awaiting-input, unmanaged, and ephemeral behavior unchanged.
 
-- [ ] **Step 1:** Add failing controlled-race tests for both providers.
+- [x] **Step 1:** Add failing controlled-race tests for both providers.
 `test_user_send_claims_before_staging_and_binding`: accept old ending, old timestamp, new token owns new turn.
 `test_root_activity_wins_before_user_send`: same open turn; no late boundary or forced message.
 `test_rejected_ending_then_user_input_keeps_existing_ownership`: no shortcut after rejection.
@@ -623,12 +623,12 @@ Add `test_shell_decision_gates_general_completion_without_timeline_clients`.
 Assert pending/rejected shell endings keep `ProcessRun` in `assistant_turn`, the logical turn open, and answer waits pending.
 Assert they emit no completion notification; accepted endings use the existing general completion path.
 Assert existing token receipts and logical-answer readers need no schema or semantic adaptation.
-- [ ] **Step 2:** Run `uv run pytest tests/test_semantic_completion_integration.py tests/test_completion_controller.py tests/test_completion_publication.py tests/test_completion_wait_tokens.py -q`.
+- [x] **Step 2:** Run `uv run pytest tests/test_semantic_completion_integration.py tests/test_completion_controller.py tests/test_completion_publication.py tests/test_completion_wait_tokens.py -q`.
 Expected: new semantic cases fail first.
-- [ ] **Step 3:** Implement the pending slot, controller methods, synchronous hooks, admitted application, and timestamp-aware boundary publication.
+- [x] **Step 3:** Implement the pending slot, controller methods, synchronous hooks, admitted application, and timestamp-aware boundary publication.
 Keep closure retries owned by existing completion queues; do not add a second turn scheduler or input ledger.
-- [ ] **Step 4:** Run the same command. Expected: PASS.
-- [ ] **Step 5:** Commit with `feat(completion): gate shell endings with existing turn ownership`.
+- [x] **Step 4:** Run the same command. Expected: PASS.
+- [x] **Step 5:** Commit with `feat(completion): gate shell endings with existing turn ownership`.
 
 ## Task 5: Supply shell evidence and safe completion reevaluation
 
@@ -665,15 +665,15 @@ For Codex, consume its process-exit callback before declaring delivery settled.
 Reevaluation additionally requires `_has_actual_turn_work()` to be false.
 Do not require Codex to resume automatically after intentionally leaving a process running.
 
-- [ ] **Step 1:** Add failing tests for required pytest work, a persistent server, mixed shells, and owned shells.
+- [x] **Step 1:** Add failing tests for required pytest work, a persistent server, mixed shells, and owned shells.
 Add `test_claude_terminal_then_notification_then_delayed_root_stays_one_turn`, `test_shell_exits_during_pending_analysis_waits_for_root`, `test_missing_delivery_evidence_reconsiders_after_45_seconds`, and `test_codex_exit_waits_for_actual_work`.
 Assert no extra root task is launched just to obtain a cleaner final message.
 Assert shell changes invalidate old approval and duplicate notices do not cause repeated analysis.
-- [ ] **Step 2:** Run `uv run pytest tests/test_semantic_shell_completion.py tests/test_claude_completion.py tests/test_codex_completion.py tests/test_shell_notice.py tests/test_shell_notice_claude.py tests/test_shell_notice_codex.py -q`.
+- [x] **Step 2:** Run `uv run pytest tests/test_semantic_shell_completion.py tests/test_claude_completion.py tests/test_codex_completion.py tests/test_shell_notice.py tests/test_shell_notice_claude.py tests/test_shell_notice_codex.py -q`.
 Expected: new settlement tests fail first.
-- [ ] **Step 3:** Implement snapshots and delivery waits from existing provider events. Wire safe reevaluation to Task 4 methods.
-- [ ] **Step 4:** Run the same command. Expected: PASS.
-- [ ] **Step 5:** Commit with `feat(completion): settle temporary shell work before reevaluation`.
+- [x] **Step 3:** Implement snapshots and delivery waits from existing provider events. Wire safe reevaluation to Task 4 methods.
+- [x] **Step 4:** Run the same command. Expected: PASS.
+- [x] **Step 5:** Commit with `feat(completion): settle temporary shell work before reevaluation`.
 
 ## Task 6: Run decisions, recover on boot, and retain only needed state
 
@@ -725,7 +725,7 @@ For rejected messages, the 48-hour retention starts when their turn closes, not 
 Protect journal turns still required by unresolved decisions/force obligations from existing logical-turn cleanup.
 No live-run history retention or replay prefix is needed.
 
-- [ ] **Step 1:** Add failing timer tests with a controlled clock and fake inference.
+- [x] **Step 1:** Add failing timer tests with a controlled clock and fake inference.
 Cover saturated workers, delayed writer admission past expiry, per-session fairness, force-before-inference, and result application without new ingress.
 Add the Task 6 fallback/ignored-result diagnostic checks from Decision diagnostics.
 Add crash tests before inference, after local user claim, after accepted DB commit, and after event insertion before acknowledgment.
@@ -733,12 +733,12 @@ Add `test_boot_cancels_old_pending_ending_after_durable_root_revision` with the 
 Assert original times, one boundary/message, no stale idle notification, boot order, and source invalidation.
 Run the actual stale-process reconciliation in the boot-order test; do not mock away its boundary generation.
 Add `test_long_turn_keeps_rejected_message_until_closure`, `test_cleanup_preserves_pending_final_obligation`, and Codex rekey regression.
-- [ ] **Step 2:** Run `uv run pytest tests/test_timeline_decision_task.py tests/test_timeline_decision_recovery.py tests/test_logical_turn_cleanup_task.py -q`.
+- [x] **Step 2:** Run `uv run pytest tests/test_timeline_decision_task.py tests/test_timeline_decision_recovery.py tests/test_logical_turn_cleanup_task.py -q`.
 Expected: new worker/recovery cases fail first.
-- [ ] **Step 3:** Implement event-driven scheduling, fail-open recovery, source checks, lifecycle wiring, and protected retention.
+- [x] **Step 3:** Implement event-driven scheduling, fail-open recovery, source checks, lifecycle wiring, and protected retention.
 Do not mark publication successful after DB failure; retain work for retry.
-- [ ] **Step 4:** Run the same command. Expected: PASS without live providers.
-- [ ] **Step 5:** Commit with `feat(timeline): run and recover semantic decisions`.
+- [x] **Step 4:** Run the same command. Expected: PASS without live providers.
+- [x] **Step 5:** Commit with `feat(timeline): run and recover semantic decisions`.
 
 ## Task 7: Verify reference behavior and integration
 
@@ -767,8 +767,9 @@ Report validation and the remaining user-run migration/restart operations.
 
 ## Execution results — 2026-11-11
 
-Tasks 1–6 are implemented and reviewed. Task 7 adds sanitized reference playback and synthetic integration variants.
-Task 7 review remains pending. No live benchmark or model comparison is repeated.
+Tasks 1–7 are implemented, committed and individually reviewed.
+The whole-feature review and its single scoped correction review are complete.
+All three Important findings and both Minor findings are closed. No live benchmark or model comparison is repeated.
 
 ### Implemented contract corrections
 
@@ -838,15 +839,18 @@ Task 7 review remains pending. No live benchmark or model comparison is repeated
   The four documented pre-feature Ruff diagnostics remain untouched.
 - Prompts, context selection, routes, models and generation options remain unchanged.
   No live call, migration command, installation, server restart, frontend change, push or CHANGELOG edit runs.
-- Full RED/GREEN commands and settlement details: `.superpowers/sdd/2026-11-10-timeline-semantic-decisions-plan/final-fix-report.md`.
-  Independent final re-review follows this correction commit.
+- The final scoped re-review marks I1, I2, I3, M1 and M2 ADDRESSED, with no new defect.
+  The session audit retains the complete correction report, independent re-review and ordered implementation rulings.
+- Independent verification on the committed correction: **20 passed, 42 deselected** in **5.79s**.
+  This selection covers source-invalidated local closures and first native ending binding for both providers.
+- All seven tasks have scoped commits. Migration `0173_timeline_semantic_decisions` and backend restart remain user-run operations.
 
 ## Execution and review boundaries
 
 Execute tasks in order because interfaces and controller files are shared.
 Do not deploy partially connected infrastructure.
 Per-task commits are review checkpoints, not independent releases.
-Tasks 1–6 are implemented and reviewed. Task 7 implementation and selected validation are complete; Task 7 review remains pending.
+Tasks 1–7 are implemented, committed and reviewed. The final scoped correction review is READY; no finding remains open.
 
 ## Self-review
 
@@ -864,7 +868,7 @@ Markdown fences balance, and obsolete JSON-response/per-shell schema and provisi
 
 ## Adversarial review
 
-Status: Earlier simplified architecture passed adversarial review. Tasks 1–6 are implemented and reviewed. Task 7 implementation and selected validation are complete; Task 7 review remains pending.
+Status: Earlier simplified architecture passed adversarial review. Tasks 1–7 are implemented, committed and reviewed. The final scoped correction review is READY; no finding remains open.
 The 2026-11-11 prompt/context/logging amendment receives self-review only; do not infer another adversarial pass.
 
 Two independent reviewers examine runtime feasibility and spec coverage.
