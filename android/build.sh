@@ -50,9 +50,20 @@ if [[ ! $version_name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
 fi
 apk_name="twicc-$engine-$profile-v$version_name-$mode.apk"
 mkdir -p -- "$output"
-cp -- "$project_dir/app/build/outputs/apk/$engine/$mode/app-$engine-$mode.apk" "$output/$apk_name"
-(cd -- "$output" && sha256sum -- "$apk_name" > SHA256SUMS)
+source_apk="$project_dir/app/build/outputs/apk/$engine/$mode/app-$engine-$mode.apk"
+checksum=$(sha256sum < "$source_apk")
+mv -- "$source_apk" "$output/$apk_name"
+printf '%s  %s\n' "${checksum%% *}" "$apk_name" > "$output/SHA256SUMS"
 # Remove older publications only after the new APK and checksum exist.
-find "$output" -maxdepth 1 -type f -name '*.apk' ! -name "$apk_name" -delete
+if [[ $engine == gecko ]]; then
+    # Keep one Gecko APK across all profiles and modes, including Gradle outputs.
+    find "$project_dir/dist/gecko" -type f -name '*.apk' ! -path "$output/$apk_name" -delete
+    find "$project_dir/dist/gecko" -type f -name SHA256SUMS ! -path "$output/SHA256SUMS" -delete
+    for directory in "$project_dir/app/build/outputs/apk/gecko" "$project_dir/app/build/outputs/apk/androidTest/gecko"; do
+        if [[ -d "$directory" ]]; then find "$directory" -type f -name '*.apk' -delete; fi
+    done
+else
+    find "$output" -maxdepth 1 -type f -name '*.apk' ! -name "$apk_name" -delete
+fi
 if [[ -f "$ANDROID_USER_HOME/debug.keystore" ]]; then chmod 600 "$ANDROID_USER_HOME/debug.keystore"; fi
 printf '\nAPK: %s/%s\nChecksums: %s/SHA256SUMS\n' "$output" "$apk_name" "$output"

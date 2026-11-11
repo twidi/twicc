@@ -190,7 +190,7 @@ in both modes. Release builds currently keep code minification disabled.
 The build entry point has standalone regression tests:
 
 ```sh
-python3 -m unittest discover -s android/tests -v
+uv run python -m unittest discover -s android/tests -v
 ```
 
 The script also works from another directory through its absolute path. It runs
@@ -205,12 +205,14 @@ The WebView build does not download the Gecko dependency.
 The selected output directory is `android/dist/<engine>/<profile>/<mode>/`, where
 `<mode>` is `release` or `debug`. It contains `twicc-<engine>-<profile>-v<versionName>-<mode>.apk`
 and `SHA256SUMS` for that APK only. Engines, profiles, and modes have separate
-directories. The script copies the current APK by its exact name;
-it does not collect stale APKs from previous Gradle builds.
-The version comes from `app/build.gradle.kts`. After successful publication,
-the script removes older APK files from the selected output directory only.
-A failed build keeps the previous publication. Other targets and session
-artifacts are not cleaned by this script.
+directories. The script moves the current APK from Gradle output into `dist`;
+it keeps no second copy in Gradle output. The version comes from `app/build.gradle.kts`.
+After successful Gecko publication, the script keeps only that Gecko APK across
+all profiles and modes. It removes older Gecko publications, their checksum files,
+and Gecko APKs in Gradle output, including instrumentation test APKs.
+WebView publication removes older APKs only from the selected output directory.
+A failed build keeps the previous publication. The script preserves WebView
+outputs during Gecko cleanup, signing keys, build caches, and session artifacts.
 
 Gecko APKs are much larger because they include the browser engine. Transfer
 the selected APK to the phone and permit installation from that source. Or use
@@ -246,8 +248,8 @@ export ANDROID_USER_HOME="$PWD/.signing"
 Direct APK output is `app/build/outputs/apk/<engine>/<mode>/app-<engine>-<mode>.apk`.
 Gradle defaults to profile `64`; set `-PtargetProfile=32`, `emulator`, or `universal`
 to choose another profile. Native library filtering happens before packaging.
-The Gradle output path is shared between profiles. Use the build script to keep
-selected APKs and checksums in separate distribution directories.
+The Gradle output path is shared between profiles. Use the build script for APK
+publication in `dist`, without retaining a second APK in Gradle output.
 Use `Release` tasks for normal builds and `Debug` tasks for debugging.
 Open `android/` in Android Studio and select `webviewRelease` or `geckoRelease`.
 The `webviewDebug` and `geckoDebug` variants enable debugging.
