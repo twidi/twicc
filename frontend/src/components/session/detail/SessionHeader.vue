@@ -278,13 +278,15 @@ const canStopProcess = computed(() => {
 
 // The archive button next to Interrupt / Stop: the last, most impactful step (it stops the process,
 // then archives). Main sessions only: a subagent has nothing to archive.
-const canArchiveWithProcess = computed(() =>
+const canArchive = computed(() =>
     props.mode === 'session'
-    && !!canStopProcess.value
     && !session.value?.archived
     && !session.value?.draft
     && !session.value?.ephemeral
 )
+const canArchiveWithProcess = computed(() => canArchive.value && !!canStopProcess.value)
+// The compact pill shows the unarchive button in place of the archive one, for an archived session.
+const canUnarchive = computed(() => props.mode === 'session' && !!session.value?.archived)
 
 // Check if this is a background agent that can be stopped
 const canStopAgent = computed(() => {
@@ -662,7 +664,7 @@ defineExpose({
             <AppTooltip v-if="session.project_id" :for="`session-header-${sessionId}-project-link`">{{ $t('session.project.openTooltip') }}</AppTooltip>
 
             <!-- Compact controls (compact height only), in one pill like the outlined buttons at the top of the
-                 sidebar: the interrupt and stop buttons (panel closed only: the panel has the same buttons) and
+                 sidebar: the interrupt, stop and archive/unarchive buttons (panel closed only: the panel has the same buttons) and
                  the panel toggle. The tooltips share the v-if of their button, see the note in the process zone. -->
             <div class="compact-pill">
             <div class="compact-live">
@@ -696,7 +698,7 @@ defineExpose({
                 <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-compact-stop-button`">{{ stoppingProcess ? $t('session.process.forceKill') : $t('session.process.stopProviderTooltip', { provider: providerLabel }) }}</AppTooltip>
 
                 <wa-button
-                    v-if="canArchiveWithProcess"
+                    v-if="canArchive"
                     :id="`session-header-${sessionId}-compact-archive-button`"
                     variant="neutral"
                     appearance="plain"
@@ -706,7 +708,20 @@ defineExpose({
                 >
                     <wa-icon name="box-archive" :label="$t('common.actions.archive')"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-compact-archive-button`">{{ archiveProcessTooltip }}</AppTooltip>
+                <AppTooltip v-if="canArchive" :for="`session-header-${sessionId}-compact-archive-button`">{{ canStopProcess ? archiveProcessTooltip : $t('session.actions.archiveTooltip') }}</AppTooltip>
+
+                <wa-button
+                    v-if="canUnarchive"
+                    :id="`session-header-${sessionId}-compact-unarchive-button`"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="compact-live-button compact-live-button--archived reduced-height"
+                    @click.stop="handleUnarchive"
+                >
+                    <wa-icon name="box-archive" :label="$t('common.actions.unarchive')"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="canUnarchive" :for="`session-header-${sessionId}-compact-unarchive-button`">{{ $t('session.actions.unarchiveTooltip') }}</AppTooltip>
             </div>
 
             <!-- Panel toggle (compact height only): the tools icon says there is more, the chevron says
@@ -1720,6 +1735,10 @@ wa-divider {
 .compact-live-button:hover,
 .compact-live-button.forcing {
     opacity: 1;
+}
+/* Unarchive: the archive icon in yellow, like the full-size unarchive button. */
+.compact-live-button--archived wa-icon {
+    color: var(--wa-color-yellow-80);
 }
 
 /* Panel toggle: tools icon + chevron, the faint treatment of the other header buttons; active while
