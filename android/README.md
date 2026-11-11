@@ -196,8 +196,8 @@ uv run python -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.22**,
-version code **33**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.28**,
+version code **39**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -219,9 +219,9 @@ the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.27-release.apk
+adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.28-release.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.27-release.apk
+adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.28-release.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to
