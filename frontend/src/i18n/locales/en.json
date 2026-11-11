@@ -1914,7 +1914,7 @@
     "session.drop.attachFailed": "Cannot attach file",
     "session.drop.files": "Drop files here",
     "session.drop.processFailed": "Failed to process file",
-    "session.drop.sessionLink": "Drop to insert a link to “{title}”",
+    "session.drop.sessionLink": "Drop to insert a link to this session",
     "session.drop.text": "Drop text into message",
     "session.editor.phrases.all": "all",
     "session.editor.phrases.byWord": "by word",

@@ -1914,7 +1914,7 @@
     "session.drop.attachFailed": "Não é possível anexar o arquivo",
     "session.drop.files": "Solte os arquivos aqui",
     "session.drop.processFailed": "Falha ao processar o arquivo",
-    "session.drop.sessionLink": "Solte para inserir um link para “{title}”",
+    "session.drop.sessionLink": "Solte para inserir um link para esta sessão",
     "session.drop.text": "Solte o texto na mensagem",
     "session.editor.phrases.all": "todos",
     "session.editor.phrases.byWord": "palavra inteira",

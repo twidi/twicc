@@ -2356,7 +2356,6 @@ onBeforeUnmount(() => unregisterSessionLinkComposer?.())
 
 // The sidebar session being dragged is over this chat: show the drop overlay.
 const sessionLinkOver = computed(() => sessionLinkDrag.overSessionId === props.sessionId)
-const sessionLinkTitle = computed(() => sessionLinkDrag.session?.title ?? '')
 
 // =============================================================================
 // Text selection comment (ephemeral annotation on selected session text)
@@ -2870,7 +2869,7 @@ defineExpose({
         <div v-if="sessionLinkOver" class="drop-overlay" aria-hidden="true">
             <div class="drop-overlay-content">
                 <wa-icon name="link" style="font-size: 3rem;"></wa-icon>
-                <span>{{ $t('session.drop.sessionLink', { title: sessionLinkTitle }) }}</span>
+                <span>{{ $t('session.drop.sessionLink') }}</span>
             </div>
         </div>
         <div v-else-if="dragOverType" class="drop-overlay">
@@ -2942,6 +2941,9 @@ defineExpose({
     display: flex;
     flex-direction: column;
     align-items: center;
+    /* A narrow chat wraps the label: keep it off the edges. */
+    padding-inline: var(--wa-space-l);
+    text-align: center;
     gap: var(--wa-space-m);
     color: white;
     font-size: var(--wa-font-size-xl);

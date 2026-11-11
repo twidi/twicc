@@ -1914,7 +1914,7 @@
     "session.drop.attachFailed": "Impossible de joindre le fichier",
     "session.drop.files": "Déposez des fichiers ici",
     "session.drop.processFailed": "Impossible de traiter le fichier",
-    "session.drop.sessionLink": "Déposez pour insérer un lien vers « {title} »",
+    "session.drop.sessionLink": "Déposez pour insérer un lien vers cette session",
     "session.drop.text": "Déposez le texte dans le message",
     "session.editor.phrases.all": "tout",
     "session.editor.phrases.byWord": "mot entier",

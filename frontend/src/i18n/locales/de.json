@@ -1914,7 +1914,7 @@
     "session.drop.attachFailed": "Datei kann nicht angehängt werden",
     "session.drop.files": "Dateien hier ablegen",
     "session.drop.processFailed": "Datei konnte nicht verarbeitet werden",
-    "session.drop.sessionLink": "Ablegen, um einen Link zu „{title}“ einzufügen",
+    "session.drop.sessionLink": "Ablegen, um einen Link zu dieser Sitzung einzufügen",
     "session.drop.text": "Text in die Nachricht ablegen",
     "session.editor.phrases.all": "alle",
     "session.editor.phrases.byWord": "nach Wort",
