@@ -430,8 +430,9 @@ function canStartLinkDrag() {
         && !!targetId && targetId !== props.session.id
 }
 
-// The long press armed a touch drag: the row lifts, a move starts the drag, a
-// release without move enters multi-select as before.
+// The long press armed a touch drag: the row already looks selected (as the
+// multi-select long press always did), a move starts the drag, a release
+// without move enters multi-select.
 const linkArmed = ref(false)
 let linkArmPoint = null
 let lastTouchPoint = null
@@ -778,14 +779,13 @@ function handleMenuSelect(event) {
             'session-item-wrapper--highlighted': highlighted,
             'session-item-wrapper--compact': compactView,
             'session-item-wrapper--drag-pending': isDragPending,
-            'session-item-wrapper--selected': selected,
-            'session-item-wrapper--link-armed': linkArmed,
+            'session-item-wrapper--selected': selected || linkArmed,
             'session-item-wrapper--tree': !!treeRow,
             'session-item-wrapper--tree-parent': !!treeRow?.hasChildren,
             'session-item-wrapper--tree-hinted': !!treeRow?.hint,
             'sidebar-row-wrapper--active': showActiveStyle,
             'sidebar-row-wrapper--compact': compactView,
-            'sidebar-row-wrapper--selected': selected,
+            'sidebar-row-wrapper--selected': selected || linkArmed,
         }"
         :style="treeRow ? { '--tree-indent-level': treeIndentLevel } : undefined"
         @dragenter="selectionEnabled && onDragenter($event)"
@@ -1122,16 +1122,6 @@ function handleMenuSelect(event) {
     touch-action: pan-y;
 }
 
-/* The long press armed the drag: the row lifts until the finger moves or lifts. */
-.session-item-wrapper--link-armed > .session-item {
-    transform: scale(1.02);
-    box-shadow: var(--wa-shadow-m);
-    transition: transform var(--transition-duration, .2s) ease, box-shadow var(--transition-duration, .2s) ease;
-}
-:root.reduce-motion .session-item-wrapper--link-armed > .session-item {
-    transform: none;
-    background: var(--wa-color-brand-fill-quiet);
-}
 
 /* Row look (padding, keyboard highlight, multi-select fill, the lit open row, the row
    menu): styles/sidebar-rows.css, shared with the artifacts list. */

@@ -103,8 +103,17 @@ test('3. the moved rules, with their values, in order', () => {
     assert.deepEqual(highlight.decls, { outline: 'var(--wa-focus-ring)', 'outline-offset': 'var(--wa-focus-ring-offset)' })
     const multi = rule(rules, ['.sidebar-row-wrapper--selected .sidebar-row::part(base)'])
     assert.deepEqual(multi.decls, {
-        'background-color': 'var(--wa-color-brand-fill-quiet)',
-        'box-shadow': 'inset 0 0 0 1px var(--wa-color-brand-border-quiet)',
+        'background-color': 'var(--sidebar-row-selected-fill)',
+        'box-shadow': 'inset 0 0 0 1px var(--sidebar-row-selected-border)',
+    })
+    // Quiet brand tokens in dark, a darker neutral step in light (apart from the lighter open row).
+    assert.deepEqual(rule(rules, [':root']).decls, {
+        '--sidebar-row-selected-fill': 'color-mix(in oklab, var(--wa-color-neutral-80), var(--wa-color-neutral-90))',
+        '--sidebar-row-selected-border': 'var(--wa-color-neutral-70)',
+    })
+    assert.deepEqual(rule(rules, ['html.wa-dark']).decls, {
+        '--sidebar-row-selected-fill': 'var(--wa-color-brand-fill-quiet)',
+        '--sidebar-row-selected-border': 'var(--wa-color-brand-border-quiet)',
     })
     const lit = rule(rules, ['.sidebar-row--active::part(base)', '.sidebar-row-wrapper--selected .sidebar-row--active::part(base)'])
     assert.deepEqual(lit.decls, {
@@ -150,7 +159,8 @@ test('4. both components put the shared classes on their row elements', () => {
     assert.match(sWrapper, /class="session-item-wrapper sidebar-row-wrapper"/)
     assert.match(sWrapper, /'sidebar-row-wrapper--active': showActiveStyle,/)
     assert.match(sWrapper, /'sidebar-row-wrapper--compact': compactView,/)
-    assert.match(sWrapper, /'sidebar-row-wrapper--selected': selected,/)
+    // A row armed by the long press (session link drag) already looks selected.
+    assert.match(sWrapper, /'sidebar-row-wrapper--selected': selected \|\| linkArmed,/)
     const sRow = tagWithClass(sessions, 'sidebar-row')
     assert.match(sRow, /class="session-item sidebar-row"/)
     assert.match(sRow, /'sidebar-row--active': showActiveStyle,/)

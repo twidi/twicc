@@ -91,10 +91,23 @@
     outline-offset: var(--wa-focus-ring-offset);
 }
 
-/* Multi-select mode: selected row (only the session list sets --selected). */
+/* Multi-select mode: selected row (only the session list sets --selected). In dark, the
+   quiet brand fill reads as a darker, nearly neutral row, apart from the lit open row. In
+   light, the quiet brand fill almost vanishes and a stronger brand one looks like the open
+   row: the light theme takes a clearly darker step of the (blue-tinted) neutral scale, as
+   the dark theme reads darker than its open row. Set as variables so this rule keeps its
+   specificity under the open-row rules. */
+:root {
+    --sidebar-row-selected-fill: color-mix(in oklab, var(--wa-color-neutral-80), var(--wa-color-neutral-90));
+    --sidebar-row-selected-border: var(--wa-color-neutral-70);
+}
+html.wa-dark {
+    --sidebar-row-selected-fill: var(--wa-color-brand-fill-quiet);
+    --sidebar-row-selected-border: var(--wa-color-brand-border-quiet);
+}
 .sidebar-row-wrapper--selected .sidebar-row::part(base) {
-    background-color: var(--wa-color-brand-fill-quiet);
-    box-shadow: inset 0 0 0 1px var(--wa-color-brand-border-quiet);
+    background-color: var(--sidebar-row-selected-fill);
+    box-shadow: inset 0 0 0 1px var(--sidebar-row-selected-border);
 }
 
 /* The open row: a lit fill fading to the right, a thin accent ring, a soft accent shadow.
