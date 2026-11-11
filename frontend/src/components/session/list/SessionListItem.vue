@@ -9,7 +9,7 @@ const { t, n, locale } = useI18n()
  * called ~9 and ~4 times respectively in the template for the same session.
  * Now each is called once via a computed, and Vue caches the result.
  */
-import { computed, watch, inject } from 'vue'
+import { computed, watch, inject, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../../../stores/codeComments'
 import { useDataStore } from '../../../stores/data'
@@ -398,8 +398,83 @@ const canInterrupt = computed(() => {
 
 const sessionHref = computed(() => router.resolve(sessionRouteLocation(props.session, route)).href)
 
+// Touch selection stays on the link, so tree toggles and row menus keep their own gestures.
+let touchOrigin = null
+let longPressTimer = null
+let longPressTriggered = false
+let suppressTouchClick = false
+
+function clearLongPressTimer() {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+}
+
+function handleTouchCancel() {
+    clearLongPressTimer()
+    touchOrigin = null
+}
+
+function handleTouchStart(event) {
+    handleTouchCancel()
+    suppressTouchClick = false
+    longPressTriggered = false
+    if (!props.selectionEnabled || event.touches.length !== 1) return
+    const touch = event.touches[0]
+    touchOrigin = { x: touch.clientX, y: touch.clientY }
+    if (selectionStore.active) return
+    longPressTimer = setTimeout(() => {
+        longPressTimer = null
+        if (!props.selectionEnabled) return
+        longPressTriggered = true
+        suppressTouchClick = true
+        selectionStore.enter(props.session.id)
+        selectionStore.setSelection([props.session.id], { anchor: props.session.id })
+    }, 500)
+}
+
+function handleTouchMove(event) {
+    if (!touchOrigin) return
+    const touch = event.touches[0]
+    if (event.touches.length !== 1
+        || Math.hypot(touch.clientX - touchOrigin.x, touch.clientY - touchOrigin.y) > 10) {
+        handleTouchCancel()
+    }
+}
+
+function handleTouchEnd(event) {
+    clearLongPressTimer()
+    if (props.selectionEnabled && (longPressTriggered || (touchOrigin && selectionStore.active))) {
+        // Cancel the compatibility click: it must neither open nor toggle the session again.
+        event.preventDefault()
+        suppressTouchClick = true
+        if (!longPressTriggered) selectionStore.toggle(props.session.id)
+    }
+    touchOrigin = null
+    longPressTriggered = false
+}
+
+function handleContextMenu(event) {
+    if (props.selectionEnabled && (touchOrigin || (suppressTouchClick && event.pointerType === 'touch'))) {
+        event.preventDefault()
+    }
+}
+
+watch(() => props.session.id, () => {
+    handleTouchCancel()
+    longPressTriggered = false
+    suppressTouchClick = false
+})
+onBeforeUnmount(handleTouchCancel)
+
 function handleClick(event) {
     if (event.button !== 0) return // middle/right click: let the browser handle it
+    if (suppressTouchClick) {
+        suppressTouchClick = false
+        if (event.pointerType !== 'mouse' && event.detail !== 0) {
+            event.preventDefault()
+            return
+        }
+    }
     const modifier = event.ctrlKey || event.metaKey || event.shiftKey
     if (props.selectionEnabled && selectionStore.active && modifier) {
         // Multi-select mode: modifier clicks drive the selection instead of
@@ -582,10 +657,16 @@ function handleMenuSelect(event) {
                 'session-item--active': showActiveStyle,
                 'session-item--highlighted': highlighted,
                 'sidebar-row--active': showActiveStyle,
-                'sidebar-row--highlighted': highlighted
+                'sidebar-row--highlighted': highlighted,
+                'session-item--touch-selectable': selectionEnabled,
             }"
             @click="handleClick"
             @mousedown="handleMousedown"
+            @touchstart.passive="handleTouchStart"
+            @touchmove.passive="handleTouchMove"
+            @touchend="handleTouchEnd"
+            @touchcancel="handleTouchCancel"
+            @contextmenu="handleContextMenu"
         >
             <div v-if="treeRow?.hint" class="tree-hint">{{ $t('session.list.fromParent', { parent: treeRow.hint }) }}</div>
             <div class="session-name-row">
@@ -855,6 +936,11 @@ function handleMenuSelect(event) {
 </template>
 
 <style scoped>
+.session-item--touch-selectable {
+    -webkit-touch-callout: none;
+    user-select: none;
+}
+
 /* Row look (padding, keyboard highlight, multi-select fill, the lit open row, the row
    menu): styles/sidebar-rows.css, shared with the artifacts list. */
 .session-item-wrapper {

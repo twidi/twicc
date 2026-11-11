@@ -254,69 +254,71 @@ function handleActionSelect(event) {
 
 <template>
     <div class="session-selection-bar">
-        <span class="selection-count">{{ $t('session.selection.count', { count }, count) }}</span>
+        <div class="selection-controls">
+            <span class="selection-count">{{ $t('session.selection.count', { count }, count) }}</span>
 
-        <wa-dropdown placement="bottom-end" @wa-select="handleActionSelect">
-            <wa-button
-                slot="trigger"
-                variant="brand"
-                appearance="accent"
-                size="small"
-                with-caret
-                :disabled="count === 0"
-            >
-                {{ $t('session.selection.actionsLabel') }}
-            </wa-button>
+            <wa-dropdown placement="bottom-end" @wa-select="handleActionSelect">
+                <wa-button
+                    slot="trigger"
+                    variant="brand"
+                    appearance="accent"
+                    size="small"
+                    with-caret
+                    :disabled="count === 0"
+                >
+                    {{ $t('session.selection.actionsLabel') }}
+                </wa-button>
 
-            <wa-dropdown-item type="checkbox" :checked="isPinModeChecked(null)" :disabled="pinTargets(null).length === 0" value="pin-none">
-                {{ $t('session.pin.none') }}
-                <span slot="details" class="affected-count">{{ n(pinTargets(null).length) }}</span>
-            </wa-dropdown-item>
-            <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('project')" :disabled="pinTargets('project').length === 0" value="pin-project">
-                {{ $t('session.pin.project') }}
-                <span slot="details" class="affected-count">{{ n(pinTargets('project').length) }}</span>
-            </wa-dropdown-item>
-            <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('workspace')" :disabled="pinTargets('workspace').length === 0" value="pin-workspace">
-                {{ $t('session.pin.workspace') }}
-                <span slot="details" class="affected-count">{{ n(pinTargets('workspace').length) }}</span>
-            </wa-dropdown-item>
-            <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('all')" :disabled="pinTargets('all').length === 0" value="pin-all">
-                {{ $t('session.pin.everywhere') }}
-                <span slot="details" class="affected-count">{{ n(pinTargets('all').length) }}</span>
-            </wa-dropdown-item>
-            <wa-divider></wa-divider>
-            <wa-dropdown-item :disabled="markReadCandidates.length === 0" value="mark-read">
-                <wa-icon slot="icon" name="eye-slash"></wa-icon>
-                {{ $t('session.actions.markRead') }}
-                <span slot="details" class="affected-count">{{ n(markReadCandidates.length) }}</span>
-            </wa-dropdown-item>
-            <wa-dropdown-item :disabled="markUnreadCandidates.length === 0" value="mark-unread">
-                <wa-icon slot="icon" name="eye"></wa-icon>
-                {{ $t('session.actions.markUnread') }}
-                <span slot="details" class="affected-count">{{ n(markUnreadCandidates.length) }}</span>
-            </wa-dropdown-item>
-            <wa-dropdown-item :disabled="archiveTargets.length === 0" value="archive">
-                <wa-icon slot="icon" name="box-archive"></wa-icon>
-                {{ $t('common.actions.archive') }}
-                <span slot="details" class="affected-count">{{ n(archiveTargets.length) }}</span>
-            </wa-dropdown-item>
-            <wa-dropdown-item :disabled="unarchiveTargets.length === 0" value="unarchive">
-                <wa-icon slot="icon" name="box-open"></wa-icon>
-                {{ $t('common.actions.unarchive') }}
-                <span slot="details" class="affected-count">{{ n(unarchiveTargets.length) }}</span>
-            </wa-dropdown-item>
-            <wa-divider></wa-divider>
-            <wa-dropdown-item :disabled="stopTargets.length === 0" value="stop">
-                <wa-icon slot="icon" name="ban"></wa-icon>
-                {{ $t('session.selection.stopProcesses', stopTargets.length) }}
-                <span slot="details" class="affected-count">{{ n(stopTargets.length) }}</span>
-            </wa-dropdown-item>
-            <wa-dropdown-item :disabled="draftTargets.length === 0" value="delete-drafts" variant="danger">
-                <wa-icon slot="icon" name="trash"></wa-icon>
-                {{ $t('session.actions.discard') }}
-                <span slot="details" class="affected-count">{{ n(draftTargets.length) }}</span>
-            </wa-dropdown-item>
-        </wa-dropdown>
+                <wa-dropdown-item type="checkbox" :checked="isPinModeChecked(null)" :disabled="pinTargets(null).length === 0" value="pin-none">
+                    {{ $t('session.pin.none') }}
+                    <span slot="details" class="affected-count">{{ n(pinTargets(null).length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('project')" :disabled="pinTargets('project').length === 0" value="pin-project">
+                    {{ $t('session.pin.project') }}
+                    <span slot="details" class="affected-count">{{ n(pinTargets('project').length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('workspace')" :disabled="pinTargets('workspace').length === 0" value="pin-workspace">
+                    {{ $t('session.pin.workspace') }}
+                    <span slot="details" class="affected-count">{{ n(pinTargets('workspace').length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('all')" :disabled="pinTargets('all').length === 0" value="pin-all">
+                    {{ $t('session.pin.everywhere') }}
+                    <span slot="details" class="affected-count">{{ n(pinTargets('all').length) }}</span>
+                </wa-dropdown-item>
+                <wa-divider></wa-divider>
+                <wa-dropdown-item :disabled="markReadCandidates.length === 0" value="mark-read">
+                    <wa-icon slot="icon" name="eye-slash"></wa-icon>
+                    {{ $t('session.actions.markRead') }}
+                    <span slot="details" class="affected-count">{{ n(markReadCandidates.length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item :disabled="markUnreadCandidates.length === 0" value="mark-unread">
+                    <wa-icon slot="icon" name="eye"></wa-icon>
+                    {{ $t('session.actions.markUnread') }}
+                    <span slot="details" class="affected-count">{{ n(markUnreadCandidates.length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item :disabled="archiveTargets.length === 0" value="archive">
+                    <wa-icon slot="icon" name="box-archive"></wa-icon>
+                    {{ $t('common.actions.archive') }}
+                    <span slot="details" class="affected-count">{{ n(archiveTargets.length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item :disabled="unarchiveTargets.length === 0" value="unarchive">
+                    <wa-icon slot="icon" name="box-open"></wa-icon>
+                    {{ $t('common.actions.unarchive') }}
+                    <span slot="details" class="affected-count">{{ n(unarchiveTargets.length) }}</span>
+                </wa-dropdown-item>
+                <wa-divider></wa-divider>
+                <wa-dropdown-item :disabled="stopTargets.length === 0" value="stop">
+                    <wa-icon slot="icon" name="ban"></wa-icon>
+                    {{ $t('session.selection.stopProcesses', stopTargets.length) }}
+                    <span slot="details" class="affected-count">{{ n(stopTargets.length) }}</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item :disabled="draftTargets.length === 0" value="delete-drafts" variant="danger">
+                    <wa-icon slot="icon" name="trash"></wa-icon>
+                    {{ $t('session.actions.discard') }}
+                    <span slot="details" class="affected-count">{{ n(draftTargets.length) }}</span>
+                </wa-dropdown-item>
+            </wa-dropdown>
+        </div>
 
         <wa-button
             id="selection-bar-exit"
@@ -350,7 +352,7 @@ function handleActionSelect(event) {
     flex-shrink: 0;
     margin: var(--wa-space-2xs) var(--wa-space-2xs) 0;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--wa-space-xs);
     padding: var(--wa-space-xs) var(--wa-space-s);
     background-color: var(--wa-color-surface-raised);
@@ -358,14 +360,26 @@ function handleActionSelect(event) {
     border-radius: var(--wa-border-radius-m);
 }
 
-.selection-count {
+/* Only the count and actions wrap. The exit button keeps its top-right position. */
+.selection-controls {
+    display: flex;
     flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-xs);
     min-width: 0;
+}
+
+#selection-bar-exit {
+    flex-shrink: 0;
+}
+
+.selection-count {
+    flex: 1 0 auto;
+    max-width: 100%;
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
 }
 
 .confirm-message {
