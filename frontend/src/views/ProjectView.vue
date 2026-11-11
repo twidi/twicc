@@ -3065,7 +3065,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 .usage-provider-name {
     font-size: var(--wa-font-size-xs);
     font-weight: var(--wa-font-weight-semibold);
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3073,11 +3073,11 @@ wa-dropdown-item:hover .row-menu-trigger,
 
 .usage-switch {
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
     transition: color 0.12s;
 }
 .usage-provider-group-clickable:hover .usage-switch {
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
 }
 
 .usage-header-when {
@@ -3089,7 +3089,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 
 .usage-when-time {
     font-size: var(--wa-font-size-2xs);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 
 .sidebar-footer-provider-auth {
@@ -3223,7 +3223,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 
 .usage-provider-icon {
     font-size: var(--wa-font-size-l);
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
     flex: 0 0 auto;
 }
 
@@ -3240,7 +3240,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 
 .usage-provider-tooltip-hint {
     font-size: var(--wa-font-size-2xs);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 
 /* ── C′ quota bar: dual usage/time lanes + burn chip + stacked meta ── */
@@ -3325,7 +3325,7 @@ html.wa-dark .usage-lane-time {
     gap: var(--wa-space-2xs);
     font-size: var(--wa-font-size-xs);
     font-variant-numeric: tabular-nums;
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
     white-space: nowrap;
 }
 .usage-balance-dot {
@@ -3365,7 +3365,7 @@ html.wa-dark .usage-burn-chip-danger {
     color: oklch(from var(--wa-color-danger) calc(l + 0.1) c h);
 }
 .usage-burn-chip-neutral {
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
     background: var(--wa-color-neutral-fill-quiet);
 }
 
@@ -3396,12 +3396,12 @@ html.wa-dark .usage-burn-chip-danger {
 .usage-quota-label {
     font-size: var(--wa-font-size-xs);
     font-weight: var(--wa-font-weight-bold);
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
 }
 
 .usage-quota-reset {
     font-size: var(--wa-font-size-2xs);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 
 /* The rich 5h / 7d body sizes the tooltip (wa-tooltip caps it at 30ch by default); it stays

@@ -240,6 +240,12 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
     color: inherit;
     font: inherit;
 }
+/* Disabled only means "nothing to cycle": a plain label, not the dimmed state that Web
+   Awesome's native button styles give (opacity 0.5, not-allowed cursor). */
+.quota-tip-control:disabled {
+    opacity: 1;
+    cursor: default;
+}
 /* Native button styles add icon margins; the widget uses only the flex gap. */
 .quota-tip-control > wa-icon {
     margin-inline: 0;
@@ -257,28 +263,28 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
 }
 .quota-tip-provider-icon {
     font-size: var(--wa-font-size-l);
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
     flex: 0 0 auto;
 }
 .quota-tip-provider-name {
     font-size: var(--wa-font-size-xs);
     font-weight: var(--wa-font-weight-semibold);
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
 }
 .quota-tip-switch {
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 .quota-tip-control:hover .quota-tip-switch {
-    color: var(--wa-color-neutral-content);
+    color: var(--wa-color-text-normal);
 }
 .quota-tip-period {
     font-weight: var(--wa-font-weight-normal);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 .quota-tip-reset {
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 
 .quota-tip-verdict {
@@ -308,7 +314,7 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
 }
 .quota-tip-verdict-text span {
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 
 /* Lanes: same visual language as the sidebar footer bars. */
@@ -320,7 +326,7 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
 }
 .quota-tip-bar-label {
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
 }
 .quota-tip-lane {
     position: relative;
@@ -396,7 +402,7 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
     font-size: var(--wa-font-size-2xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
     white-space: nowrap;
 }
 .quota-tip-stat strong {
@@ -426,7 +432,7 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
     gap: var(--wa-space-2xs);
     font-size: var(--wa-font-size-2xs);
     line-height: 1.4;
-    color: var(--wa-color-neutral-muted);
+    color: var(--wa-color-text-quiet);
     white-space: normal;
 }
 /* The icon box is exactly one text line tall, centred on the first line. */
