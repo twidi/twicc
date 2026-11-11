@@ -2,6 +2,7 @@ package com.twidi.twicc.platform
 
 import com.twidi.twicc.i18n.UiMessage
 import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.NativeConfiguration
 import com.twidi.twicc.bindUiMessage
 import android.app.Activity
 import android.app.AlertDialog
@@ -28,6 +29,7 @@ data class PromptAnswer(val text: String = "", val choices: List<String> = empty
 
 /** Activity-owned UI. Cancellation and late picker results complete each callback at most once. */
 class NativeRequests(private val activity: Activity) {
+    private val nativeConfiguration = NativeConfiguration()
     private val pending = mutableSetOf<Completion<*>>()
     private var closed = false
     private var file: PendingRequest? = null
@@ -105,6 +107,7 @@ class NativeRequests(private val activity: Activity) {
             dialog.setOnDismissListener { request.cancel() }
             dialog.show()
             refreshDialog(dialog)
+            nativeConfiguration.remember(dialog)
         }
         return request
     }
@@ -120,6 +123,11 @@ class NativeRequests(private val activity: Activity) {
     fun close() {
         closed = true
         pending.toList().forEach { it.cancel() }
+    }
+
+    fun onConfigurationChanged() {
+        pending.toList().forEach { request -> request.dialog?.let { nativeConfiguration.update(activity, it) } }
+        refreshMessages()
     }
 
     fun refreshMessages() { pending.toList().forEach { it.dialog?.let(::refreshDialog) } }

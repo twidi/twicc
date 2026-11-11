@@ -380,6 +380,79 @@ class BrowserRecoveryTest {
         } }
     }
 
+    @Test fun configurationChangesKeepBrowserAndPendingTextPrompt() {
+        Site().use { site -> withBrowser(site) { scenario ->
+            waitFor { site.ready.size == 1 }
+            scenario.onActivity { activity ->
+                val browser = field(activity, "browser")
+                val requests = field(activity, "requests") as com.twidi.twicc.platform.NativeRequests
+                var answers = 0
+                var answer: String? = null
+                requests.showPrompt(com.twidi.twicc.platform.PromptRequest(
+                    com.twidi.twicc.platform.PromptKind.TEXT, text = "initial"), callback = {
+                    answers++; answer = it?.text
+                })
+                val pending = requests.javaClass.getDeclaredField("pending").apply { isAccessible = true }
+                    .get(requests) as Set<*>
+                val completion = pending.single()!!
+                val dialog = completion.javaClass.getDeclaredField("dialog").apply { isAccessible = true }
+                    .get(completion) as android.app.AlertDialog
+                fun input(view: View): android.widget.EditText? {
+                    if (view is android.widget.EditText) return view
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) {
+                        input(view.getChildAt(i))?.let { return it }
+                    }
+                    return null
+                }
+                val editor = input(dialog.window!!.decorView)!!
+                editor.setText("unfinished input")
+                editor.requestFocus()
+                editor.setSelection(2, 7)
+                val configs = listOf<(android.content.res.Configuration) -> Unit>(
+                    { it.keyboard = android.content.res.Configuration.KEYBOARD_QWERTY },
+                    { it.keyboard = android.content.res.Configuration.KEYBOARD_NOKEYS },
+                    { it.orientation = android.content.res.Configuration.ORIENTATION_LANDSCAPE },
+                    { it.fontScale = 1.5f },
+                    { it.densityDpi += 80 },
+                    { it.uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES },
+                    { it.setLocale(java.util.Locale.forLanguageTag("ar")) },
+                )
+                val original = android.content.res.Configuration(activity.resources.configuration)
+                for (change in configs) {
+                    val config = android.content.res.Configuration(original).apply(change)
+                    activity.onConfigurationChanged(config)
+                    assertSame(browser, field(activity, "browser"))
+                    assertSame(requests, field(activity, "requests"))
+                    assertTrue(dialog.isShowing)
+                    assertEquals("unfinished input", editor.text.toString())
+                    assertEquals(2, editor.selectionStart)
+                    assertEquals(7, editor.selectionEnd)
+                    assertTrue(editor.hasFocus())
+                    assertEquals(0, answers)
+                }
+                activity.onConfigurationChanged(original)
+                dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick()
+                assertEquals(1, answers)
+                assertEquals("unfinished input", answer)
+            }
+            instrumentation.waitForIdleSync()
+            assertEquals(1, site.requests.size)
+        } }
+    }
+
+    @Test fun manifestHandlesEverySupportedConfigurationChange() {
+        val info = context.packageManager.getActivityInfo(
+            android.content.ComponentName(context, BrowserActivity::class.java), 0)
+        val flags = android.content.pm.ActivityInfo::class.java.fields.filter {
+            it.name.startsWith("CONFIG_") && it.name !in setOf(
+                "CONFIG_ASSETS_PATHS", "CONFIG_RESOURCES_UNUSED", "CONFIG_WINDOW_CONFIGURATION")
+        }
+        for (flag in flags) {
+            val value = flag.getInt(null)
+            assertEquals("Missing ${flag.name}", value, info.configChanges and value)
+        }
+    }
+
     private fun field(activity: BrowserActivity, name: String): Any? = BrowserActivity::class.java
         .getDeclaredField(name).apply { isAccessible = true }.get(activity)
     private fun fieldEvents(activity: BrowserActivity): BrowserEvents = BrowserActivity::class.java

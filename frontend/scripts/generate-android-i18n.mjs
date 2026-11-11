@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { baseCompile, detectHtmlTag } from '@intlify/message-compiler'
 import { createAppI18n } from '../src/i18n/index.js'
+import { createAndroidFingerprints } from './android-i18n-fingerprints.mjs'
 import { generateAndroidTestFixtures } from './generate-android-test-fixtures.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
@@ -175,7 +175,7 @@ function bootstrapXml(compiled, manifest) {
 
 /** Regenerate all committed outputs, or fail without writing when check is true. */
 export async function generateAndroidI18n({ check = false } = {}) {
-    const sourcePaths = [manifestPath, generatorPath, 'frontend/scripts/generate-android-test-fixtures.mjs',
+    const sourcePaths = [manifestPath, generatorPath, 'frontend/scripts/android-i18n-fingerprints.mjs', 'frontend/scripts/generate-android-test-fixtures.mjs',
         'frontend/src/i18n/index.js', 'frontend/src/i18n/androidLocale.js', 'frontend/package-lock.json',
         'frontend/src/i18n/uiMessages.js', 'frontend/src/i18n/uiMessageRenderer.js',
         'frontend/src/i18n/remoteMessages.js', 'frontend/src/i18n/messageDescriptors.js',
@@ -196,11 +196,10 @@ export async function generateAndroidI18n({ check = false } = {}) {
         [catalogPath]: serialize(compiled),
         [fixturePath]: serialize(createFixtures(catalogs, manifest)),
         [xmlPath]: bootstrapXml(compiled, manifest),
-        ...await generateAndroidTestFixtures(),
+        ...await generateAndroidTestFixtures(manifest),
     }
-    // Hash every input and generated output. Never hash this fingerprint file.
-    outputs[fingerprintPath] = Object.entries({ ...sources, ...outputs }).map(([path, bytes]) =>
-        `${createHash('sha256').update(bytes).digest('hex')}  ${path}`).join('\n') + '\n'
+    // Locale JSON contributes only selected native translations. Outputs remain fully checked.
+    outputs[fingerprintPath] = createAndroidFingerprints(sources, outputs, manifest)
     for (const [path, expected] of Object.entries(outputs)) {
         if (check) {
             let actual

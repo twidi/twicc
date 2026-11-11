@@ -281,6 +281,11 @@ compiler and Vite dependencies. The fixture bundles contain the real adapters
 and their transitive i18n imports. They enter only the instrumentation APK.
 
 Gradle checks source/output SHA-256 fingerprints with Java before `preBuild`.
+Locale JSON files contribute only the messages selected in `android/i18n/messages.json`.
+Each `path#message.key` entry hashes the decoded message text as UTF-8.
+Browser test adapters also embed only selected native translations.
+Changes to web-only keys, JSON formatting, and key order do not require Android regeneration.
+Changes to selected messages, the selection manifest, generator code, or generated files still fail verification.
 Android standalone builds require no Node/npm setup. The opt-in Android CI
 template installs frontend dependencies explicitly and checks deterministic
 generation, Vue parity, and direct Kotlin source literals.

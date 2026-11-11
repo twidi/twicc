@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { fingerprintBytes } from './android-i18n-fingerprints.mjs'
 import { readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -72,8 +73,9 @@ export function scanKotlinSource(source) {
 /** The same SHA-256 contract is enforced with Java by Gradle, without Node. */
 export async function verifyFingerprints(contents, read = path => readFile(resolve(root, path))) {
     const lines = contents.trim().split('\n'), failures = [], seen = new Set()
+    const inputs = new Map(), catalogs = new Map()
     for (const line of lines) {
-        const match = /^([a-f0-9]{64})  ([\w./-]+)$/.exec(line)
+        const match = /^([a-f0-9]{64})  ([\w./#-]+)$/.exec(line)
         if (!match || match[2].startsWith('/') || match[2].split('/').some(part => part === '..') || seen.has(match[2])) {
             failures.push(`Invalid fingerprint entry: ${line}`)
             continue
@@ -81,7 +83,9 @@ export async function verifyFingerprints(contents, read = path => readFile(resol
         const [, expected, path] = match
         seen.add(path)
         try {
-            if (createHash('sha256').update(await read(path)).digest('hex') !== expected) failures.push(`Stale fingerprint: ${path}`)
+            const file = path.split('#')[0]
+            if (!inputs.has(file)) inputs.set(file, await read(file))
+            if (createHash('sha256').update(fingerprintBytes(path, inputs.get(file), catalogs)).digest('hex') !== expected) failures.push(`Stale fingerprint: ${path}`)
         } catch { failures.push(`Missing fingerprint input: ${path}`) }
     }
     return failures

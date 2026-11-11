@@ -1,5 +1,8 @@
 package com.twidi.twicc
 
+import android.content.res.Configuration
+import android.util.Log
+import android.os.Build
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -44,6 +47,8 @@ import com.twidi.twicc.push.NotificationSounds
 
 /** Remote web client with a small, origin-scoped app command bridge. */
 class BrowserActivity : Activity() {
+    private val nativeConfiguration = NativeConfiguration()
+    private var lastConfiguration = Configuration()
     private lateinit var instance: Instance
     private lateinit var store: InstanceStore
     private lateinit var root: FrameLayout
@@ -91,6 +96,8 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lastConfiguration = Configuration(resources.configuration)
+        Log.i("BrowserLifecycle", "create activity=${System.identityHashCode(this)} restored=${savedInstanceState != null}")
         if (!acceptSpeechNotification(intent)) { finish(); return }
         AndroidPush.reconcilePayloadSupport(this)
         rendererRecovery = RendererRecovery(savedInstanceState?.takeIf { it.containsKey("rendererRecoveryAt") }
@@ -213,7 +220,52 @@ class BrowserActivity : Activity() {
         })
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        val changes = lastConfiguration.diff(newConfig)
+        super.onConfigurationChanged(newConfig)
+        lastConfiguration = Configuration(newConfig)
+        Log.i("BrowserLifecycle", "configuration activity=${System.identityHashCode(this)} changes=0x${changes.toString(16)} browser=${browser?.let { System.identityHashCode(it) }}")
+        theme.applyStyle(R.style.AppTheme, true)
+        // The browser remains attached. Android dispatches configuration changes to its view.
+        errorPanel.setPadding(dp(24), dp(24), dp(24), dp(24))
+        errorPanel.setBackgroundColor(getColor(R.color.twicc_canvas))
+        nativeConfiguration.update(errorPanel)
+        menuButton.setPadding(dp(11), dp(11), dp(11), dp(11))
+        menuButton.layoutParams = FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = dp(3)
+            topMargin = dp(3)
+        }
+        progress.layoutParams = FrameLayout.LayoutParams(-1, dp(3), Gravity.TOP)
+        val ripple = TypedValue()
+        theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true)
+        menuButton.setBackgroundResource(ripple.resourceId)
+        window.setBackgroundDrawableResource(R.drawable.twicc_canvas)
+        val night = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        if (Build.VERSION.SDK_INT >= 30) {
+            val appearance = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            window.insetsController?.setSystemBarsAppearance(if (night) 0 else appearance, appearance)
+        } else {
+            @Suppress("DEPRECATION")
+            val appearance = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (night) window.decorView.systemUiVisibility and appearance.inv()
+                else window.decorView.systemUiVisibility or appearance
+        }
+        root.layoutDirection = View.LAYOUT_DIRECTION_LOCALE
+        listOfNotNull(refreshConfirmation, speechSettingsDialog, batteryAdviceDialog).forEach {
+            nativeConfiguration.update(this, it)
+        }
+        requests?.onConfigurationChanged()
+        // PopupMenu has no public in-place styling API. Only this transient menu closes.
+        nativeMenu?.dismiss()
+        refreshNativeUi()
+        root.requestApplyInsets()
+        root.requestLayout()
+    }
+
     private fun openBrowser(force: Boolean = false) {
+        Log.i("BrowserLifecycle", "openBrowser force=$force")
         disposeBrowser()
         failed = false
         canGoBack = false
@@ -268,6 +320,7 @@ class BrowserActivity : Activity() {
         override fun onHistoryChanged(canGoBack: Boolean) { this@BrowserActivity.canGoBack = canGoBack }
         override fun onFailure(message: UiMessage) { showError(message) }
         override fun onRendererStopped(crashed: Boolean) {
+            Log.w("BrowserLifecycle", "rendererStopped crashed=$crashed")
             android.util.Log.w("TwiCCBrowser", "Renderer ${if (crashed) "crashed" else "was killed"}; foreground=$foreground")
             rendererRecovery.stopped()
             disposeBrowser()
@@ -297,6 +350,7 @@ class BrowserActivity : Activity() {
     }
 
     private fun refresh(force: Boolean) {
+        Log.i("BrowserLifecycle", "refresh force=$force")
         rendererRecovery.reset()
         if (force || browser == null) { openBrowser(force); return }
         failed = false
@@ -325,6 +379,7 @@ class BrowserActivity : Activity() {
             bindUiMessage(UiMessage("navigation.android.manage"))
             setOnClickListener { manageInstances() }
         })
+        nativeConfiguration.remember(errorPanel)
         errorPanel.visibility = View.VISIBLE
     }
 
@@ -379,6 +434,7 @@ class BrowserActivity : Activity() {
         refreshConfirmation = dialog
         dialog.setOnDismissListener { if (refreshConfirmation === dialog) refreshConfirmation = null }
         dialog.show()
+        nativeConfiguration.remember(dialog)
         refreshNativeUi()
     }
 
@@ -581,6 +637,7 @@ class BrowserActivity : Activity() {
     }
 
     override fun onDestroy() {
+        Log.i("BrowserLifecycle", "destroy activity=${System.identityHashCode(this)} configuration=$isChangingConfigurations finishing=$isFinishing")
         nativeMenu?.dismiss()
         refreshConfirmation?.dismiss()
         speechSettingsDialog?.dismiss()
@@ -606,6 +663,7 @@ class BrowserActivity : Activity() {
     private fun showSpeechSettings(error: TtsActionError) {
         speechSettingsDialog?.dismiss()
         val dialog = TtsNotification.showSettings(this, error) ?: return
+        nativeConfiguration.remember(dialog)
         speechSettingsDialog = dialog
         speechSettingsError = error
         dialog.setOnDismissListener {
@@ -629,6 +687,7 @@ class BrowserActivity : Activity() {
                 val dialog = TtsNotification.showBatteryAdvice(this) {
                     if (batteryAdviceCommand === command) batteryAdviceConfirmed = true
                 }
+                nativeConfiguration.remember(dialog)
                 batteryAdviceDialog = dialog
                 dialog.setOnDismissListener {
                     if (batteryAdviceDialog === dialog) {

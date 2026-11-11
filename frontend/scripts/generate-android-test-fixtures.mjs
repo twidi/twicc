@@ -1,12 +1,14 @@
 import { build } from 'vite'
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 const frontend = fileURLToPath(new URL('../', import.meta.url))
 
 // Use the installed frontend bundler explicitly during catalog generation.
 // Each module is self-contained because native fixture servers serve only these
 // adapter paths. No bare imports, JSON import attributes, or locale chunks can leak.
-export async function generateAndroidTestFixtures() {
+export async function generateAndroidTestFixtures(manifest) {
     const outputs = {}
     for (const [name, entry] of Object.entries({
         androidAppClient: 'utils/androidAppClient',
@@ -16,6 +18,18 @@ export async function generateAndroidTestFixtures() {
         const result = await build({
             root: frontend,
             configFile: false,
+            // These native test adapters need only the selected native translations.
+            // Embedding web catalogs would make unrelated web edits invalidate Android fixtures.
+            plugins: [{
+                name: 'android-native-translations',
+                enforce: 'pre',
+                async load(id) {
+                    const path = id.split('?')[0]
+                    if (!manifest.locales.some(locale => path === resolve(frontend, `src/i18n/locales/${locale}.json`))) return null
+                    const catalog = JSON.parse(await readFile(path, 'utf8'))
+                    return JSON.stringify(Object.fromEntries(Object.keys(manifest.messages).sort().map(key => [key, catalog[key]])))
+                },
+            }],
             logLevel: 'silent',
             define: {
                 'process.env.NODE_ENV': '"production"',

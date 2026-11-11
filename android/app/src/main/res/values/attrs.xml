@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="NativeConfiguration">
+        <attr name="android:textColorPrimary" />
+        <attr name="android:textColorHint" />
+        <attr name="android:colorAccent" />
+        <attr name="android:colorControlNormal" />
+        <attr name="android:colorControlActivated" />
+        <attr name="android:colorButtonNormal" />
+        <attr name="android:windowBackground" />
+    </declare-styleable>
+</resources>

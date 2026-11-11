@@ -93,18 +93,30 @@ val verifyAndroidI18n = tasks.register("verifyAndroidI18n") {
     // Deliberately always verify. Missing/changed inputs must not pass an up-to-date cache.
     doLast {
         val seen = mutableSetOf<String>()
+        val catalogs = mutableMapOf<String, Map<*, *>>()
         val entries = i18nFingerprints.readLines()
         if (entries.isEmpty()) throw GradleException("Empty Android i18n fingerprints")
         for (line in entries) {
-            val match = Regex("^([a-f0-9]{64})  ([A-Za-z0-9_./-]+)$").matchEntire(line)
+            val match = Regex("^([a-f0-9]{64})  ([A-Za-z0-9_./#-]+)$").matchEntire(line)
                 ?: throw GradleException("Invalid Android i18n fingerprint: $line")
             val (expected, path) = match.destructured
             if (path.startsWith("/") || ".." in path.split("/") || !seen.add(path)) {
                 throw GradleException("Invalid Android i18n fingerprint path: $path")
             }
-            val source = i18nRoot.resolve(path)
-            val actual = if (source.isFile) MessageDigest.getInstance("SHA-256")
-                .digest(source.readBytes()).joinToString("") { "%02x".format(it.toInt() and 0xff) } else null
+            val parts = path.split('#')
+            val source = i18nRoot.resolve(parts[0])
+            val bytes = if (!source.isFile) null else if (parts.size == 1) source.readBytes() else {
+                if (parts.size != 2 || !Regex("^frontend/src/i18n/locales/[A-Za-z0-9_-]+\\.json$").matches(parts[0]) || parts[1].isEmpty()) {
+                    throw GradleException("Invalid Android translation fingerprint: $path")
+                }
+                val catalog = catalogs.getOrPut(parts[0]) {
+                    JsonSlurper().parse(source) as? Map<*, *>
+                        ?: throw GradleException("Invalid Android translation catalog: ${parts[0]}")
+                }
+                (catalog[parts[1]] as? String)?.toByteArray(Charsets.UTF_8)
+            }
+            val actual = bytes?.let { MessageDigest.getInstance("SHA-256")
+                .digest(it).joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) } }
             if (actual != expected) throw GradleException(
                 "Stale Android i18n input/output: $path. Run cd frontend && npm run i18n:android:generate, then commit all outputs."
             )
