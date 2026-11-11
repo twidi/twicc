@@ -167,7 +167,7 @@ The existing spring-loaded behaviour stays active for session-link drags:
 
 - Hovering the Chat tab for 1 s switches to the chat. A drop on the tab inserts the link.
 - Hovering another sidebar row for 1 s opens that session. A drop on that row inserts the link into that
-  session's composer. This gives "link session A into session B". Wide layout only (see "Narrow layout").
+  session's composer. This gives "link session A into session B". Not available when the drag closed the drawer (see "Narrow layout").
 - The source row itself never activates.
 - A drop on a target that did not activate inserts nothing, as today for text drops:
   - a drop on the Chat tab before 1 s, or when the Chat tab is already shown;
@@ -223,8 +223,8 @@ Otherwise the long-press behaves exactly as today: it enters multi-select at 500
 - Shown only in the main sidebar list, for a linkable session, when a link target session exists and is not
   this session. The chat does not need to be visible.
 - Action: the link is inserted into the composer of the link target session (see "Insertion"). The chat is shown
-  first: if another tab holds the chat's place, the view switches to the Chat tab; if a maximized dock hides the
-  center pane, the maximized state ends. In the narrow layout, the drawer closes.
+  first: if another tab holds the chat's place, the view switches to the Chat tab; if an overlay dock is open over the
+  chat, it closes; if a maximized dock hides the center pane, the maximized state ends. In the narrow layout, the drawer closes.
 - The composer keeps the focus after the menu closes, when the insertion focuses it (pointer devices).
 - The entry stays available in multi-select mode. It acts on one session and does not change the selection.
 
@@ -295,9 +295,10 @@ On desktop, the same first step checks, in Firefox (Linux) and Chromium:
 - in a narrow window, closing the drawer at drag start does not abort the native drag;
 - the TwiCC-specific drag type set in window A appears in the drag types during the hover in window B (C13).
   If it does not, the cross-window session-link support is dropped: a drag from another window is then a plain
-  text drop, as today.
+  text drop, as today, and the "same instance, other window" rule of "Drop on the chat" and the "from another
+  window" part of the acceptance checks no longer apply.
 
-If one check fails, the work stops and the owner chooses how to go on.
+If any other check fails, the work stops and the owner chooses how to go on.
 
 ## Acceptance checks
 
