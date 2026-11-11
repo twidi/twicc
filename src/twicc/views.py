@@ -3252,21 +3252,21 @@ async def git_discard_file(request, project_id, session_id=None):
 # diff endpoints that feed the editor).
 
 
-def _git_download_response(stream, filename: str, content_type: str):
+def _git_download_response(stream, filename: str, content_type: str, *, head: bool = False):
     """Wrap a streamed git process into an attachment response."""
-    from django.http import FileResponse
-    from django.utils.cache import add_never_cache_headers
-
-    response = FileResponse(
-        stream,
-        content_type=content_type,
-        as_attachment=True,
-        filename=filename,
-    )
-    response["X-Content-Type-Options"] = "nosniff"
-    add_never_cache_headers(response)
-    response["CDN-Cache-Control"] = "no-store"
-    return response
+    try:
+        return AsyncFileResponse(
+            stream.reader,
+            content_type=content_type,
+            filename=filename,
+            size=None,
+            head=head,
+            finish=stream.finish,
+            close=stream.close,
+        )
+    except BaseException:
+        stream.close()
+        raise
 
 
 async def _resolve_git_download(request, project_id, session_id):
@@ -3337,28 +3337,26 @@ async def git_file_download(request, project_id, session_id=None):
             return "git", f"{ref}^"
         return None, None
 
+    def prepare():
+        source, located = resolve()
+        head = request.method == "HEAD"
+        if source == "disk":
+            # Repository validation above confines this working-tree path.
+            response = _raw_file_response(located, as_attachment=True, head=head)
+            if response is None:
+                raise Http404("File not found")
+            return response
+        if source != "git":
+            raise Http404("File not found at this revision")
+        filename = os.path.basename(file_path)
+        content_type = _guess_raw_content_type(file_path)
+        stream = stream_blob_at_ref(git_directory, located, file_path)
+        return _git_download_response(stream, filename, content_type, head=head)
+
     try:
-        source, located = await asyncio.to_thread(resolve)
+        return await prepare_download_response(prepare)
     except GitError as e:
         return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=400)
-
-    filename = os.path.basename(file_path)
-    if source == "disk":
-        # validate_path is not involved here: _resolve_session_git_directory
-        # already pinned the repo, and validate_path_in_repo (inside the git
-        # helpers) confines the path to it. Serve the working-tree file itself.
-        response = await asyncio.to_thread(_raw_file_response, located, as_attachment=True)
-        if response is None:
-            raise Http404("File not found")
-        return response
-    if source != "git":
-        raise Http404("File not found at this revision")
-
-    try:
-        stream = await asyncio.to_thread(stream_blob_at_ref, git_directory, located, file_path)
-    except GitError as e:
-        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=400)
-    return _git_download_response(stream, filename, _guess_raw_content_type(file_path))
 
 
 async def git_diff_download(request, project_id, session_id=None):
@@ -3377,16 +3375,18 @@ async def git_diff_download(request, project_id, session_id=None):
     if error:
         return error
 
-    try:
+    def prepare():
+        filename = f"{os.path.basename(file_path)}.patch"
         if ref == "index":
-            stream = await asyncio.to_thread(stream_index_patch, git_directory, file_path)
+            stream = stream_index_patch(git_directory, file_path)
         else:
-            stream = await asyncio.to_thread(stream_commit_patch, git_directory, ref, file_path)
+            stream = stream_commit_patch(git_directory, ref, file_path)
+        return _git_download_response(stream, filename, "text/x-patch", head=request.method == "HEAD")
+
+    try:
+        return await prepare_download_response(prepare)
     except GitError as e:
         return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=400)
-
-    filename = f"{os.path.basename(file_path)}.patch"
-    return _git_download_response(stream, filename, "text/x-patch")
 
 
 _WEEKLY_ACTIVITY_MAX_WEEKS = 52

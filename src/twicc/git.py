@@ -8,6 +8,8 @@ import base64
 import os
 import re
 import subprocess
+import threading
+from contextlib import suppress
 from typing import NamedTuple
 
 from twicc.core.ui_messages import ui_message, ui_message_text
@@ -1289,6 +1291,7 @@ _COMMIT_REF_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
 
 # Bytes read per chunk when streaming a git process' stdout.
 _STREAM_CHUNK_SIZE = 64 * 1024
+_STREAM_TERMINATE_GRACE = 1
 
 
 def is_valid_commit_ref(ref: str) -> bool:
@@ -1297,30 +1300,48 @@ def is_valid_commit_ref(ref: str) -> bool:
 
 
 class GitProcessStream:
-    """File-like wrapper over a git process' stdout, for ``FileResponse``.
+    """Own stdout, completion validation, and interrupted process shutdown."""
 
-    ``FileResponse`` iterates it with ``read()`` and calls ``close()`` when the
-    response is done, which is where the child process gets reaped — a plain
-    ``Popen.stdout`` would leave a zombie behind when the client disconnects
-    mid-download.
-    """
-
-    def __init__(self, proc: subprocess.Popen):
+    def __init__(self, proc: subprocess.Popen, *, accepted_returncodes=(0,)):
         self._proc = proc
+        self.reader = proc.stdout
+        self._accepted_returncodes = accepted_returncodes
+        self._closing = threading.Event()
+        self._close_lock = threading.Lock()
 
     def read(self, size: int = -1) -> bytes:
-        return self._proc.stdout.read(size)
+        return self.reader.read(size)
+
+    def finish(self) -> None:
+        """Validate natural exit after stdout reaches EOF, without a close lock."""
+        returncode = self._proc.wait()
+        if returncode not in self._accepted_returncodes and not self._closing.is_set():
+            # This error aborts the body; headers have already been sent.
+            raise GitError(f"Git download process exited with status {returncode}")
 
     def close(self) -> None:
-        try:
-            self._proc.stdout.close()
-        finally:
+        # Never hold this lock in finish/read: shutdown must interrupt both.
+        with self._close_lock:
+            if self._closing.is_set():
+                return
+            self._closing.set()
             if self._proc.poll() is None:
-                self._proc.terminate()
-            self._proc.wait()
+                with suppress(ProcessLookupError):
+                    self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=_STREAM_TERMINATE_GRACE)
+                except subprocess.TimeoutExpired:
+                    with suppress(ProcessLookupError):
+                        self._proc.kill()
+                    self._proc.wait()
+            else:
+                self._proc.wait()
+            # BufferedReader.close waits for a read's lock. Stop the producer
+            # first so an outstanding read can receive EOF and release it.
+            self.reader.close()
 
 
-def _spawn_git(git_directory: str, args: list[str]) -> GitProcessStream:
+def _spawn_git(git_directory: str, args: list[str], *, accepted_returncodes=(0,)) -> GitProcessStream:
     """Start ``git -C <dir> <args>`` and return its stdout as a stream."""
     try:
         proc = subprocess.Popen(
@@ -1331,7 +1352,7 @@ def _spawn_git(git_directory: str, args: list[str]) -> GitProcessStream:
         )
     except FileNotFoundError:
         raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
-    return GitProcessStream(proc)
+    return GitProcessStream(proc, accepted_returncodes=accepted_returncodes)
 
 
 def blob_exists_at_ref(git_directory: str, ref: str, file_path: str) -> bool:
@@ -1391,13 +1412,16 @@ def stream_index_patch(git_directory: str, file_path: str) -> GitProcessStream:
 
     An untracked file has nothing to diff against, so it is compared to
     ``/dev/null`` instead (``--no-index`` exits 1 when the files differ, which
-    is the normal case here — the exit code is not inspected).
+    is the normal case here and is accepted alongside zero).
     """
     validate_path_in_repo(git_directory, file_path)
 
     if is_tracked(git_directory, file_path):
         return _spawn_git(git_directory, ["diff", "HEAD", "--", file_path])
-    return _spawn_git(git_directory, ["diff", "--no-index", "--", os.devnull, file_path])
+    return _spawn_git(
+        git_directory, ["diff", "--no-index", "--", os.devnull, file_path],
+        accepted_returncodes=(0, 1),
+    )
 
 
 def stream_commit_patch(git_directory: str, commit_hash: str, file_path: str) -> GitProcessStream:

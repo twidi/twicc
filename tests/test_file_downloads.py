@@ -16,10 +16,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from django.core.handlers.asgi import ASGIHandler
 from django.test import AsyncClient
 from django.utils import timezone
 
+from tests.test_file_download_streaming import AsgiCall
 from twicc.core.models import Project, Session, SessionType
+from twicc.http_streams import DownloadCleanupMiddleware
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -238,6 +241,12 @@ def test_commit_download_serves_that_revision(client, repo):
 
     assert resp.status_code == 200
     assert _body(resp) == b"v1\n"
+    assert resp.is_async
+    assert "Content-Length" not in resp
+    assert resp["Content-Type"] == "text/plain"
+    assert resp["X-Content-Type-Options"] == "nosniff"
+    assert "no-store" in resp["Cache-Control"]
+    assert resp["CDN-Cache-Control"] == "no-store"
 
 
 def test_commit_download_of_a_deleted_file_falls_back_to_the_parent(client, repo):
@@ -350,3 +359,27 @@ def test_standalone_symlink_escape_is_404(client, tmp_path):
     link.symlink_to(outside)
     response = _request(client, f"/api/file-raw/{_b64(str(root))}{link}?download=1")
     assert response.status_code == 404
+
+
+def test_unchanged_index_patch_is_a_valid_empty_async_download(client, repo):
+    (repo["dir"] / "kept.txt").write_text("v2\n")
+    response = _download(client, repo, "git-diff-download", path="kept.txt", ref="index")
+    assert response.status_code == 200
+    assert response.is_async
+    assert _body(response) == b""
+    assert "Content-Length" not in response
+
+
+@pytest.mark.parametrize("ref", ["index", "commit"])
+def test_git_working_tree_and_blob_head_preserve_metadata(client, repo, ref):
+    selected = "index" if ref == "index" else repo["first"]
+    url = f"/api/projects/{repo['project'].id}/git-file-download/?path=kept.txt&ref={selected}"
+
+    async def request():
+        call = AsgiCall(DownloadCleanupMiddleware(ASGIHandler()), url, method="HEAD")
+        await call.task
+        assert call.body == b""
+        assert call.headers[b"content-disposition"] == b'attachment; filename="kept.txt"'
+        assert call.headers.get(b"content-length") == (b"3" if ref == "index" else None)
+
+    _run(request())
