@@ -2510,6 +2510,8 @@
     "session.tabs.terminal": "Terminal",
     "session.tabs.unnamedAgent": "Agent « {name} »",
     "session.tabs.workflows": "Workflows",
+    "session.timeline.viewLabel": "Voir dans la chronologie",
+    "session.timeline.openTooltip": "Afficher cette session dans la chronologie de tous les projets",
     "session.tasks.allDone": "Tâche terminée | Les {total} tâches sont terminées",
     "session.tasks.doneCount": "Tâches terminées : {done} sur {total}",
     "session.tasks.doneLabel": "Tâches terminées",

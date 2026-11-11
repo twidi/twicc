@@ -1,8 +1,10 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { ref, computed, watch, inject } from 'vue'
 import { onClickOutside } from '@vueuse/core'
-import { useDataStore } from '../../../stores/data'
+import { ALL_PROJECTS_ID, useDataStore } from '../../../stores/data'
+import { useTimelineFiltersStore } from '../../../stores/timelineFilters'
 import { toast } from '../../../composables/useToast'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
@@ -47,6 +49,8 @@ const props = defineProps({
 })
 
 const store = useDataStore()
+const router = useRouter()
+const timelineFiltersStore = useTimelineFiltersStore()
 const settingsStore = useSettingsStore()
 const sharesStore = useSharesStore()
 const codeCommentsStore = useCodeCommentsStore()
@@ -464,6 +468,17 @@ function toggleSessionSearch() {
     window.dispatchEvent(new CustomEvent('twicc:toggle-session-search', { detail: { handled: false } }))
 }
 
+/**
+ * Open the Timeline of all projects, filtered on this session only. The other filters are
+ * cleared first so the result is predictable, whatever the page had before.
+ */
+function openSessionTimeline() {
+    isCompactExpanded.value = false
+    timelineFiltersStore.clearAll(ALL_PROJECTS_ID)
+    timelineFiltersStore.setSession(ALL_PROJECTS_ID, { id: props.sessionId, title: session.value?.title || displayName.value })
+    router.push({ name: 'projects-all' })
+}
+
 const searchTooltip = computed(() => t('session.search.openTooltip', { shortcut: settingsStore.isMac ? '⌘F' : 'Ctrl+F' }))
 
 /**
@@ -747,6 +762,21 @@ defineExpose({
                     <span class="action-label">{{ $t('common.actions.search') }}</span>
                 </wa-button>
                 <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-search-button`">{{ searchTooltip }}</AppTooltip>
+
+                <!-- Timeline of all projects, prefiltered on this session -->
+                <wa-button
+                    v-if="!session.draft && !session.ephemeral"
+                    :id="`session-header-${sessionId}-timeline-button`"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="timeline-button reduced-height"
+                    @click="openSessionTimeline"
+                >
+                    <wa-icon auto-width name="clock-rotate-left" :label="$t('session.timeline.viewLabel')"></wa-icon>
+                    <span class="action-label">{{ $t('session.timeline.viewLabel') }}</span>
+                </wa-button>
+                <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-timeline-button`">{{ $t('session.timeline.openTooltip') }}</AppTooltip>
 
                 <!-- Pin mode dropdown (not for drafts) -->
                 <wa-dropdown
@@ -1528,6 +1558,7 @@ wa-divider {
 .rename-button,
 .share-button,
 .search-button,
+.timeline-button,
 .debug-button {
     flex-shrink: 0;
 }
