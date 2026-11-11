@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from collections import deque
+from datetime import datetime
 import logging
 import time
 from uuid import uuid4
 from collections.abc import Callable, Collection, Coroutine, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
@@ -44,6 +46,17 @@ logger = logging.getLogger(__name__)
 # Async callback invoked when the agent transitions between states.
 StateChangeCallback = Callable[["BaseAgent"], Coroutine[Any, Any, None]]
 BackgroundWorkCallback = Callable[["BaseAgent", "dict | None"], Coroutine[Any, Any, None]]
+
+
+class TimelineInputSnapshot(NamedTuple):
+    token: str
+    ref: NativeMessageRef | None
+    text: str
+    origin: RequestOrigin
+    captured_at: datetime
+    source_floor: int
+    storage_incarnation: str | None
+    history_epoch: int | None
 
 
 class BaseAgent(StopOriginMixin):
@@ -228,11 +241,35 @@ class BaseAgent(StopOriginMixin):
         self._timeline_start_refs: dict[str, NativeMessageRef | None] = {}
         self._timeline_input_refs: dict[str, NativeMessageRef] = {}
         self._timeline_input_origins: dict[str, RequestOrigin] = {}
+        self._timeline_outgoing_inputs: deque[TimelineInputSnapshot] = deque(maxlen=12)
         self._state_revision = 0
 
     # ------------------------------------------------------------------
     # State machine
     # ------------------------------------------------------------------
+
+    def _timeline_capture_input(self, token: str, text: str) -> None:
+        """Freeze actual ordinary human input before provider delivery can yield."""
+        from django.utils import timezone
+        from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+
+        origin = self._timeline_input_origins.get(token) or capture_origin()
+        if (origin.actor != "user" or text.lstrip().startswith(("/", SHELL_NOTICE_HEADER))
+                or any(item.token == token for item in self._timeline_outgoing_inputs)):
+            return
+        self._timeline_outgoing_inputs.append(TimelineInputSnapshot(
+            token, self._timeline_input_refs.get(token), text, origin, timezone.now(), self._completion_source_floor,
+            self._completion_storage_incarnation, self._completion_history_epoch,
+        ))
+
+    def _timeline_context_inputs(self) -> list:
+        """Copy the bounded live buffer; callers still apply their native cutoff."""
+        return [{"input_snapshot": {
+            "token": item.token, "text": item.text, "origin": item.origin._asdict(),
+            "captured_at": item.captured_at.isoformat(), "source_floor": item.source_floor,
+            "storage_incarnation": item.storage_incarnation, "history_epoch": item.history_epoch,
+            "ref": item.ref._asdict() if item.ref is not None else None,
+        }} for item in tuple(self._timeline_outgoing_inputs)]
 
     def _timeline_observe_message(self, ref: NativeMessageRef, *, role: str) -> None:
         """Retain one confirmed root identity on its actual logical interval."""
@@ -249,6 +286,10 @@ class BaseAgent(StopOriginMixin):
     def _timeline_reserve_input(self, token: str, ref: NativeMessageRef) -> None:
         """Reserve the exact outgoing identity; source indexing alone confirms its text."""
         self._timeline_input_refs[token] = ref
+        self._timeline_outgoing_inputs = deque(
+            (item._replace(ref=ref) if item.token == token else item for item in self._timeline_outgoing_inputs),
+            maxlen=12,
+        )
         self._timeline_bind_inputs()
 
     def _timeline_bind_inputs(self) -> None:
@@ -370,6 +411,8 @@ class BaseAgent(StopOriginMixin):
             return
         if status == "rejected":
             self._timeline_input_origins.pop(token, None)
+            self._timeline_outgoing_inputs = deque(
+                (item for item in self._timeline_outgoing_inputs if item.token != token), maxlen=12)
         receipt = self._completion_input_receipts.get(token)
         if status in ("rejected", "uncertain") and receipt is not None and not receipt.done():
             if failure is None:

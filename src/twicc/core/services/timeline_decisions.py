@@ -246,3 +246,56 @@ def bind_decision_source(*, decision_id: str, scope: SourceScope, observed_ref: 
             )
             _wake_after_commit()
         return True
+
+
+def source_is_current(*, session_id: str, scope: SourceScope) -> bool:
+    """Compare current scope exactly; callers also prove captured native source."""
+    return (Session.objects.filter(pk=session_id, provider=scope.provider,
+                storage_incarnation=scope.storage_incarnation, history_epoch=scope.history_epoch).exists())
+
+
+def publish_message_if_ready(*, decision_id: str) -> int | None:
+    """Publish accepted Claude text atomically; failed inserts remain retryable."""
+    from twicc.core.services.timeline_messages import _message_application_candidate, _publish_decided_message
+    with transaction.atomic():
+        row = TimelineDecision.objects.filter(pk=decision_id, kind='message').first()
+        if row is None or row.status != 'accepted' and not row.payload.get('canonical_decision_id'):
+            return None
+        row = _message_application_candidate(row)
+        if row is None or row.status != 'accepted':
+            return None
+        return _publish_decided_message(row)
+
+
+def fulfill_final_message_obligation(*, ending_id: str) -> bool:
+    """Resolve one frozen ending's exact last eligible native assistant group."""
+    from twicc.core.services.timeline_messages import _ensure_decision_source, _fulfill_final_message
+    with transaction.atomic():
+        row = TimelineDecision.objects.filter(pk=ending_id, kind='ending', status='accepted').first()
+        if row is None:
+            return False
+        if not row.force_pending:
+            return True
+        if not _ensure_decision_source(row):
+            return False
+        if not _fulfill_final_message(row):
+            return False
+        TimelineDecision.objects.filter(pk=row.pk, force_pending=True).update(force_pending=False)
+        _wake_after_commit()
+        return True
+
+
+@transaction.atomic
+def _redirect_forced_message(*, duplicate: TimelineDecision, canonical: TimelineDecision) -> None:
+    """Persist canonical precedence before retiring an exactly proven duplicate."""
+    if duplicate.status == 'invalidated' and duplicate.payload.get('canonical_decision_id') == str(canonical.pk):
+        return
+    force_message(decision_id=str(canonical.pk), reason='final_message')
+    payload = {**duplicate.payload, 'canonical_decision_id': str(canonical.pk)}
+    TimelineDecision.objects.filter(pk=duplicate.pk).update(
+        status='invalidated', reason='duplicate_canonical_message', payload=payload,
+        resolved_at=timezone.now(),
+    )
+    duplicate.status, duplicate.reason, duplicate.payload = 'invalidated', 'duplicate_canonical_message', payload
+    _record_after_commit(duplicate, event='invalidated')
+    _wake_after_commit()

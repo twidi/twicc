@@ -142,7 +142,8 @@ class BaseAgentManager:
         agent = self._agents.get(session_id)
         if agent is None or agent.ephemeral:
             return []
-        return agent._timeline_origins_for_refs(list(agent._timeline_input_refs.values()))
+        return [*agent._timeline_origins_for_refs(list(agent._timeline_input_refs.values())),
+                *agent._timeline_context_inputs()]
 
     def get_agent_info(self, session_id: str) -> AgentInfo | None:
         """Return a snapshot for a single agent, or ``None`` if unknown."""
@@ -855,8 +856,10 @@ class BaseAgentManager:
             return False
         if agent.ephemeral:
             return True
+        input_context = self.timeline_input_origins(agent.session_id)
+
         async def admitted():
-            return await self._persist_completion_admitted(agent, snapshot)
+            return await self._persist_completion_admitted(agent, snapshot, input_context=input_context)
         try:
             return await run_under_db_write_lock(admitted)
         except Exception:
@@ -865,6 +868,7 @@ class BaseAgentManager:
 
     async def _persist_completion_admitted(
         self, agent: BaseAgent, snapshot: CompletionSnapshot, *, state: AgentState | None = None,
+        input_context: list | None = None,
     ) -> bool:
         """Commit the journal and optional ProcessRun transition in one transaction."""
         if agent.ephemeral:
@@ -873,9 +877,11 @@ class BaseAgentManager:
             message_refs = agent._timeline_refs_for_turn(snapshot)
             start_refs = agent._timeline_refs_for_turn(snapshot, start=True)
             current_start_refs = agent._timeline_process_refs(AgentState.ASSISTANT_TURN)
+            input_context = self.timeline_input_origins(agent.session_id) if input_context is None else input_context
             stored = await asyncio.to_thread(self._store_completion_snapshot_admitted, agent, snapshot,
                                             state=state, message_refs=message_refs, start_refs=start_refs,
-                                            current_start_refs=current_start_refs)
+                                            current_start_refs=current_start_refs,
+                                            input_context=input_context)
         except Exception:
             for token, item in agent._completion_inputs.items():
                 receipt = agent._completion_input_receipts.get(token)
@@ -911,7 +917,7 @@ class BaseAgentManager:
     def _store_completion_snapshot_admitted(
         self, agent: BaseAgent, snapshot: CompletionSnapshot, *, state: AgentState | None = None,
         message_refs: list | None = None, start_refs: list | None = None,
-        current_start_refs: list | None = None,
+        current_start_refs: list | None = None, input_context: list | None = None,
     ) -> bool:
         """Compose journal writes on the admitted worker thread, including DEAD."""
         from django.utils import timezone
@@ -923,6 +929,7 @@ class BaseAgentManager:
         start_refs = agent._timeline_refs_for_turn(snapshot, start=True) if start_refs is None else start_refs
         current_start_refs = (agent._timeline_process_refs(AgentState.ASSISTANT_TURN)
                               if current_start_refs is None else current_start_refs)
+        input_context = self.timeline_input_origins(agent.session_id) if input_context is None else input_context
         opening = agent._completion_openings.get(snapshot.turn_id)
         if opening is None:
             # Direct controller consumers may open before a provider adapter
@@ -960,7 +967,7 @@ class BaseAgentManager:
                     agent.session_id,
                     refs=[VerifiedMessageRef(ref, agent.provider.value, source_floor, incarnation, epoch)
                           for ref in verified_refs],
-                    timeline_since=get_watcher().timeline_since,
+                    timeline_since=get_watcher().timeline_since, input_origins=input_context,
                 )
             # Previously opened rows can expire while native work continues. Their
             # actual completion still owns the public state transition, once.
@@ -1002,7 +1009,7 @@ class BaseAgentManager:
             if stored and state is not None:
                 from twicc.core.services.timeline_messages import recover_referenced_messages
 
-                recover_referenced_messages(agent.session_id)
+                recover_referenced_messages(agent.session_id, input_origins=input_context)
         agent._completion_opened_ids.add(snapshot.turn_id)
         agent._completion_durable_inputs.update(
             (token, CompletionInput(snapshot.turn_id, cursor, status)) for token, cursor, status in inputs

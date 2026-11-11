@@ -261,6 +261,7 @@ class HybridClaudeAgent(BaseAgent):
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
         if not is_hybrid_command(text):
+            self._timeline_capture_input(completion_token, content.user_text if content is not None else text)
             self._completion_input_pending(completion_token)
 
         if content is not None:
@@ -496,6 +497,7 @@ class HybridClaudeAgent(BaseAgent):
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
         if not is_hybrid_command(text):
+            self._timeline_capture_input(completion_token, content.user_text if content is not None else text)
             self._completion_input_pending(completion_token)
         try:
             if content is not None:

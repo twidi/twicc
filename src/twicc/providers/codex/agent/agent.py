@@ -805,6 +805,8 @@ class CodexAgent(BaseAgent):
             self._completion_source_floor = completion_cursor
         token = completion_token or str(uuid.uuid4())
         if command is None:
+            captured_content = self._initial_content if self._initial_content is not None else content
+            self._timeline_capture_input(token, captured_content.user_text if captured_content is not None else text)
             self._completion_input_pending(token)
             self._timeline_reserve_input(token, NativeMessageRef(
                 "codex_client", submission["client_message_id"] if submission else token,
@@ -874,6 +876,8 @@ class CodexAgent(BaseAgent):
         if kwargs.get("shell_notice"):
             self.completion_controller.note_shell_delivery()
         if not kwargs.get("shell_notice") and parse_hardcoded_command(text) is None:
+            content = kwargs.get("content")
+            self._timeline_capture_input(token, content.user_text if content is not None else text)
             self._completion_input_pending(token)
             submission = kwargs.get("submission")
             self._timeline_reserve_input(token, NativeMessageRef(

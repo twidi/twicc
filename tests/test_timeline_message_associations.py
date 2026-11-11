@@ -10,6 +10,7 @@ import pytest
 from django.utils import timezone
 
 from tests.test_completion_publication import bridge, content_row_factory
+from tests.timeline_decision_helpers import accept_legacy_message_decisions
 from twicc.agent.completion_types import NativeMessageRef
 from twicc.agent.states import AgentState
 from twicc.core.enums import ItemKind, Provider
@@ -561,3 +562,8 @@ def test_expired_journal_claude_proof_waits_for_exact_terminal_group(bridge, con
         "data__text", flat=True)) == (["prefix\nterminal"] if source_floor == 0 else [])
     assert not LogicalTurn.objects.exists()
     assert not TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists()
+
+
+@pytest.fixture(autouse=True)
+def legacy_semantic_acceptance(accept_legacy_message_decisions):
+    """Association regressions use the real durable acceptance/publication path."""

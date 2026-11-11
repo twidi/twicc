@@ -8,6 +8,7 @@ import orjson
 import pytest
 from django.utils import timezone
 
+from tests.timeline_decision_helpers import accept_legacy_message_decisions
 from tests import content_storage_helpers
 from twicc.agent.completion_types import NativeMessageRef, VerifiedMessageRef
 from twicc.core.models import LogicalTurn, Project, Session, TimelineEvent
@@ -605,3 +606,8 @@ def test_verified_publication_batch_keeps_first_source_order(live_session):
         refs=verified(f, NativeMessageRef('claude_uuid', 'b-final'), NativeMessageRef('claude_uuid', 'a-final')),
         timeline_since=f.boundary)
     assert f.texts() == ['A1\nA2', 'B1\nB2']
+
+
+@pytest.fixture(autouse=True)
+def legacy_semantic_acceptance(accept_legacy_message_decisions):
+    """Source regressions explicitly approve every eligible Claude candidate."""

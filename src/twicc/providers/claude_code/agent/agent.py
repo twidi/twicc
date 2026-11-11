@@ -1092,6 +1092,7 @@ class ClaudeCodeAgent(BaseAgent):
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
         if not prompt.lstrip().startswith("/"):
+            self._timeline_capture_input(completion_token, content.user_text if content is not None else prompt)
             self._completion_input_pending(completion_token)
             self._timeline_reserve_input(completion_token, NativeMessageRef("claude_uuid", completion_token))
         self._note_external_send()
@@ -2373,6 +2374,7 @@ class ClaudeCodeAgent(BaseAgent):
         if shell_notice:
             self.completion_controller.note_shell_delivery()
         if not shell_notice and not text.lstrip().startswith("/"):
+            self._timeline_capture_input(completion_token, content.user_text if content is not None else text)
             self._completion_input_pending(completion_token)
             self._timeline_reserve_input(completion_token, NativeMessageRef("claude_uuid", completion_token))
         if not shell_notice:

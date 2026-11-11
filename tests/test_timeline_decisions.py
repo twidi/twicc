@@ -297,10 +297,12 @@ def test_payload_copy_cannot_change_exact_captured_refs(decision_fixture):
     assert row.payload["message_refs"][0]["native_id"] == "exact-answer"
 
 
-def test_committed_decision_logs_scoped_references(decision_fixture, caplog, django_capture_on_commit_callbacks):
+def test_committed_decision_logs_scoped_references(decision_fixture, caplog, django_capture_on_commit_callbacks, monkeypatch):
     _, now, _ = decision_fixture
     request, _ = ending_request(decision_fixture)
     decision_id = admit(request, now, identity="ending")
+    # ASGI collection can reapply settings_test's disable_existing_loggers.
+    monkeypatch.setattr(logging.getLogger("twicc.core.services.timeline_decisions"), "disabled", False)
     caplog.set_level(logging.DEBUG, logger="twicc.core.services.timeline_decisions")
     with django_capture_on_commit_callbacks(execute=True):
         assert resolve_decision(decision_id=decision_id, classification=Classification("NO", "line 1\n" + "x" * 600),
