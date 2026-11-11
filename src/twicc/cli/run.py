@@ -304,6 +304,10 @@ async def run_server(port: int):
     data_backups_task = asyncio.create_task(run_data_backups_watcher())
     # The signal needs the loop before any writer (compute, watcher, hooks) can request one.
     start_timeline_signal(asyncio.get_running_loop())
+    from twicc.timeline_decision_task import start_timeline_decision_task
+    timeline_decision_task = asyncio.create_task(start_timeline_decision_task(shutdown_event))
+    # Install the synchronous decision wakeup before provider ingress starts.
+    await asyncio.sleep(0)
     inline_exports = None
     try:
         from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
@@ -537,6 +541,7 @@ async def run_server(port: int):
                 logger.info("Search index task was not started, skipping")
 
             # Then let every provider tear down its own tasks (in parallel).
+            await _cancel_task(timeline_decision_task, "Semantic decision task")
             await orchestrators.shutdown_all()
 
             from twicc.core.services.timeline_boot import record_backend_ended_clean
@@ -563,6 +568,8 @@ async def run_server(port: int):
         # Own partial coordinator startup and provider/configuration failures too.
         try:
             stop_timeline_signal()
+            if not timeline_decision_task.done():
+                await _cancel_task(timeline_decision_task, "Semantic decision task")
             if not logical_turn_cleanup_task.done():
                 await _cancel_task(logical_turn_cleanup_task, "Logical turn cleanup task")
             if not data_backups_task.done():

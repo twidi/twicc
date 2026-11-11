@@ -17,7 +17,7 @@ from datetime import datetime
 from uuid import UUID
 
 import orjson
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
 from twicc.agent.completion_types import CompletionSnapshot, NativeMessageRef
@@ -307,3 +307,210 @@ def _redirect_forced_message(*, duplicate: TimelineDecision, canonical: Timeline
     duplicate.status, duplicate.reason, duplicate.payload = 'invalidated', 'duplicate_canonical_message', payload
     _record_after_commit(duplicate, event='invalidated')
     _wake_after_commit()
+
+
+@transaction.atomic
+def invalidate_semantic_decisions(*, session_id: str, deleted: bool = False) -> int:
+    """Retire incompatible captured history, preserving published timeline events."""
+    session = Session.objects.filter(pk=session_id).first()
+    changed = 0
+    for row in TimelineDecision.objects.filter(session_id=session_id).filter(
+            models.Q(status__in=_UNRESOLVED) | models.Q(status='accepted', applied_at__isnull=True)
+            | models.Q(force_pending=True) | models.Q(status='rejected')):
+        incompatible = (deleted or session is None or session.stale or row.provider != session.provider
+            or row.storage_incarnation is not None and row.storage_incarnation != session.storage_incarnation
+            or row.history_epoch is not None and row.history_epoch != session.history_epoch)
+        if not incompatible:
+            continue
+        TimelineDecision.objects.filter(pk=row.pk).update(status='invalidated', reason='source_changed',
+            force_pending=False, resolved_at=timezone.now())
+        row.status, row.reason = 'invalidated', 'source_changed'
+        _record_after_commit(row, event='invalidated')
+        changed += 1
+    if changed:
+        _wake_after_commit()
+    return changed
+
+
+def _matching_open_turn(row: TimelineDecision) -> LogicalTurn | None:
+    """Recovery never uses the live controller's missing-journal exception."""
+    snapshot = _snapshot(row.payload)
+    return LogicalTurn.objects.filter(pk=row.turn_id, session_id=row.session_id, provider=row.provider,
+        run_id=row.run_id, ordinal=snapshot.ordinal, revision=snapshot.revision,
+        storage_incarnation=row.storage_incarnation, history_epoch=row.history_epoch,
+        first_ref=snapshot.first_ref._asdict() if snapshot.first_ref else None,
+        final_refs=[ref._asdict() for ref in dict.fromkeys(snapshot.final_refs)],
+        outcome__isnull=True, closed_at__isnull=True).first()
+
+
+def _try_recovered_effect(function, **kwargs):
+    """A failed source/publication attempt retains the committed retry obligation."""
+    try:
+        with transaction.atomic():
+            return function(**kwargs)
+    except Exception:
+        logger.exception('Semantic decision recovery effect remains pending')
+        return None
+
+
+def apply_accepted_ending(*, decision_id: str, now: datetime) -> bool:
+    """Retry historical closure effects without reviving a process or notifying."""
+    from twicc.core.models import TimelineActor, TimelineEvent, TimelineKind
+    from twicc.core.services.session_timeline import record_event_sync
+
+    with transaction.atomic():
+        row = TimelineDecision.objects.filter(pk=decision_id, kind='ending', status='accepted').first()
+        if row is None:
+            return False
+        if row.applied_at is None:
+            snapshot = _snapshot(row.payload)
+            turn = _matching_open_turn(row)
+            if turn is not None:
+                if not store_turn_snapshot(snapshot._replace(revision=snapshot.revision + 1, outcome='normal'),
+                                           closed_at=row.occurred_at):
+                    return False
+            elif not LogicalTurn.objects.filter(pk=row.turn_id, run_id=row.run_id, session_id=row.session_id,
+                    revision=snapshot.revision + 1, outcome='normal', closed_at=row.occurred_at,
+                    final_refs=[ref._asdict() for ref in dict.fromkeys(snapshot.final_refs)]).exists():
+                return False
+            key = f'turn:{row.turn_id}:{TimelineKind.TURN_ENDED}'
+            event = record_event_sync(TimelineKind.TURN_ENDED, session_id=row.session_id,
+                project_id=row.session.project_id, provider=row.provider, actor=TimelineActor.AGENT,
+                occurred_at=row.occurred_at, dedupe_key=key,
+                data={'message_refs': row.payload.get('boundary_refs', row.payload.get('message_refs', [])),
+                      'input_origins': None, 'background_work': row.payload.get('background_work')})
+            if event is None and not TimelineEvent.objects.filter(session_id=row.session_id, dedupe_key=key,
+                    kind=TimelineKind.TURN_ENDED, occurred_at=row.occurred_at).exists():
+                raise RuntimeError('Recovered ending event was not persisted')
+            TimelineDecision.objects.filter(pk=row.pk).update(applied_at=now)
+        _try_recovered_effect(fulfill_final_message_obligation, ending_id=decision_id)
+        return True
+
+
+def recover_semantic_decisions(*, now: datetime) -> int:
+    """Fail open old unresolved work before lost-process reconciliation, without inference."""
+    count = 0
+    cursor = None
+    while True:
+        query = TimelineDecision.objects.filter(status__in=_UNRESOLVED).order_by('pk')
+        if cursor is not None:
+            query = query.filter(pk__gt=cursor)
+        rows = list(query[:100])
+        if not rows:
+            break
+        for row in rows:
+            with transaction.atomic():
+                if invalidate_semantic_decisions(session_id=row.session_id):
+                    row.refresh_from_db()
+                    if row.status == 'invalidated':
+                        count += 1
+                        continue
+                if row.kind == 'ending' and _matching_open_turn(row) is None:
+                    count += cancel_decision(decision_id=str(row.pk), reason='stale_snapshot')
+                    continue
+                count += accept_fallback(decision_id=str(row.pk), reason='boot_recovery', now=now)
+                if row.kind == 'ending':
+                    apply_accepted_ending(decision_id=str(row.pk), now=now)
+                else:
+                    _try_recovered_effect(publish_message_if_ready, decision_id=str(row.pk))
+        cursor = rows[-1].pk
+    # Accepted commits can survive a crash before application/acknowledgment.
+    cursor = None
+    while True:
+        query = TimelineDecision.objects.filter(status='accepted').filter(
+            models.Q(applied_at__isnull=True) | models.Q(force_pending=True)).order_by('pk')
+        if cursor is not None:
+            query = query.filter(pk__gt=cursor)
+        rows = list(query[:100])
+        if not rows:
+            break
+        for row in rows:
+            with transaction.atomic():
+                invalidate_semantic_decisions(session_id=row.session_id)
+                row.refresh_from_db()
+                if row.status != 'accepted':
+                    continue
+                if row.kind == 'ending':
+                    apply_accepted_ending(decision_id=str(row.pk), now=now)
+                else:
+                    _try_recovered_effect(publish_message_if_ready, decision_id=str(row.pk))
+        cursor = rows[-1].pk
+    return count
+
+
+def _message_turn(row: TimelineDecision) -> LogicalTurn | None:
+    """Associate only exact native references in the existing scoped journal."""
+    turns = LogicalTurn.objects.filter(session_id=row.session_id, provider=row.provider)
+    if row.turn_id is not None:
+        return turns.filter(pk=row.turn_id, run_id=row.run_id).first()
+    refs = row.payload.get('message_refs', [])
+    if not refs:
+        return None
+    # The short-lived journal contains only first/final identities. It is not
+    # a transcript scan. Dictionary equality ignores JSON key/spacing order.
+    matches = [turn for turn in turns if (any(ref == turn.first_ref or ref in turn.final_refs for ref in refs)
+        and (row.storage_incarnation is None or turn.storage_incarnation is None
+            or row.storage_incarnation == turn.storage_incarnation)
+        and (row.history_epoch is None or turn.history_epoch is None or row.history_epoch == turn.history_epoch))]
+    if len(matches) != 1:
+        return None
+    turn = matches[0]
+    TimelineDecision.objects.filter(pk=row.pk, turn_id__isnull=True).update(turn_id=turn.pk, run_id=turn.run_id)
+    row.turn_id, row.run_id = turn.pk, turn.run_id
+    return turn
+
+
+def protected_semantic_turns() -> set:
+    """Protect unresolved effects and every journal needed to retain a rejection."""
+    protected = set()
+    rows = TimelineDecision.objects.filter(models.Q(status__in=_UNRESOLVED)
+        | models.Q(status='accepted', applied_at__isnull=True) | models.Q(force_pending=True)
+        | models.Q(kind='message', status='rejected'))
+    for row in rows.iterator(chunk_size=100):
+        if row.turn_id is not None:
+            protected.add(row.turn_id)
+        elif row.kind == 'message':
+            turn = _message_turn(row)
+            if turn is not None:
+                protected.add(turn.pk)
+            else:
+                # Uncertain association cannot authorize removal of its proof.
+                candidates = LogicalTurn.objects.filter(session_id=row.session_id, provider=row.provider)
+                if row.storage_incarnation is not None:
+                    candidates = candidates.filter(models.Q(storage_incarnation=row.storage_incarnation)
+                        | models.Q(storage_incarnation__isnull=True))
+                if row.history_epoch is not None:
+                    candidates = candidates.filter(models.Q(history_epoch=row.history_epoch) | models.Q(history_epoch__isnull=True))
+                protected.update(candidates.values_list('pk', flat=True))
+    return protected
+
+
+@transaction.atomic
+def purge_semantic_decisions(*, now: datetime, limit: int = 500) -> int:
+    """Purge settled work after 48 hours; rejected turn age starts at closure."""
+    from datetime import timedelta
+    from twicc.core.models import ProcessRun
+    from twicc.agent.states import AgentState
+
+    if not 1 <= limit <= 500:
+        raise ValueError('Cleanup batch size must be between 1 and 500')
+    cutoff = now - timedelta(hours=48)
+    ids = []
+    query = TimelineDecision.objects.exclude(status__in=_UNRESOLVED).filter(force_pending=False).exclude(
+        status='accepted', applied_at__isnull=True).filter(resolved_at__lte=cutoff).order_by('resolved_at', 'pk')
+    for row in query.iterator(chunk_size=100):
+        if row.kind == 'message' and row.status == 'rejected':
+            turn = _message_turn(row)
+            if turn is not None:
+                if turn.closed_at is None or turn.closed_at > cutoff:
+                    continue
+            elif (row.turn_id is not None or LogicalTurn.objects.filter(session_id=row.session_id).exists()
+                    or ProcessRun.objects.filter(session_id=row.session_id).exclude(state=AgentState.DEAD.value).exists()):
+                continue
+            # Unmanaged watcher messages have neither a journal nor a live
+            # process. Their settled resolution retains the normal 48h window.
+        ids.append(row.pk)
+        if len(ids) == limit:
+            break
+    TimelineDecision.objects.filter(pk__in=ids).delete()
+    return len(ids)

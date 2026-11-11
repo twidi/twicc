@@ -390,6 +390,8 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
         items_cost_computed_through_at=None, user_message_count=0,
         history_epoch=F("history_epoch") + 1, content_storage_version=None, plaintext_verified_epoch=None,
     )
+    from twicc.core.services.timeline_decisions import invalidate_semantic_decisions
+    invalidate_semantic_decisions(session_id=session.id)
     session.refresh_from_db()
     enqueue_sessions([session.id])
 

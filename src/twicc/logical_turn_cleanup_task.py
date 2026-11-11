@@ -29,11 +29,14 @@ class PurgeLogicalTurnsJob(NamedTuple):
 def purge_logical_turns(*, now: datetime, limit: int = CLEANUP_BATCH_SIZE) -> int:
     """Delete one batch under writer admission; count intervals, excluding inputs."""
     from twicc.core.models import LogicalTurn
+    from twicc.core.services.timeline_decisions import purge_semantic_decisions, protected_semantic_turns
 
     if not 1 <= limit <= CLEANUP_BATCH_SIZE:
         raise ValueError("Cleanup batch size must be between 1 and 500")
     with transaction.atomic():
-        ids = list(LogicalTurn.objects.filter(
+        purge_semantic_decisions(now=now, limit=limit)
+        protected = protected_semantic_turns()
+        ids = list(LogicalTurn.objects.exclude(pk__in=protected).filter(
             Q(closed_at__lte=now - CLOSED_RETENTION)
             | Q(closed_at__isnull=True, opened_at__lte=now - OPEN_RETENTION)
         ).order_by("opened_at", "pk").values_list("pk", flat=True)[:limit])

@@ -70,7 +70,9 @@ def _apply_cleanup_stale_process_runs_job(
     from twicc.core.services.timeline_boot import reconcile_at_boot
 
     # The timeline must never block the cleanup: its own atomic block rolls back alone.
-    # It runs first, so the stale rows still carry their previous state.
+    # It first recovers semantic decisions against the exact durable journal.
+    # Lost-process boundaries then see those closures before abandoned-turn
+    # settlement. The stale process rows still carry their previous state.
     try:
         with transaction.atomic():
             reconcile_at_boot()

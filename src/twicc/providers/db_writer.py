@@ -3229,6 +3229,9 @@ def _apply_mark_sessions_stale_payload(payload: MarkSessionsStalePayload) -> Non
             .values_list("project_id", flat=True)
         )
         Session.objects.filter(id__in=payload.session_ids, stale=False).update(stale=True)
+        from twicc.core.services.timeline_decisions import invalidate_semantic_decisions
+        for session_id in payload.session_ids:
+            invalidate_semantic_decisions(session_id=session_id, deleted=True)
         for project_id in affected_project_ids:
             Project.objects.filter(id=project_id).update(
                 mtime=_compute_project_mtime(project_id)
@@ -3267,6 +3270,9 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
             initialize_ingestion_session(session, invalidate=True)
             before_sessions.append(session_contribution(session))
             remove_history_memberships(session.id)
+        from twicc.core.services.timeline_decisions import invalidate_semantic_decisions
+        for session_id in ids:
+            invalidate_semantic_decisions(session_id=session_id, deleted=True)
         Session.objects.filter(id__in=ids).delete()
         TimelineEvent.objects.filter(session_id__in=ids | missing_ids).delete()
         LogicalTurn.objects.filter(session_id__in=ids | missing_ids).delete()

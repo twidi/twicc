@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from twicc.agent.states import AgentState
 from twicc.core.models import (
-    ProcessRun, Session, SessionItem, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
+    LogicalTurn, ProcessRun, Session, SessionItem, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
 )
 from twicc.core.services.session_timeline import record_event, record_event_sync
 from twicc.core.services.timeline_workflows import close_open_workflows
@@ -63,11 +63,15 @@ def _reconcile_lost_processes(now: datetime) -> None:
             "occurred_at": _last_evidence(run, session, now),
             "precision": TimelinePrecision.ESTIMATED, "actor": TimelineActor.SYSTEM, "provider": run.provider,
         }
+        journal = LogicalTurn.objects.filter(process_run_id=run.pk)
+        managed_closed = journal.exists() and not journal.filter(outcome__isnull=True, closed_at__isnull=True).exists()
         for spec in process_transition_events(
             prev_state=run.state, prev_awaiting=run.awaiting_user_input,
             prev_work=run.background_work_in_progress,
             new_state=AgentState.DEAD.value, new_awaiting=False, new_work=None,
         ):
+            if spec.kind == TimelineKind.TURN_ENDED and managed_closed:
+                continue
             record_event_sync(spec.kind, data=spec.data, **common)
         # Its workflows died with it (like the inner intervals above).
         close_open_workflows(run.session_id, occurred_at=common["occurred_at"], reason="lost",
@@ -120,6 +124,9 @@ def reconcile_at_boot(*, now: datetime | None = None, boot_id=_UNSET) -> None:
     """
     now = now or timezone.now()
     boot_id = read_boot_id() if boot_id is _UNSET else boot_id
+    from twicc.core.services.timeline_decisions import recover_semantic_decisions
+
+    recover_semantic_decisions(now=now)
     _reconcile_lost_processes(now)
     previous = _close_previous_instance(now)
     previous_boot_id = previous.data.get("boot_id") if previous else None
