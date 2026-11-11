@@ -63,6 +63,7 @@ urlpatterns = [
     path("api/tts/models/", tts_views.tts_models),
     # Standalone filesystem endpoints (for directory picker, no project required)
     path("api/directory-tree/", views.standalone_directory_tree),
+    path("api/directory-download/", views.standalone_directory_download),
     path("api/file-search/", views.standalone_file_search),
     path("api/file-content/", views.standalone_file_content),
     path("api/file-raw/<str:root_b64>/<path:filepath>", views.standalone_file_raw),
@@ -111,6 +112,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/", views.project_sessions),
     # Project-level file system endpoints (for draft sessions and project-level browsing)
     path("api/projects/<str:project_id>/directory-tree/", views.directory_tree),
+    path("api/projects/<str:project_id>/directory-download/", views.directory_download),
     path("api/projects/<str:project_id>/file-search/", views.file_search),
     path("api/projects/<str:project_id>/file-content/", views.file_content),
     path("api/projects/<str:project_id>/file-raw/<path:filepath>", views.file_raw),
@@ -166,6 +168,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-diff-download/", views.git_diff_download),
     # File system endpoints (scoped to project + session for security)
     path("api/projects/<str:project_id>/sessions/<str:session_id>/directory-tree/", views.directory_tree),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/directory-download/", views.directory_download),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-search/", views.file_search),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-content/", views.file_content),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-raw/<path:filepath>", views.file_raw),

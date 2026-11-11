@@ -45,6 +45,7 @@ from twicc.core.text_filter import match_text_query
 from twicc.core.ui_messages import ui_error
 from twicc.core.services.project_mutation import clean_project_agent_defaults
 from twicc.core.services import timeline_feed
+from twicc.directory_archives import DirectoryZipReader, directory_archive_name
 from twicc.http_streams import AsyncFileResponse, prepare_download_response
 from twicc.paths import path_to_project_id
 from twicc.projects import register_project
@@ -2616,6 +2617,79 @@ async def file_raw(request, project_id, filepath, session_id=None):
     if response is None:
         raise Http404("File not found")
     return response
+
+
+def _directory_download_response(directory: str, *, head: bool, root: str | None = None) -> AsyncFileResponse:
+    """Prepare a ZIP source off-loop and transfer its cleanup to the response."""
+    if root:
+        resolved_root = os.path.realpath(root)
+        resolved = os.path.realpath(directory)
+        if resolved != resolved_root and not resolved.startswith(resolved_root + os.sep):
+            raise NotADirectoryError(directory)
+    reader = DirectoryZipReader(directory)
+    try:
+        return AsyncFileResponse(
+            reader,
+            filename=directory_archive_name(directory),
+            content_type="application/zip",
+            size=None,
+            head=head,
+            close=reader.close,
+        )
+    except BaseException:
+        reader.close()
+        raise
+
+
+async def directory_download(request, project_id, session_id=None):
+    """Download an authorized directory as a ZIP attachment, including its root."""
+    from twicc.file_tree import validate_path
+
+    if request.method not in ("GET", "HEAD"):
+        return HttpResponseNotAllowed(["GET", "HEAD"])
+    directory = request.GET.get("path", "")
+    if not directory:
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.file_tree.path_required'), status=400)
+    if "\x00" in directory or not os.path.isabs(directory):
+        return JsonResponse(ui_error("Directory not found", 'backend.file_tree.directory_missing'), status=404)
+    directory = os.path.normpath(directory)
+    _session, directory, error = await sync_to_async(validate_path)(
+        project_id, directory, session_id=session_id
+    )
+    if error:
+        return error
+    try:
+        return await prepare_download_response(
+            lambda: _directory_download_response(directory, head=request.method == "HEAD")
+        )
+    except PermissionError:
+        return JsonResponse(ui_error("Permission denied", 'backend.file_content.permission_denied'), status=403)
+    except (FileNotFoundError, NotADirectoryError):
+        return JsonResponse(ui_error("Directory not found", 'backend.file_tree.directory_missing'), status=404)
+
+
+async def standalone_directory_download(request):
+    """Download an absolute directory with the existing optional root confinement."""
+    if request.method not in ("GET", "HEAD"):
+        return HttpResponseNotAllowed(["GET", "HEAD"])
+    directory = request.GET.get("path", "")
+    if not directory:
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.file_tree.path_required'), status=400)
+    if "\x00" in directory or not os.path.isabs(directory):
+        return JsonResponse(ui_error("Directory not found", 'backend.file_tree.directory_missing'), status=404)
+    directory = os.path.normpath(directory)
+    root = request.GET.get("root", "")
+    error = validate_standalone_root(directory, root)
+    if error:
+        return error
+    try:
+        return await prepare_download_response(
+            lambda: _directory_download_response(directory, head=request.method == "HEAD", root=root)
+        )
+    except PermissionError:
+        return JsonResponse(ui_error("Permission denied", 'backend.file_content.permission_denied'), status=403)
+    except (FileNotFoundError, NotADirectoryError):
+        return JsonResponse(ui_error("Directory not found", 'backend.file_tree.directory_missing'), status=404)
 
 
 async def standalone_file_raw(request, root_b64, filepath):
