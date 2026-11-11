@@ -12,7 +12,7 @@ from tests.test_timeline_messages import content_row_factory, live_session, veri
 from tests.test_completion_publication import bridge
 from twicc.agent.completion_types import NativeMessageRef
 from twicc.agent.semantic_types import Classification
-from twicc.core.models import TimelineDecision, TimelineEvent
+from twicc.core.models import Session, TimelineDecision, TimelineEvent
 from twicc.core.services import timeline_decisions, timeline_messages
 
 pytestmark = pytest.mark.django_db
@@ -452,3 +452,58 @@ def test_outgoing_snapshot_keeps_native_identity_after_live_turn_cleanup(bridge)
     agent._timeline_reserve_input('token', native)
     agent._timeline_input_refs.pop('token')
     assert agent._timeline_context_inputs()[0]['input_snapshot']['ref'] == native._asdict()
+
+
+def test_redirect_rejects_replaced_scope(live_session):
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude redirect')
+    f.append(f.message('a', 'answer'))
+    duplicate = TimelineDecision.objects.get()
+    duplicate.pk = uuid4()
+    duplicate.storage_incarnation = None
+    duplicate.forced, duplicate.status = True, 'accepted'
+    duplicate.save(force_insert=True)
+    with patch('twicc.core.services.timeline_messages.record_event_sync', return_value=None):
+        assert timeline_decisions.publish_message_if_ready(decision_id=str(duplicate.pk)) is None
+    duplicate.refresh_from_db()
+    assert duplicate.payload.get('canonical_decision_id')
+    Session.objects.filter(pk=f.session.id).update(storage_incarnation='replacement')
+    assert timeline_decisions.publish_message_if_ready(decision_id=str(duplicate.pk)) is None
+
+
+def test_context_deduplicates_native_copies(live_session):
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude context')
+    f.append(f.message('u', 'request', user=True), f.message('a', 'answer'))
+    f.append(f.message('a', 'answer'), f.message('next', 'next'))
+    row = TimelineDecision.objects.get(payload__target__text='next')
+    assert row.payload['previous_messages'] == [
+        {'role': 'user', 'text': 'request', 'line': 1},
+        {'role': 'assistant', 'text': 'answer', 'line': 2},
+    ]
+
+
+def test_missing_earlier_eligible_ref_keeps_obligation(live_session):
+    f = live_session
+    f.append(f.message('last', 'tool activity', final=False))
+    e = ending(f, [ref(f, 'missing'), ref(f, 'last')])
+    assert not timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
+    e.refresh_from_db()
+    assert e.force_pending
+    f.append(f.message('missing', 'late eligible answer'))
+    e.refresh_from_db()
+    assert not e.force_pending
+    assert f.texts() == ['late eligible answer']
+
+
+
+def test_eligible_last_ref_does_not_wait_for_irrelevant_earlier_ref(live_session):
+    f = live_session
+    f.append(f.message('last', 'final answer'))
+    e = ending(f, [ref(f, 'missing'), ref(f, 'last')])
+    assert timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
+    e.refresh_from_db()
+    assert not e.force_pending
+    assert f.texts() == ['final answer']

@@ -42,6 +42,19 @@ def _canonical(session, record):
     return next((ref for ref in refs if ref.kind == kind), None)
 
 
+def _dedupe_claude_records(records):
+    """Keep the first source occurrence of each exact Claude native UUID."""
+    seen = set()
+    complete = []
+    for record in records:
+        uuid = next((ref.native_id for ref in record[2] if ref.kind == 'claude_uuid'), None)
+        if uuid is None or uuid not in seen:
+            complete.append(record)
+        if uuid is not None:
+            seen.add(uuid)
+    return complete
+
+
 def _groups(session, records):
     groups = {}
     for record in records:
@@ -53,14 +66,8 @@ def _groups(session, records):
         if kind != 'claude_message':
             hydrated.append(group[:1])
             continue
-        seen = set()
-        complete = []
-        for record in _read(session, SessionItem.objects.filter(session_id=session.id, message_id=identity)):
-            uuid = next((ref.native_id for ref in record[2] if ref.kind == 'claude_uuid'), None)
-            if uuid is None or uuid not in seen:
-                complete.append(record)
-            if uuid is not None:
-                seen.add(uuid)
+        complete = _dedupe_claude_records(_read(
+            session, SessionItem.objects.filter(session_id=session.id, message_id=identity)))
         if complete:
             hydrated.append(complete)
     yield from sorted(hydrated, key=lambda group: group[0][0].line_num)

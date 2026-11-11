@@ -13,7 +13,7 @@ from twicc.agent.completion_types import NativeMessageRef, VerifiedMessageRef
 from twicc.agent.semantic_types import DecisionRequest, SourceScope
 from twicc.core.enums import ItemKind
 from twicc.core.models import LogicalTurn, Session, SessionItem, SessionType, TimelineDecision, TimelineEvent, TimelineKind
-from twicc.core.services.message_sources import _canonical, _groups, _read
+from twicc.core.services.message_sources import _canonical, _dedupe_claude_records, _groups, _read
 from twicc.core.services.session_timeline import record_event_sync
 from twicc.providers.helpers import get_provider_helpers
 from twicc.request_origin import RequestOrigin, SYSTEM_ORIGIN, origin_from_payload
@@ -165,7 +165,7 @@ def capture_message_context(session, *, before, occurred_at, input_origins=(), v
             if identity in seen:
                 continue
             if item.kind == ItemKind.ASSISTANT_MESSAGE:
-                group = (list(_read(session, SessionItem.objects.filter(session_id=session.id,
+                group = (_dedupe_claude_records(_read(session, SessionItem.objects.filter(session_id=session.id,
                     line_num__lt=before, message_id=item.message_id)))
                     if session.provider == 'claude_code' else [(item, parsed, refs)])
                 data = _eligible_group(session, group, verified)
@@ -438,18 +438,23 @@ def _fulfill_final_message(ending):
         return True
     groups = _resolve_groups(session, refs, floor=ending.payload['source_floor'],
                              ceiling=ending.payload.get('source_ceiling'))
-    observed = {ref for group in groups for _, _, aliases in group for ref in aliases}
-    # A late last reference is an obligation, never proof that an earlier one wins.
-    if refs[-1] not in observed:
-        return False
-    last_group = next(group for group in groups if any(refs[-1] in aliases for _, _, aliases in group))
     helpers = get_provider_helpers(session.provider)
-    if (all(helpers.is_final_assistant_message(raw) is None for _, raw, _ in last_group)
-            and not any(ref in refs and ref.kind != 'claude_message'
-                        for _, _, aliases in last_group for ref in aliases)):
-        return False
-    eligible = [(group, _eligible_group(session, group, refs)) for group in groups]
-    selected = next(((group, data) for group, data in reversed(eligible) if data is not None), None)
+    selected = None
+    # Frozen final-reference order owns selection, even when indexing arrives late.
+    # Resolve backwards until eligibility is proven; a missing ref still matters.
+    for final_ref in reversed(refs):
+        group = next((group for group in groups
+                      if any(final_ref in aliases for _, _, aliases in group)), None)
+        if group is None:
+            return False
+        if (all(helpers.is_final_assistant_message(raw) is None for _, raw, _ in group)
+                and not any(ref in refs and ref.kind != 'claude_message'
+                            for _, _, aliases in group for ref in aliases)):
+            return False
+        data = _eligible_group(session, group, refs)
+        if data is not None:
+            selected = group, data
+            break
     if selected is None:
         return True
     group, data = selected
@@ -522,8 +527,10 @@ def _message_application_candidate(row):
     """Follow a committed redirect or select current canonical source proof."""
     redirect = row.payload.get('canonical_decision_id')
     if redirect:
-        return TimelineDecision.objects.filter(pk=redirect, session_id=row.session_id, provider=row.provider,
+        row = TimelineDecision.objects.filter(pk=redirect, session_id=row.session_id, provider=row.provider,
             kind='message', identity_key=row.identity_key).first()
+        if row is None:
+            return None
     session = Session.objects.filter(pk=row.session_id, provider=row.provider).first()
     if session is None or not _same_scope(row, session):
         return None
