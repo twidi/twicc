@@ -3680,7 +3680,7 @@
     "usage.quota.notStarted": "O período ainda não começou",
     "usage.quota.noUsage": "Nenhum uso registrado neste período.",
     "usage.quota.onLimit": "No limite",
-    "usage.quota.onTrack": "Dentro do previsto",
+    "usage.quota.onTrack": "Ritmo OK",
     "usage.quota.periodEstimate": "Estimativa de {period}",
     "usage.quota.resets": "Redefinição: {time}",
     "usage.quota.runsOut": "A cota se esgota {moment}",
