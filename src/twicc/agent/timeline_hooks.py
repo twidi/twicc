@@ -10,12 +10,14 @@ from __future__ import annotations
 import functools
 import logging
 from typing import NamedTuple
+from datetime import datetime
 
 from django.utils import timezone
 
 from twicc.agent.auto_deny import AUTO_DENY_DELAY_SECONDS
 from twicc.agent.states import DELIBERATE_STOP_REASONS, AgentState
-from twicc.core.models import TimelineActor, TimelineKind
+from twicc.core.models import TimelineActor, TimelineKind, TimelineEvent
+from twicc.agent.completion_types import CompletionSnapshot
 from twicc.core.services.session_timeline import latest_event_id, record_event_sync
 from twicc.core.timeline import process_transition_events
 from twicc.request_origin import DEFAULT_ORIGIN, SYSTEM_ORIGIN, RequestOrigin
@@ -68,6 +70,35 @@ def _provider_of(agent) -> str | None:
     """The agent's provider as the ``provider`` hint of the recording service (a free source)."""
     provider = getattr(agent, "provider", None)
     return getattr(provider, "value", provider)
+
+
+def record_logical_turn_boundary(*, agent, snapshot: CompletionSnapshot, kind: str,
+                                 occurred_at: datetime, background_work: dict | None) -> int | None:
+    """Record a journal-owned boundary under the caller's writer admission."""
+    if not _enabled(agent):
+        return None
+    key = f"turn:{snapshot.turn_id}:{kind}"
+    refs = agent._timeline_refs_for_turn(snapshot, start=kind == TimelineKind.TURN_STARTED)
+    ending = getattr(agent, "_completion_endings", {}).get(snapshot.turn_id)
+    if kind == TimelineKind.TURN_ENDED and ending is not None and snapshot.outcome == "normal":
+        refs = ending.payload["boundary_refs"]
+    data = {"message_refs": refs, "input_origins": agent._timeline_origins_for_refs(refs) or None}
+    if kind == TimelineKind.TURN_ENDED:
+        data["background_work"] = background_work
+    reason = ((getattr(agent, "kill_reason", None) or "error")
+              if kind == TimelineKind.TURN_ENDED and snapshot.outcome in ("ended", "provider_error") else "")
+    origin = _end_origin(agent, reason) if reason else None
+    event = record_event_sync(kind, session_id=agent.session_id, project_id=agent.project_id,
+        occurred_at=occurred_at, actor=TimelineActor.AGENT, origin=origin, provider=_provider_of(agent),
+        data=data, reason=reason, dedupe_key=key)
+    return event.pk if event is not None else TimelineEvent.objects.filter(
+        session_id=agent.session_id, dedupe_key=key, kind=kind, occurred_at=occurred_at).values_list("id", flat=True).first()
+
+
+def _managed_specs(agent, specs):
+    if getattr(agent, "_completion_enabled", False):
+        return [spec for spec in specs if spec.kind not in (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED)]
+    return specs
 
 
 def _first_pending(agent):
@@ -134,6 +165,7 @@ def record_process_changes(agent, prev: ProcessSnapshot | None, *, new_state: st
         new_state=new_state, new_awaiting=new_awaiting, new_work=new_work,
         request_type=getattr(pending, "request_type", None), tool_name=getattr(pending, "tool_name", None),
     )
+    specs = _managed_specs(agent, specs)
     specs = [spec._replace(data={**spec.data, "message_refs": message_refs})
              if spec.kind in (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED) else spec
              for spec in specs]
@@ -172,6 +204,7 @@ def record_process_ended(agent, prev: ProcessSnapshot | None, *, message_refs: l
         prev_state=prev.state, prev_awaiting=prev.awaiting, prev_work=prev.work,
         new_state=AgentState.DEAD.value, new_awaiting=False, new_work=None,
     )
+    specs = _managed_specs(agent, specs)
     specs = [spec._replace(data={**spec.data, "message_refs": message_refs})
              if spec.kind == TimelineKind.TURN_ENDED else spec for spec in specs]
     # The rows closed with the end take its origin: the stop caused them.

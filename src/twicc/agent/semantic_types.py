@@ -34,3 +34,13 @@ class EndingContext(NamedTuple):
     occurred_at: datetime
     scope: SourceScope
     payload: dict
+
+
+class EndingResolution(NamedTuple):
+    """Local race winner retained until its admitted effects commit."""
+
+    status: str
+    reason: str
+    classification: Classification | None = None
+    effective_route: str | None = None
+    resolved_at: datetime | None = None

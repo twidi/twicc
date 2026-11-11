@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 import logging
+import orjson
 import time
 from uuid import uuid4
 from collections.abc import Callable, Collection, Coroutine, Iterable, Sequence
@@ -25,6 +26,7 @@ from channels.layers import get_channel_layer
 
 from twicc.agent.completion import CompletionController
 from twicc.agent.completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, NativeMessageRef
+from twicc.agent.semantic_types import EndingContext, EndingResolution, SourceScope
 from twicc.agent.auto_deny import AUTO_DENY_CHECK_INTERVAL_SECONDS, AUTO_DENY_DELAY_SECONDS
 from twicc.agent.shell_notice import OwnerFacts, ShellLookup, ShellNoticeState, ShellResolution
 from twicc.agent.stop_origin import StopOriginMixin
@@ -236,6 +238,12 @@ class BaseAgent(StopOriginMixin):
         self._completion_storage_incarnation: str | None = None
         self._completion_history_epoch: int | None = None
         self._completion_committed_snapshot: CompletionSnapshot | None = None
+        self._completion_pending_ending: EndingContext | None = None
+        self._completion_endings: dict[str, EndingContext] = {}
+        self._completion_boundary_times: dict[str, datetime] = {}
+        self._completion_ending_results: dict[str, EndingResolution] = {}
+        self._completion_cancel_callback: Callable | None = None
+        self._completion_cancel_inference: Callable | None = None
         # Exact identities only. Text remains in source storage and timeline snapshots.
         self._timeline_message_refs: dict[str, list[NativeMessageRef]] = {}
         self._timeline_start_refs: dict[str, NativeMessageRef | None] = {}
@@ -352,6 +360,7 @@ class BaseAgent(StopOriginMixin):
 
         if self.state == AgentState.DEAD or self._stop_requested:
             return
+        self._completion_cancel_pending_ending("root_activity")
         self._completion_enabled = True
         previous = self.completion_controller.snapshot()
         self.completion_controller.activity(asyncio.get_running_loop().time(), first_ref=first_ref)
@@ -381,15 +390,20 @@ class BaseAgent(StopOriginMixin):
         self._completion_refresh()
 
     def _completion_holds_changed(self, holds: frozenset[str]) -> None:
+        if holds:
+            self._completion_cancel_pending_ending("holds")
         self.completion_controller.set_holds(holds, asyncio.get_running_loop().time())
         self._completion_refresh()
 
     def _completion_awaiting_changed(self, awaiting: bool) -> None:
+        if awaiting:
+            self._completion_cancel_pending_ending("awaiting_input")
         self.completion_controller.set_awaiting(awaiting, asyncio.get_running_loop().time())
         self._completion_refresh()
 
     def _completion_input_pending(self, token: str, *, staged: bool = False) -> None:
         self._timeline_input_origins.setdefault(token, capture_origin())
+        self._completion_before_input(token, self._timeline_input_origins[token])
         # Manager staging blocks confirmation before setup. Only actual provider
         # delivery associates the receipt with this agent's interval.
         if token not in self._completion_input_receipts:
@@ -443,11 +457,102 @@ class BaseAgent(StopOriginMixin):
                 receipt.set_result(item)
 
     def _completion_terminate(self, outcome: str) -> CompletionSnapshot | None:
+        from django.utils import timezone
+
+        self._completion_cancel_pending_ending(outcome)
         snapshot = self.completion_controller.terminate(outcome, asyncio.get_running_loop().time())
         self._cancel_completion_timer()
         if snapshot is not None:
+            self._completion_boundary_times.setdefault(snapshot.turn_id, timezone.now())
             self._completion_refresh()
         return snapshot
+
+    def _completion_before_input(self, token: str, origin: RequestOrigin) -> None:
+        """Claim the old eligible turn before staging or assigning input ownership."""
+        if token in self._completion_input_receipts:
+            return
+        context = self._completion_pending_ending
+        if origin.actor == "user" and context is not None:
+            self._completion_claim_ending(context, reason="user_input")
+        elif context is not None:
+            self._completion_cancel_pending_ending("input_pending")
+
+    def _completion_claim_ending(self, context: EndingContext, *, reason: str) -> CompletionSnapshot | None:
+        if self._completion_pending_ending is not context:
+            return None
+        if not self._completion_shells_are_current(context):
+            self._completion_cancel_pending_ending("shells_changed")
+            self.completion_controller.defer_due(context.candidate, asyncio.get_running_loop().time())
+            self._completion_reconsider_if_settled()
+            return None
+        snapshot = self.completion_controller.claim_due(context.candidate, asyncio.get_running_loop().time())
+        if snapshot is None:
+            return None
+        self._completion_ending_results[context.id] = EndingResolution("accepted", reason)
+        self._completion_pending_publications[snapshot.turn_id] = snapshot
+        self._completion_pending_ending = None
+        if self._completion_cancel_inference is not None:
+            self._completion_cancel_inference(context.id)
+        return snapshot
+
+    def _completion_cancel_pending_ending(self, reason: str) -> None:
+        context = self._completion_pending_ending
+        if context is None:
+            return
+        self._completion_pending_ending = None
+        self._completion_ending_results[context.id] = EndingResolution("canceled", reason)
+        if self._completion_cancel_inference is not None:
+            self._completion_cancel_inference(context.id)
+        if self._completion_cancel_callback is not None:
+            self._completion_own_task(self._completion_cancel_callback(self, context, reason))
+
+    def _completion_capture_ending_evidence(self, snapshot, occurred_at, input_context) -> dict:
+        """Task 5 supplies bounded native context and complete shell evidence here."""
+        state = self.shell_notice_state()
+        shells = state.shells if state is not None else []
+        return {
+            "target": {"shells": [dict(key=shell.key, owner="root" if shell.owner == "main" else "subagent",
+                command=shell.command, description=shell.description,
+                started_at=datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), start_line=None)
+                for shell in shells]},
+            "shell_refs": [dict(key=shell.key, owner_ref=None, started_at=shell.started_at) for shell in shells],
+            "previous_messages": [], "tool_evidence": [],
+        }
+
+    def _completion_shells_are_current(self, context: EndingContext) -> bool:
+        """Task 5 overrides this with generation and delivery-settlement guards."""
+        evidence = self._completion_capture_ending_evidence(context.snapshot, context.occurred_at, ())
+        return evidence.get("shell_refs", []) == context.payload["shell_refs"]
+
+    def _completion_reconsider_if_settled(self) -> None:
+        """Task 5 rearms the controller here only after proving settled idle delivery."""
+
+    def _completion_capture_ending(self, candidate: CompletionCandidate, input_context) -> EndingContext | None:
+        from django.utils import timezone
+
+        existing = self._completion_pending_ending
+        if existing is not None and existing.candidate == candidate:
+            return existing
+        if (self.completion_controller.candidate() != candidate
+                or asyncio.get_running_loop().time() < candidate.deadline):
+            return None
+        snapshot = self.completion_controller.snapshot()
+        occurred_at = timezone.now()
+        opening = self._completion_openings.get(snapshot.turn_id)
+        floor, incarnation, epoch = opening[1:] if opening else (
+            self._completion_source_floor, self._completion_storage_incarnation, self._completion_history_epoch)
+        evidence = self._completion_capture_ending_evidence(snapshot, occurred_at, input_context)
+        payload = {**evidence, "background_work": self.background_work_snapshot(), "candidate": candidate._asdict(),
+            "input_context": input_context, "boundary_refs": self._timeline_refs_for_turn(snapshot),
+            "snapshot": {**snapshot._asdict(), "first_ref": snapshot.first_ref._asdict() if snapshot.first_ref else None,
+                         "final_refs": [ref._asdict() for ref in snapshot.final_refs]},
+            "run_id": snapshot.run_id, "turn_id": snapshot.turn_id, "source_floor": floor,
+            "message_refs": [ref._asdict() for ref in snapshot.final_refs]}
+        context = EndingContext(str(uuid4()), candidate, snapshot, occurred_at,
+            SourceScope(self.provider.value, incarnation, epoch), orjson.loads(orjson.dumps(payload)))
+        self._completion_pending_ending = context
+        self._completion_endings[snapshot.turn_id] = context
+        return context
 
     def _completion_own_task(self, coroutine: Coroutine) -> asyncio.Task:
         task = asyncio.create_task(coroutine, name=f"completion-{self.session_id}")
@@ -490,8 +595,10 @@ class BaseAgent(StopOriginMixin):
         candidate = self.completion_controller.candidate()
         if candidate == self._completion_timer_candidate:
             return
-        self._cancel_completion_timer()
+        self._cancel_completion_timer(preserve_admitted=True)
         if candidate is not None:
+            if self._completion_pending_ending is not None and self._completion_pending_ending.candidate == candidate:
+                return
             self._completion_timer_candidate = candidate
             self._completion_timer_task = asyncio.create_task(
                 self._completion_wait(candidate), name=f"completion-timer-{self.session_id}",
@@ -575,6 +682,7 @@ class BaseAgent(StopOriginMixin):
         """End a quiet candidate immediately, without an SDK control request."""
         if self.completion_controller.candidate() is None:
             return False
+        self._completion_cancel_pending_ending("ended")
         snapshot = self.completion_controller.terminate("ended", asyncio.get_running_loop().time())
         self._cancel_completion_timer(preserve_admitted=True)
         if snapshot is None:

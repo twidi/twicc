@@ -27,6 +27,7 @@ from twicc.providers.db_writer import run_under_db_write_lock
 from .base_agent import BaseAgent
 from .exceptions import AgentStartError, SendDeliveryError
 from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, VerifiedMessageRef
+from .semantic_types import EndingContext, EndingResolution, Classification
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
@@ -828,6 +829,7 @@ class BaseAgentManager:
         agent._completion_confirm_callback = self._confirm_completion
         agent._completion_end_callback = self._end_completion
         agent._completion_retry_callback = self._retry_completion
+        agent._completion_cancel_callback = self._cancel_ending
         agent._state_change_callback = self._on_state_change
 
     def _completion_lifecycle_guard(self, agent: BaseAgent) -> tuple[int, CompletionSnapshot]:
@@ -873,11 +875,22 @@ class BaseAgentManager:
         """Commit the journal and optional ProcessRun transition in one transaction."""
         if agent.ephemeral:
             return True
+        if state is None:
+            if snapshot.turn_id in agent._completion_pending_publications:
+                return False
+            for earlier in tuple(agent._completion_pending_publications.values()):
+                if earlier.ordinal < snapshot.ordinal:
+                    if not await self._persist_completion_admitted(agent, earlier, state=agent.state):
+                        return False
+                    agent._completion_pending_publications.pop(earlier.turn_id, None)
+                    agent._completion_pending_snapshots.pop(earlier.turn_id, None)
         try:
-            message_refs = agent._timeline_refs_for_turn(snapshot)
+            ending = agent._completion_endings.get(snapshot.turn_id) if snapshot.outcome == "normal" else None
+            message_refs = ending.payload["boundary_refs"] if ending else agent._timeline_refs_for_turn(snapshot)
             start_refs = agent._timeline_refs_for_turn(snapshot, start=True)
             current_start_refs = agent._timeline_process_refs(AgentState.ASSISTANT_TURN)
-            input_context = self.timeline_input_origins(agent.session_id) if input_context is None else input_context
+            input_context = (ending.payload["input_context"] if ending else self.timeline_input_origins(agent.session_id)
+                             ) if input_context is None else input_context
             stored = await asyncio.to_thread(self._store_completion_snapshot_admitted, agent, snapshot,
                                             state=state, message_refs=message_refs, start_refs=start_refs,
                                             current_start_refs=current_start_refs,
@@ -900,6 +913,7 @@ class BaseAgentManager:
         values = process_run.__dict__.copy() if process_run is not None else None
         opened_ids = agent._completion_opened_ids.copy()
         published_ids = agent._completion_published_ids.copy()
+        durable_inputs = agent._completion_durable_inputs.copy()
         try:
             with transaction.atomic():
                 yield
@@ -912,6 +926,7 @@ class BaseAgentManager:
                 process_run.__dict__.update(values)
             agent._completion_opened_ids = opened_ids
             agent._completion_published_ids = published_ids
+            agent._completion_durable_inputs = durable_inputs
             raise
 
     def _store_completion_snapshot_admitted(
@@ -924,6 +939,8 @@ class BaseAgentManager:
 
         from twicc.core.models import LogicalTurn
         from twicc.core.services.logical_turns import bind_turn_input, open_logical_turn, store_turn_snapshot
+        from twicc.agent.timeline_hooks import record_logical_turn_boundary
+        from twicc.core.models import TimelineKind
 
         message_refs = agent._timeline_refs_for_turn(snapshot) if message_refs is None else message_refs
         start_refs = agent._timeline_refs_for_turn(snapshot, start=True) if start_refs is None else start_refs
@@ -942,7 +959,10 @@ class BaseAgentManager:
 
         inputs = [(token, cursor, status) for token, (turn_id, cursor, status)
                   in tuple(agent._completion_inputs.items()) if turn_id == snapshot.turn_id]
+        ending = agent._completion_endings.get(snapshot.turn_id) if snapshot.outcome == "normal" else None
         with self._completion_transaction(agent):
+            if ending is not None:
+                self._admit_ending_admitted(agent, ending, apply_claim=False)
             if needs_open:
                 open_logical_turn(
                     turn_id=snapshot.turn_id, session_id=agent.session_id, provider=agent.provider.value,
@@ -954,7 +974,34 @@ class BaseAgentManager:
             if journal_exists:
                 for token, cursor, status in inputs:
                     bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
-            stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
+            closed_at = ending.occurred_at if ending else agent._completion_boundary_times.setdefault(snapshot.turn_id, timezone.now())
+            stored = store_turn_snapshot(snapshot, closed_at=closed_at if snapshot.outcome else None)
+            if needs_open:
+                event_id = record_logical_turn_boundary(agent=agent, snapshot=snapshot, kind=TimelineKind.TURN_STARTED,
+                    occurred_at=opened_at, background_work=None)
+                if event_id is None:
+                    raise RuntimeError("Logical turn opening event was not persisted")
+            if not journal_exists and snapshot.outcome is not None and state is not None:
+                stored = True
+            if stored and snapshot.outcome is not None:
+                event_id = record_logical_turn_boundary(agent=agent, snapshot=snapshot, kind=TimelineKind.TURN_ENDED,
+                    occurred_at=closed_at, background_work=ending.payload.get("background_work") if ending else agent.background_work_snapshot())
+                if event_id is None:
+                    raise RuntimeError("Logical turn ending event was not persisted")
+            if ending is not None:
+                from twicc.core.services.timeline_decisions import accept_fallback, resolve_decision, fulfill_final_message_obligation
+                from twicc.core.models import TimelineDecision
+
+                result = agent._completion_ending_results.get(ending.id, EndingResolution("accepted", "normal"))
+                if result.classification is not None:
+                    resolve_decision(decision_id=ending.id, classification=result.classification, effective_route=result.effective_route, now=result.resolved_at)
+                else:
+                    accept_fallback(decision_id=ending.id, reason=result.reason, now=timezone.now())
+                row = TimelineDecision.objects.get(pk=ending.id)
+                if row.status != "accepted":
+                    raise RuntimeError("Ending claim has no accepted decision")
+                fulfill_final_message_obligation(ending_id=ending.id)
+                TimelineDecision.objects.filter(pk=ending.id, applied_at__isnull=True).update(applied_at=timezone.now())
             verified_refs = [ref for ref in snapshot.final_refs if ref._asdict() in message_refs]
             if verified_refs:
                 from twicc.core.services.timeline_messages import record_verified_messages
@@ -969,24 +1016,13 @@ class BaseAgentManager:
                           for ref in verified_refs],
                     timeline_since=get_watcher().timeline_since, input_origins=input_context,
                 )
-            # Previously opened rows can expire while native work continues. Their
-            # actual completion still owns the public state transition, once.
-            if not journal_exists and snapshot.outcome is not None and state is not None:
-                stored = True
             if stored and state is not None and snapshot.turn_id not in agent._completion_published_ids:
-                if agent.process_run is not None and agent.process_run.state != AgentState.ASSISTANT_TURN.value:
-                    # A newer root interval can finish while its activity
-                    # callback waits behind an older publication. Preserve its
-                    # start even when that obsolete live snapshot is suppressed.
-                    self._persist_process_run_transition_admitted(agent, AgentState.ASSISTANT_TURN, message_refs=start_refs)
-                if state != AgentState.USER_TURN:
-                    # The old closure remains valid when newer work opens.
-                    # Record its end, then restore the newer live boundary
-                    # within this same transaction, without a stale broadcast.
-                    self._persist_process_run_transition_admitted(agent, AgentState.USER_TURN, message_refs=message_refs)
-                self._persist_process_run_transition_admitted(
-                    agent, state, message_refs=message_refs if state == AgentState.USER_TURN else current_start_refs,
-                )
+                # Journal events already record historical boundaries. Only the
+                # current controller owns the live ProcessRun transition.
+                if state == AgentState.USER_TURN and agent.completion_controller.snapshot() != snapshot:
+                    state = AgentState.ASSISTANT_TURN if agent.state == AgentState.DEAD else agent.state
+                self._persist_process_run_transition_admitted(agent, state,
+                    message_refs=message_refs if state == AgentState.USER_TURN else current_start_refs)
                 from django.db import transaction
 
                 transaction.on_commit(lambda: agent._timeline_forget_turn(snapshot.turn_id))
@@ -1017,10 +1053,170 @@ class BaseAgentManager:
         return stored
 
     async def _confirm_completion(self, agent: BaseAgent, candidate: CompletionCandidate) -> None:
-        """Claim only after writer admission; lifecycle hooks execute after unlocking."""
+        """Freeze eligibility before admission; shells keep the general turn open."""
+        if self._agents.get(agent.session_id) is not agent or agent._stop_requested:
+            return
+        if agent.ephemeral:
+            await self._commit_completion(agent, lambda: agent.completion_controller.claim_due(candidate, asyncio.get_running_loop().time()))
+            return
+        context = agent._completion_capture_ending(candidate, self.timeline_input_origins(agent.session_id))
+        if context is None:
+            return
+        if context.payload.get("target", {}).get("shells"):
+            async with agent._completion_publication_lock:
+                task = asyncio.current_task()
+                agent._completion_publication_task = task
+                try:
+                    status = await run_under_db_write_lock(lambda: asyncio.to_thread(self._admit_ending_admitted, agent, context))
+                    if status == "canceled" and agent._completion_pending_ending is context:
+                        agent._completion_cancel_pending_ending("stale_snapshot")
+                        agent.completion_controller.defer_due(candidate, asyncio.get_running_loop().time())
+                finally:
+                    if agent._completion_publication_task is task:
+                        agent._completion_publication_task = None
+            agent._completion_refresh()
+            return
         await self._commit_completion(
-            agent, lambda: agent.completion_controller.claim_due(candidate, asyncio.get_running_loop().time()),
+            agent, lambda: agent._completion_claim_ending(context, reason="no_shells"),
         )
+
+    def _admit_ending_admitted(self, agent: BaseAgent, context: EndingContext, *, apply_claim: bool = True) -> str:
+        """Persist frozen facts and an earlier local race winner in one admission."""
+        from datetime import timedelta
+        from twicc.agent.semantic_types import DecisionRequest
+        from twicc.core.models import TimelineDecision, LogicalTurn
+        from twicc.core.services.timeline_decisions import admit_decision, cancel_decision
+
+        with self._completion_transaction(agent):
+            if TimelineDecision.objects.filter(pk=context.id).exists():
+                result = agent._completion_ending_results.get(context.id)
+                if result and result.status == "canceled":
+                    cancel_decision(decision_id=context.id, reason=result.reason)
+                return TimelineDecision.objects.get(pk=context.id).status
+            live = agent.completion_controller.snapshot()
+            allow_missing = (
+                self._agents.get(agent.session_id) is agent
+                and live.run_id == context.snapshot.run_id and live.turn_id == context.snapshot.turn_id
+                and context.snapshot.turn_id in agent._completion_opened_ids
+                and not LogicalTurn.objects.filter(pk=context.snapshot.turn_id).exists())
+            self._store_completion_snapshot_admitted(agent, context.snapshot,
+                input_context=context.payload["input_context"])
+            request = DecisionRequest(context.id, "ending", agent.session_id, context.scope, context.payload,
+                context.occurred_at + timedelta(seconds=45), "provider")
+            decision_id = admit_decision(request,
+                identity_key=f"ending:{context.snapshot.run_id}:{context.snapshot.turn_id}:{context.candidate.revision}",
+                occurred_at=context.occurred_at, not_before=context.occurred_at, allow_missing_turn=allow_missing)
+            if decision_id != context.id:
+                raise RuntimeError("Ending identity already belongs to another context")
+            result = agent._completion_ending_results.get(context.id)
+            if result and result.status == "canceled":
+                cancel_decision(decision_id=context.id, reason=result.reason)
+            elif result and result.status == "accepted" and apply_claim:
+                closed = agent._completion_pending_publications.get(context.snapshot.turn_id)
+                if closed is not None:
+                    self._store_completion_snapshot_admitted(agent, closed,
+                        state=AgentState.USER_TURN if live == closed else AgentState.ASSISTANT_TURN)
+            return TimelineDecision.objects.get(pk=context.id).status
+
+    async def _cancel_ending(self, agent: BaseAgent, context: EndingContext, reason: str) -> None:
+        if agent.ephemeral:
+            return
+
+        def cancel():
+            from twicc.core.services.timeline_decisions import cancel_decision
+
+            with self._completion_transaction(agent):
+                self._admit_ending_admitted(agent, context, apply_claim=False)
+                cancel_decision(decision_id=context.id, reason=reason)
+
+        await run_under_db_write_lock(lambda: asyncio.to_thread(cancel))
+        if (agent._completion_endings.get(context.snapshot.turn_id) is context
+                and agent._completion_ending_results.get(context.id, EndingResolution("", "")).status == "canceled"):
+            agent._completion_endings.pop(context.snapshot.turn_id, None)
+            agent._completion_ending_results.pop(context.id, None)
+
+    async def apply_ending_decision(self, agent: BaseAgent, decision_id: str, *, classification: Classification | None = None,
+                                  effective_route: str | None = None, fallback_reason: str | None = None) -> bool:
+        """Task 6 applies an unresolved result; workers must not pre-resolve it."""
+        from django.utils import timezone
+        from twicc.core.services.timeline_decisions import resolve_decision
+
+        def current():
+            context = agent._completion_pending_ending
+            if context is None or context.id != decision_id:
+                return None
+            if (self._agents.get(agent.session_id) is not agent or agent._stop_requested
+                    or agent.completion_controller.run_id != context.snapshot.run_id
+                    or agent.completion_controller.candidate() != context.candidate
+                    or agent.completion_controller.snapshot() != context.snapshot
+                    or agent.state != AgentState.ASSISTANT_TURN):
+                agent._completion_cancel_pending_ending("stale_candidate")
+                return None
+            if not agent._completion_shells_are_current(context):
+                agent._completion_cancel_pending_ending("shells_changed")
+                agent.completion_controller.defer_due(context.candidate, asyncio.get_running_loop().time())
+                agent._completion_reconsider_if_settled()
+                return None
+            return context
+
+        snapshot = None
+        async with agent._completion_publication_lock:
+            async def admitted():
+                nonlocal snapshot
+                context = current()
+                if context is None:
+                    return
+                row = await asyncio.to_thread(self._ending_source_current_admitted, agent, context)
+                if row is None:
+                    if agent._completion_pending_ending is context:
+                        agent._completion_cancel_pending_ending("source_changed")
+                        agent.completion_controller.defer_due(context.candidate, asyncio.get_running_loop().time())
+                    return
+                # Recheck every local fact after source proof. No await separates
+                # this check, the deadline decision, and the controller claim.
+                if current() is not context or row.status not in ("pending", "running", "accepted"):
+                    return
+                now = timezone.now()
+                reason = "timeout" if now >= row.expires_at else fallback_reason
+                accepted = reason is not None or row.status == "accepted" or (
+                    classification is not None and classification.verdict == "YES")
+                if accepted:
+                    snapshot = agent._completion_claim_ending(context, reason=reason or "model")
+                    agent._completion_ending_results[context.id] = EndingResolution(
+                        "accepted", reason or "model", classification if reason is None else None, effective_route, now)
+                    await self._persist_completion_admitted(agent, snapshot,
+                        state=AgentState.USER_TURN if agent.completion_controller.snapshot() == snapshot else agent.state)
+                elif classification is not None:
+                    agent.completion_controller.defer_due(context.candidate, asyncio.get_running_loop().time())
+                    agent._completion_pending_ending = None
+                    await asyncio.to_thread(resolve_decision, decision_id=decision_id, classification=classification,
+                        effective_route=effective_route, now=now)
+            try:
+                await run_under_db_write_lock(admitted)
+            finally:
+                if snapshot is not None:
+                    agent._completion_schedule_retry()
+        if snapshot is None:
+            agent._completion_refresh()
+            return False
+        return await self._retry_completion(agent, snapshot)
+
+    def _ending_source_current_admitted(self, agent, context):
+        from twicc.core.services.timeline_messages import _ensure_decision_source, _resolve_groups
+        from twicc.core.models import TimelineDecision, Session
+        from twicc.agent.completion_types import NativeMessageRef
+
+        self._admit_ending_admitted(agent, context)
+        row = TimelineDecision.objects.get(pk=context.id)
+        # A matching nullable scope is not proof of native identity.
+        if row.storage_incarnation is None or row.history_epoch is None:
+            session = Session.objects.filter(pk=agent.session_id, provider=row.provider).first()
+            refs = [NativeMessageRef(**ref) for ref in row.payload.get("message_refs", [])]
+            groups = _resolve_groups(session, refs, floor=row.payload["source_floor"],
+                ceiling=row.payload.get("source_ceiling")) if session is not None and refs else []
+            if not any(ref in refs for group in groups for _, _, aliases in group for ref in aliases):
+                return None
+        return row if _ensure_decision_source(row) else None
 
     async def _end_completion(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
         # Candidate-only interruption claims synchronously before it can wait
@@ -1092,6 +1288,9 @@ class BaseAgentManager:
             agent._completion_pending_publications.pop(snapshot.turn_id, None)
             agent._completion_published_ids.discard(snapshot.turn_id)
             agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
+            ending = agent._completion_endings.pop(snapshot.turn_id, None)
+            if ending is not None:
+                agent._completion_ending_results.pop(ending.id, None)
             if agent.completion_controller.snapshot() != snapshot:
                 agent._completion_refresh()
                 return False

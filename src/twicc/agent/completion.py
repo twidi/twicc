@@ -15,6 +15,7 @@ class CompletionController:
         self.delay_seconds = delay_seconds
         self._snapshot = CompletionSnapshot("", run_id, 0, 0, None, (), None)
         self._ended = False
+        self._deferred = False
         self._holds: frozenset[str] = frozenset()
         self._awaiting = False
         self._inputs: dict[str, str] = {}
@@ -59,6 +60,7 @@ class CompletionController:
                          self._snapshot.turn_id, self._snapshot.revision, self.delay_seconds, cause)
 
     def activity(self, now: float, *, first_ref: NativeMessageRef | None = None) -> None:
+        self._deferred = False
         if (self.is_open and not self._ended
                 and (first_ref is None or self._snapshot.first_ref is not None)):
             # Token deltas keep the same active fact. They do not create a
@@ -82,6 +84,7 @@ class CompletionController:
     def provider_ended(self, now: float, *, final_ref: NativeMessageRef | None = None) -> None:
         if not self.is_open:
             return
+        self._deferred = False
         refs = self._snapshot.final_refs
         if self._ended and (final_ref is None or final_ref in refs):
             return
@@ -129,6 +132,24 @@ class CompletionController:
 
     def candidate(self) -> CompletionCandidate | None:
         return self._candidate
+
+    def defer_due(self, candidate: CompletionCandidate, now: float) -> bool:
+        """Consume one eligible ending while preserving its open turn identity."""
+        if self._candidate != candidate or now < candidate.deadline or not self.is_open:
+            return False
+        self._ended = False
+        self._deferred = True
+        self._changed(now, cause="deferred")
+        return True
+
+    def reconsider(self, now: float) -> None:
+        """Rearm only after the provider proves settled idle shell delivery."""
+        if (not self._deferred or not self.is_open or self._candidate is not None or self._holds or self._awaiting
+                or any(status in ("pending", "uncertain") for status in self._inputs.values())):
+            return
+        self._ended = True
+        self._deferred = False
+        self._changed(now, cause="reconsider")
 
     def claim_due(self, candidate: CompletionCandidate, now: float) -> CompletionSnapshot | None:
         if self._candidate != candidate or now < candidate.deadline or not self.is_open:

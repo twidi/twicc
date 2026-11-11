@@ -566,7 +566,7 @@ def test_failed_confirmation_recovery_keeps_new_interval_active_and_records_both
         boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
             kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
         ).order_by("id").values_list("kind", flat=True)))
-        assert boundaries == [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
+        assert boundaries == [TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
         manager._broadcast_info.assert_not_awaited()
         await agent._notify_state_change()
         states = [call.args[0].state for call in manager._broadcast_info.await_args_list]
@@ -693,7 +693,7 @@ def test_failed_confirmation_then_stop_reconciles_claim_before_process_deletion(
         boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
             kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
         ).order_by("id").values_list("kind", flat=True)))
-        expected = [TimelineKind.TURN_ENDED]
+        expected = [TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED]
         if new_activity:
             expected += [TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED]
         assert boundaries == expected
@@ -742,7 +742,7 @@ def test_recovery_rollback_restores_process_mirror_before_retry(bridge, death):
         boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
             kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
         ).order_by("id").values_list("kind", flat=True)))
-        expected = [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
+        expected = [TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
         if death:
             expected.append(TimelineKind.TURN_ENDED)
         assert boundaries == expected
@@ -791,7 +791,7 @@ def test_cancelled_committed_retry_is_idempotent_and_unblocks_later_interval(bri
         boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
             kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
         ).order_by("id").values_list("kind", flat=True)))
-        assert boundaries == [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
+        assert boundaries == [TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
         manager._broadcast_info.assert_not_awaited()
         agent._cancel_completion_timer()
 
@@ -855,7 +855,7 @@ def test_candidate_interrupt_preserves_an_older_admitted_retry(bridge, older_rej
         boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
             kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
         ).order_by("id").values_list("kind", flat=True)))
-        assert boundaries == [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED]
+        assert boundaries == [TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED]
         states = [call.args[0].state for call in manager._broadcast_info.await_args_list]
         assert states[-1] == AgentState.USER_TURN
         assert states.count(AgentState.USER_TURN) == 1
@@ -914,7 +914,7 @@ def test_expired_interval_closure_rolls_back_then_retries_once(bridge):
         agent._cancel_completion_timer()
         assert agent.state == AgentState.ASSISTANT_TURN
         assert agent.process_run.state == AgentState.ASSISTANT_TURN.value
-        assert await asyncio.to_thread(TimelineEvent.objects.count) == 0
+        assert await asyncio.to_thread(TimelineEvent.objects.count) == 1
         closed = agent.completion_controller.snapshot()
         assert await manager._retry_completion(agent, closed)
         assert agent.state == AgentState.USER_TURN
@@ -955,7 +955,7 @@ def test_cancelled_committed_expired_closure_does_not_repeat_public_boundaries(b
         if agent._completion_tasks:
             await asyncio.gather(*tuple(agent._completion_tasks))
         boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.order_by("id").values_list("kind", flat=True)))
-        assert boundaries == [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
+        assert boundaries == [TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
         assert not agent._completion_pending_publications
         assert not await asyncio.to_thread(LogicalTurn.objects.filter(pk=claimed.turn_id).exists)
         manager._broadcast_info.assert_not_awaited()

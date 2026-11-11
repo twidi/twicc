@@ -284,3 +284,30 @@ def test_same_root_active_stream_does_not_change_persisted_facts(controller):
     controller.activity(20.0, first_ref=ref)
     assert controller.snapshot().first_ref == ref
     assert controller.snapshot().revision > snapshot.revision
+
+
+def test_defer_due_consumes_eligibility_until_safe_reconsider():
+    controller = CompletionController(run_id='run')
+    controller.activity(0)
+    controller.provider_ended(0)
+    candidate = controller.candidate()
+    assert controller.defer_due(candidate, 1)
+    assert controller.is_open and controller.candidate() is None
+    controller.set_holds(frozenset({'hold'}), 2)
+    controller.reconsider(3)
+    assert controller.candidate() is None
+    controller.set_holds(frozenset(), 4)
+    assert controller.candidate() is None
+    controller.reconsider(5)
+    assert controller.candidate().deadline == 6
+    assert controller.claim_due(candidate, 9) is None
+
+
+def test_root_restart_clears_shell_only_reconsideration():
+    controller = CompletionController(run_id='run')
+    controller.activity(0)
+    controller.provider_ended(0)
+    assert controller.defer_due(controller.candidate(), 1)
+    controller.activity(2)
+    controller.reconsider(3)
+    assert controller.candidate() is None

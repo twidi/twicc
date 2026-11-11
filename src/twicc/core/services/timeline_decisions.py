@@ -84,7 +84,7 @@ def _snapshot(payload: dict) -> CompletionSnapshot:
     )
 
 
-def _persist_open_ending(row: TimelineDecision) -> bool:
+def _persist_open_ending(row: TimelineDecision, *, allow_missing_turn: bool = False) -> bool:
     """Keep the exact captured open revision, never a newer journal snapshot."""
     snapshot = _snapshot(row.payload)
     candidate = row.payload["candidate"]
@@ -96,7 +96,9 @@ def _persist_open_ending(row: TimelineDecision) -> bool:
         pk=row.turn_id, run_id=row.run_id, session_id=row.session_id, provider=row.provider,
         ordinal=snapshot.ordinal, outcome__isnull=True, closed_at__isnull=True,
     ).first()
-    if (turn is None or turn.revision > snapshot.revision
+    if turn is None:
+        return allow_missing_turn and not LogicalTurn.objects.filter(pk=row.turn_id).exists()
+    if (turn.revision > snapshot.revision
             or turn.storage_incarnation is not None and turn.storage_incarnation != row.storage_incarnation
             or turn.history_epoch is not None and turn.history_epoch != row.history_epoch):
         return False
@@ -109,8 +111,14 @@ def _persist_open_ending(row: TimelineDecision) -> bool:
 
 def admit_decision(
     request: DecisionRequest, *, identity_key: str, occurred_at: datetime, not_before: datetime,
+    allow_missing_turn: bool = False,
 ) -> str:
-    """Idempotently persist a frozen candidate, under caller-owned admission."""
+    """Idempotently persist a frozen candidate, under caller-owned admission.
+
+    ``allow_missing_turn`` requires the same live controller's proof that its
+    previously persisted journal row expires. It bypasses only row absence.
+    Recovery callers must keep the default and require an open journal row.
+    """
     if request.kind not in ("message", "ending") or request.requested_route not in _ROUTES:
         raise ValueError("Invalid semantic decision kind or route")
     if not identity_key or request.scope.storage_incarnation == "":
@@ -132,7 +140,7 @@ def admit_decision(
             run_id=UUID(payload["run_id"]) if payload.get("run_id") else None,
             turn_id=UUID(payload["turn_id"]) if payload.get("turn_id") else None,
         )
-        if request.kind == "ending" and not _persist_open_ending(row):
+        if request.kind == "ending" and not _persist_open_ending(row, allow_missing_turn=allow_missing_turn):
             row.status, row.reason, row.resolved_at = "canceled", "stale_snapshot", timezone.now()
             row.save(update_fields=["status", "reason", "resolved_at"])
             _record_after_commit(row, event="canceled")
