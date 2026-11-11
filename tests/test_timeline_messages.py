@@ -14,6 +14,10 @@ from twicc.agent.completion_types import NativeMessageRef, VerifiedMessageRef
 from twicc.core.models import LogicalTurn, Project, Session, TimelineEvent
 from twicc.providers.live_sync import LiveSyncLimits
 
+# Export imported fixtures for pytest discovery.
+__all__ = ['accept_legacy_message_decisions']
+
+
 content_row_factory = content_storage_helpers.content_row_factory
 
 pytestmark = pytest.mark.django_db

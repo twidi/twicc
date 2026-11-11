@@ -1,0 +1,125 @@
+{
+  "provenance": {
+    "session_id": "57f9168d-e4b8-4f9c-a834-1a8e6afc8874",
+    "corpus": "semantic-benchmark-v7-v14/cases.json and gold.json",
+    "timezone": "Europe/Paris",
+    "date": "2026-11-09",
+    "sanitization": "Retain selected case IDs, source lines, original times and verdicts. Replace conversation, shell identities and commands. Omit paths, outputs, process IDs and other sessions. Synthetic final boundary uses one second after the final message."
+  },
+  "turn_inputs": [
+    {
+      "occurred_at": "2026-11-09T10:36:47.934000+01:00",
+      "text": "Fix the orphaned test watchdog."
+    },
+    {
+      "occurred_at": "2026-11-09T10:55:52.948000+01:00",
+      "text": "Install the timeout, measure the suite and verify the limit."
+    }
+  ],
+  "entries": [
+    {
+      "source_case": "message-14886",
+      "kind": "message",
+      "occurred_at": "2026-11-09T10:39:58.803000+01:00",
+      "source_line": 283,
+      "text": "The reproduction passes. I will run one more check.",
+      "model_response": "NO\nWork continues."
+    },
+    {
+      "source_case": "message-14894",
+      "kind": "message",
+      "occurred_at": "2026-11-09T10:40:23.104000+01:00",
+      "source_line": 291,
+      "text": "The watchdog stops an orphaned test. All checks pass.",
+      "model_response": "YES\nDelivered result."
+    },
+    {
+      "source_case": "message-14924",
+      "kind": "message",
+      "occurred_at": "2026-11-09T10:56:07.893000+01:00",
+      "source_line": 329,
+      "text": "Installation and suite measurement are running.",
+      "model_response": "NO\nWork continues."
+    },
+    {
+      "source_case": "ending-14925",
+      "kind": "ending",
+      "occurred_at": "2026-11-09T10:56:08.923872+01:00",
+      "shell": {
+        "key": "measure",
+        "command": "run-test-suite --measure",
+        "started_at": "2026-11-09T09:56:05.624Z",
+        "source_start_line": 320
+      },
+      "model_response": "NO\nThe requested verification still runs."
+    },
+    {
+      "source_case": "message-14929",
+      "kind": "message",
+      "occurred_at": "2026-11-09T11:01:22.578000+01:00",
+      "source_line": 338,
+      "text": "The suite still runs. I am waiting for its results.",
+      "model_response": "NO\nWork continues."
+    },
+    {
+      "source_case": "ending-14930",
+      "kind": "ending",
+      "occurred_at": "2026-11-09T11:01:23.619024+01:00",
+      "shell": {
+        "key": "measure",
+        "command": "run-test-suite --measure",
+        "started_at": "2026-11-09T09:56:05.624Z",
+        "source_start_line": 320
+      },
+      "model_response": "NO\nThe requested verification still runs."
+    },
+    {
+      "source_case": "message-14932",
+      "kind": "message",
+      "occurred_at": "2026-11-09T11:02:59.933000+01:00",
+      "source_line": 394,
+      "text": "The limit is configured. Verification and the full suite still run.",
+      "model_response": "NO\nWork continues."
+    },
+    {
+      "source_case": "ending-14933",
+      "kind": "ending",
+      "occurred_at": "2026-11-09T11:03:00.986271+01:00",
+      "shell": {
+        "key": "verify",
+        "command": "run-test-suite --verify",
+        "started_at": "2026-11-09T10:02:57.759Z",
+        "source_start_line": 384
+      },
+      "model_response": "NO\nThe requested verification still runs."
+    },
+    {
+      "source_case": "message-14944",
+      "kind": "message",
+      "occurred_at": "2026-11-09T11:08:20.554000+01:00",
+      "source_line": 403,
+      "text": "The timeout checks pass. The full suite still runs.",
+      "model_response": "NO\nWork continues."
+    },
+    {
+      "source_case": "ending-14945",
+      "kind": "ending",
+      "occurred_at": "2026-11-09T11:08:21.601943+01:00",
+      "shell": {
+        "key": "verify",
+        "command": "run-test-suite --verify",
+        "started_at": "2026-11-09T10:02:57.759Z",
+        "source_start_line": 384
+      },
+      "model_response": "NO\nThe requested verification still runs."
+    },
+    {
+      "source_case": "message-14947",
+      "kind": "message",
+      "occurred_at": "2026-11-09T11:09:13.174000+01:00",
+      "source_line": 423,
+      "text": "The timeout is configured. The full suite passes. Verification is complete.",
+      "model_response": "YES\nDelivered result."
+    }
+  ]
+}

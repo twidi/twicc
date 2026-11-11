@@ -12,6 +12,10 @@ from tests.test_timeline_messages import live_session, content_row_factory
 from twicc.core.models import LogicalTurn, TimelineDecision, TimelineEvent, ProcessRun
 from twicc.core.services import timeline_decisions as decisions
 
+# Export imported fixtures for pytest discovery.
+__all__ = ['bridge', 'content_row_factory', 'decision_fixture', 'live_session']
+
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

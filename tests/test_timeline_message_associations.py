@@ -14,8 +14,12 @@ from tests.timeline_decision_helpers import accept_legacy_message_decisions
 from twicc.agent.completion_types import NativeMessageRef
 from twicc.agent.states import AgentState
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import LogicalTurn, ProcessRun, Session, SessionItem, TimelineEvent, TimelineKind
+from twicc.core.models import TimelineDecision, LogicalTurn, ProcessRun, Session, SessionItem, TimelineEvent, TimelineKind
 from twicc.core.services.timeline_messages import record_indexed_messages, recover_referenced_messages
+
+# Export imported fixtures for pytest discovery.
+__all__ = ['accept_legacy_message_decisions', 'bridge', 'content_row_factory']
+
 
 
 def refs(event):
@@ -146,11 +150,13 @@ def test_old_closure_restores_new_start_with_new_trigger(bridge):
         agent._timeline_observe_message(new_user, role="user")
         await asyncio.to_thread(manager._store_completion_snapshot_admitted, agent, old,
                                 state=AgentState.ASSISTANT_TURN)
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
     asyncio.run(scenario())
     end = TimelineEvent.objects.get(kind=TimelineKind.TURN_ENDED)
-    start = TimelineEvent.objects.get(kind=TimelineKind.TURN_STARTED)
+    starts = list(TimelineEvent.objects.filter(kind=TimelineKind.TURN_STARTED).order_by("id"))
     assert refs(end) == [old_user]
-    assert refs(start) == [new_user]
+    assert [refs(start) for start in starts] == [[], [new_user]]
+    assert starts[0].id < end.id < starts[1].id
 
 
 def test_rollback_retains_references_until_end_commit(bridge):
@@ -182,6 +188,7 @@ def test_automatic_start_has_no_later_input_trigger(bridge):
         agent._completion_activity(first_ref=NativeMessageRef("codex_item", "automatic", "physical"))
         agent._timeline_observe_message(NativeMessageRef("codex_item", "later-input", "physical"), role="user")
         await manager._persist_process_run_transition(agent, AgentState.ASSISTANT_TURN)
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
     asyncio.run(scenario())
     assert refs(TimelineEvent.objects.get(kind=TimelineKind.TURN_STARTED)) == []
 
@@ -385,7 +392,17 @@ def test_open_claude_candidate_waits_for_successful_native_end_proof(bridge, con
         asyncio.run(scenario())
     messages = list(TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT))
     assert [message.data["text"] for message in messages] == (["candidate"] if ending == "end" else [])
-    assert not TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists()
+    turn = LogicalTurn.objects.get(session_id=agent.session_id)
+    if ending == "interrupted":
+        assert turn.outcome == "ended" and turn.closed_at is not None
+        boundary = TimelineEvent.objects.get(kind=TimelineKind.TURN_ENDED)
+        assert boundary.occurred_at == turn.closed_at
+        assert refs(boundary) == [NativeMessageRef("claude_uuid", "user")]
+        assert turn.final_refs == [final._asdict()]
+        assert not TimelineDecision.objects.filter(kind="ending", force_pending=True).exists()
+    else:
+        assert turn.outcome is None and turn.closed_at is None
+        assert not TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists()
 
 
 def test_closed_codex_markerless_final_uses_saved_refs_without_runtime(bridge, content_row_factory):

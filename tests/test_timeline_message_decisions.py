@@ -15,6 +15,10 @@ from twicc.agent.semantic_types import Classification
 from twicc.core.models import Session, TimelineDecision, TimelineEvent
 from twicc.core.services import timeline_decisions, timeline_messages
 
+# Export imported fixtures for pytest discovery.
+__all__ = ['bridge', 'content_row_factory', 'live_session']
+
+
 pytestmark = pytest.mark.django_db
 
 
@@ -172,13 +176,15 @@ def _assert_forced_message_log(live_session, prior_verdict, caplog, django_captu
         pytest.skip('Claude diagnostics')
     f.append(f.message('answer', 'private candidate'))
     row = TimelineDecision.objects.get()
-    with caplog.at_level(logging.DEBUG, logger='twicc.core.services.timeline_decisions'):
-        with django_capture_on_commit_callbacks(execute=True):
-            if prior_verdict:
-                decide(row, prior_verdict)
-            e = ending(f, [ref(f, 'answer')])
-            assert timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
-            assert timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
+    with (
+        caplog.at_level(logging.DEBUG, logger='twicc.core.services.timeline_decisions'),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        if prior_verdict:
+            decide(row, prior_verdict)
+        e = ending(f, [ref(f, 'answer')])
+        assert timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
+        assert timeline_decisions.fulfill_final_message_obligation(ending_id=str(e.pk))
     import orjson
     records = [orjson.loads(record.message.split('semantic_decision ', 1)[1]) for record in caplog.records
                if 'semantic_decision ' in record.message]
@@ -265,10 +271,9 @@ def test_gate_and_rollback_emit_no_signal_before_commit(live_session, django_cap
         assert not poke.called
         row = TimelineDecision.objects.get()
         timeline_decisions.accept_fallback(decision_id=str(row.pk), reason='timeout', now=timezone.now())
-        with django_capture_on_commit_callbacks(execute=True):
-            with transaction.atomic():
-                assert timeline_decisions.publish_message_if_ready(decision_id=str(row.pk))
-                transaction.set_rollback(True)
+        with django_capture_on_commit_callbacks(execute=True), transaction.atomic():
+            assert timeline_decisions.publish_message_if_ready(decision_id=str(row.pk))
+            transaction.set_rollback(True)
         assert not poke.called
         with django_capture_on_commit_callbacks(execute=True):
             assert timeline_decisions.publish_message_if_ready(decision_id=str(row.pk))

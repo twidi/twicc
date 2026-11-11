@@ -88,6 +88,9 @@ async def drain(agent):
     agent._cancel_completion_timer()
     while agent._completion_tasks:
         await asyncio.gather(*tuple(agent._completion_tasks))
+        # gather() can finish eagerly. Let queued ownership callbacks remove
+        # completed tasks before inspecting the set again.
+        await asyncio.sleep(0)
 
 
 async def physical(f, identity, text):

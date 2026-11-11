@@ -1,7 +1,6 @@
 """Offline worker scheduling, original deadlines, and retry obligations."""
 
 import asyncio
-from datetime import timedelta
 
 import pytest
 from django.utils import timezone
@@ -11,6 +10,10 @@ from tests.test_timeline_messages import live_session, content_row_factory
 from tests.test_completion_publication import bridge, open_candidate
 from twicc.agent.semantic_types import Classification
 from twicc.core.models import TimelineDecision
+
+# Export imported fixtures for pytest discovery.
+__all__ = ['bridge', 'content_row_factory', 'decision_fixture', 'live_session']
+
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

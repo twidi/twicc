@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,7 +21,7 @@ def request(payload=None, *, kind='message', route='provider'):
     return DecisionRequest('decision-id', kind, 'session-id', SourceScope('claude_code', 'source-id', 3),
                            payload or {'target': {'text': 'Full candidate'}, 'previous_messages': [],
                                        'source_boundary': 10, 'tool_evidence': []},
-                           datetime(2030, 1, 1, tzinfo=timezone.utc), route)
+                           datetime(2030, 1, 1, tzinfo=UTC), route)
 
 
 @pytest.mark.parametrize('provider,choice,want', [

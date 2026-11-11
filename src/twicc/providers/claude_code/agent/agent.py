@@ -1836,11 +1836,11 @@ class ClaudeCodeAgent(BaseAgent):
     def completion_shell_snapshot(self) -> tuple[dict, ...]:
         from datetime import UTC, datetime
 
-        return tuple(dict(key=shell.key, owner="root" if shell.owner == ShellOwner.MAIN else "subagent",
-            command=shell.command, description=shell.description,
-            started_at=datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), start_line=None,
-            owner_ref=shell.owner_ref, generation=self._live_shell_tasks[shell.key].generation,
-            output_path=shell.output_path, tool_id=shell.tool_use_id)
+        return tuple({"key": shell.key, "owner": "root" if shell.owner == ShellOwner.MAIN else "subagent",
+            "command": shell.command, "description": shell.description,
+            "started_at": datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), "start_line": None,
+            "owner_ref": shell.owner_ref, "generation": self._live_shell_tasks[shell.key].generation,
+            "output_path": shell.output_path, "tool_id": shell.tool_use_id}
             for shell in self._shell_notice_snapshot().shells)
 
     def _completion_root_delivery_idle(self) -> bool:

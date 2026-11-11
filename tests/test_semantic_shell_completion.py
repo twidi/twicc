@@ -15,6 +15,10 @@ from twicc.agent.completion_types import CompletionCandidate, CompletionSnapshot
 from twicc.agent.semantic_types import EndingContext, SourceScope
 from tests.test_timeline_messages import content_row_factory, live_session
 
+# Export imported fixtures for pytest discovery.
+__all__ = ['content_row_factory', 'live_session']
+
+
 
 async def shell(agent, key="tests", command="uv run pytest", *, parent=None):
     await feed(agent, bash_use("tool-" + key, command, parent), system("task_started",
@@ -249,10 +253,10 @@ def test_root_tool_refs_are_frozen_and_child_tools_are_excluded(monkeypatch):
         agent._cancel_completion_timer()
 
         agent = codex_agent()
-        await agent._handle_stream_event(event("item/completed", item=dict(type="commandExecution", id="tool",
-            command="uv run pytest", process_id="12", status="completed")))
-        await agent._handle_stream_event(event("item/completed", thread_id="child", item=dict(
-            type="commandExecution", id="child-tool", command="echo child", process_id="13")))
+        await agent._handle_stream_event(event("item/completed", item={"type": "commandExecution", "id": "tool",
+            "command": "uv run pytest", "process_id": "12", "status": "completed"}))
+        await agent._handle_stream_event(event("item/completed", thread_id="child", item={
+            "type": "commandExecution", "id": "child-tool", "command": "echo child", "process_id": "13"}))
         assert list(agent._completion_tool_refs) == [NativeMessageRef("codex_item", "tool", "physical-1")]
         agent._cancel_completion_timer()
     asyncio.run(scenario())

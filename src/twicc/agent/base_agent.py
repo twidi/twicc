@@ -532,11 +532,11 @@ class BaseAgent(StopOriginMixin):
         """Return complete live shell facts without notice eligibility filters."""
         state = self.shell_notice_state()
         shells = state.shells if state is not None else []
-        return tuple(dict(key=shell.key, owner="root" if shell.owner == "main" else "subagent",
-            command=shell.command, description=shell.description,
-            started_at=datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), start_line=None,
-            owner_ref=shell.owner_ref, generation=shell.started_at, output_path=shell.output_path,
-            tool_id=shell.tool_use_id) for shell in shells)
+        return tuple({"key": shell.key, "owner": "root" if shell.owner == "main" else "subagent",
+            "command": shell.command, "description": shell.description,
+            "started_at": datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), "start_line": None,
+            "owner_ref": shell.owner_ref, "generation": shell.started_at, "output_path": shell.output_path,
+            "tool_id": shell.tool_use_id} for shell in shells)
 
     def _completion_capture_ending_evidence(self, snapshot, occurred_at, input_context) -> dict:
         shells = self.completion_shell_snapshot()

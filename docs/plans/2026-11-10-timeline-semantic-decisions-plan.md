@@ -748,29 +748,79 @@ Do not mark publication successful after DB failure; retain work for retry.
 
 **Interfaces:** No new product interfaces.
 
-- [ ] **Step 1:** Build a sanitized deterministic fixture from session `57f9168d-e4b8-4f9c-a834-1a8e6afc8874`.
+- [x] **Step 1:** Build a sanitized deterministic fixture from session `57f9168d-e4b8-4f9c-a834-1a8e6afc8874`.
 Use Europe/Paris times on 2026-11-09 and fake classifier verdicts.
 Assert 10:39 progress is suppressed, 10:40 final appears, and 10:55–11:09 stays one logical turn.
 Reject 10:56, 11:01, 11:03, and 11:08 shell endings; publish the 11:09 final with its original time.
 Add synthetic variants for useful mid-work answers, user-input-first, root-first, already-rejected input, and inference timeout.
-- [ ] **Step 2:** Run all new tests:
+- [x] **Step 2:** Run all new tests:
 `uv run pytest tests/test_timeline_decisions.py tests/test_timeline_classification.py tests/test_timeline_message_decisions.py tests/test_semantic_completion_integration.py tests/test_semantic_shell_completion.py tests/test_timeline_decision_task.py tests/test_timeline_decision_recovery.py tests/test_timeline_semantic_reference.py -q`.
 Expected: PASS.
-- [ ] **Step 3:** Run relevant existing regression suites:
+- [x] **Step 3:** Run relevant existing regression suites:
 `uv run pytest tests/test_completion_integration.py tests/test_root_compute_completion.py tests/test_completion_publication.py tests/test_completion_wait_tokens.py tests/test_completion_controller.py tests/test_claude_completion.py tests/test_codex_completion.py tests/test_hybrid_completion.py tests/test_logical_turn_answers.py tests/test_logical_turns.py tests/test_wait_reply.py tests/test_cli_sessions_wait_reply.py tests/test_mcp_events_logical_turns.py tests/test_timeline_messages.py tests/test_timeline_message_associations.py tests/test_timeline_message_origins.py tests/test_title_suggestion_service.py tests/test_title_suggestion_routing.py tests/test_title_suggestion_client_failures.py tests/test_shell_notice.py tests/test_shell_notice_manager.py tests/test_shell_notice_claude.py tests/test_shell_notice_codex.py tests/test_logical_turn_cleanup_task.py -q`.
 Expected: PASS outside the requested behavior changes.
-- [ ] **Step 4:** Run `uvx ruff check` on changed Python files. Expected: no findings.
+- [x] **Step 4:** Run `uvx ruff check` on changed Python files. Expected: no findings.
 No frontend build is needed. No live diagnostic is required unless implementation changes a small-model constant, SDK, or vendored runtime.
 Do not install packages, apply migrations, or restart the main server as part of these checks.
-- [ ] **Step 5:** Commit task files with `test(timeline): cover semantic completion and accepted race policies`.
+- [x] **Step 5:** Commit task files with `test(timeline): cover semantic completion and accepted race policies`.
 Report validation and the remaining user-run migration/restart operations.
+
+## Execution results — 2026-11-11
+
+Tasks 1–6 are implemented and reviewed. Task 7 adds sanitized reference playback and synthetic integration variants.
+Task 7 review remains pending. No live benchmark or model comparison is repeated.
+
+### Implemented contract corrections
+
+- The actual migration is `0173_timeline_semantic_decisions`, after `0172_session_compressed_size`.
+- Decision deadlines include queueing, preparation, inference and writer admission.
+  Cooperative SDK cleanup remains owned and counts toward the four-call capacity.
+  Cleanup cannot extend a decision deadline or launch unbounded replacements.
+  Stalled cooperative cleanup can delay orderly shutdown.
+  Shutdown joins decision workers, then calls `drain_classifier_calls()` before writer/event-loop shutdown.
+- Codex receives its native thread ID before agent/controller construction and before durable admission.
+  The original draft-to-native rekey instruction above describes a nonexistent gate.
+  `test_codex_first_ending_admission_uses_native_id` verifies the actual factory and binding path instead.
+  No decision rekey service is added.
+- The live missing-journal exception uses caller-authorized, default-false `allow_missing_turn`.
+  Boot recovery still requires an exact matching open journal row.
+- Ending enrichment runs once before initial insertion, from frozen exact final/tool references and source scope.
+  Retries never capture a later source tail.
+
+### Task 7 reference and regression results
+
+- The fixture derives from the reference session's frozen `cases.json` and `gold.json` entries.
+  It retains selected case IDs, source lines and original Europe/Paris event times on 2026-11-09.
+  It replaces private text, shell identities and commands, and omits private paths, outputs and process IDs.
+  The no-shell final boundary is synthetic, one second after the original 11:09 final message.
+- Offline route responses run through real context construction, binary parsing, source validation, durable claims,
+  result application, message publication, manager completion, journal boundaries and exact final forcing.
+  Reference assertions cover the suppressed 10:39 progress, original 10:40 final, one 10:55–11:09 logical turn,
+  four rejected shell endings, and the original 11:09 final timestamp.
+  Synthetic variants cover useful mid-work answers, user-first, root-first, already-rejected input and timeout fallback.
+- New-test selection: **245 passed, 31 skipped** in **16.02s**.
+- Existing-regression selection: **894 passed, 17 skipped** in **29.07s**.
+- Three legacy association tests require the reviewed journal-owned boundary contract.
+  They now persist actual open/new snapshots, preserve exact source attribution and ordering,
+  and verify exceptional interrupted closure without normal final forcing.
+- An intermittent existing test drain starves queued task-ownership callbacks when `asyncio.gather()` completes eagerly.
+  A deterministic probe reproduces the stall (exit 124), then completes after a one-tick yield (exit 0).
+  The corrected helper and reference playback pass the affected two-provider/reference selection: **10 passed** in **6.28s**.
+- Ruff checks all 37 feature-changed Python paths, the new reference test, and the corrected integration test helper.
+  Feature-introduced findings are corrected. Four unchanged baseline findings remain:
+  `logical_turns.py:27,71` (`C408`), `test_completion_publication.py:204` (`B023`),
+  and `test_timeline_message_associations.py:336` (`C408`).
+  All four reproduce at the pre-feature commit `3316128f7` (the association finding is then at line 328).
+  This scoped validation exception preserves unrelated baseline code and changes no lint configuration.
+- No frontend build or live diagnostic applies. No SDK or small-model constant changes.
+- Migration application and backend restart remain user-run operations. Neither runs during validation.
 
 ## Execution and review boundaries
 
 Execute tasks in order because interfaces and controller files are shared.
 Do not deploy partially connected infrastructure.
 Per-task commits are review checkpoints, not independent releases.
-Implementation has not started.
+Tasks 1–6 are implemented and reviewed. Task 7 implementation and selected validation are complete; Task 7 review remains pending.
 
 ## Self-review
 
@@ -788,7 +838,7 @@ Markdown fences balance, and obsolete JSON-response/per-shell schema and provisi
 
 ## Adversarial review
 
-Status: Earlier simplified architecture passed adversarial review. Implementation has not started.
+Status: Earlier simplified architecture passed adversarial review. Tasks 1–6 are implemented and reviewed. Task 7 implementation and selected validation are complete; Task 7 review remains pending.
 The 2026-11-11 prompt/context/logging amendment receives self-review only; do not infer another adversarial pass.
 
 Two independent reviewers examine runtime feasibility and spec coverage.

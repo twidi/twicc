@@ -267,10 +267,13 @@ def test_database_failure_is_not_fallback(decision_fixture, caplog, django_captu
             raise OperationalError("simulated unavailable database")
         return execute(sql, params, many, context)
 
-    with pytest.raises(OperationalError), django_capture_on_commit_callbacks(execute=True):
-        with connection.execute_wrapper(unavailable_database):
-            resolve_decision(decision_id=decision_id, classification=Classification("YES", "useful"),
-                             effective_route="haiku", now=now)
+    with (
+        pytest.raises(OperationalError),
+        django_capture_on_commit_callbacks(execute=True),
+        connection.execute_wrapper(unavailable_database),
+    ):
+        resolve_decision(decision_id=decision_id, classification=Classification("YES", "useful"),
+                         effective_route="haiku", now=now)
     assert TimelineDecision.objects.get(pk=decision_id).status == "pending"
     assert not records(caplog)
 
@@ -341,7 +344,7 @@ def test_rollback_does_not_log_applied_outcome(decision_fixture, caplog, django_
 def test_unknown_scope_binds_only_matching_exact_native_proof(decision_fixture):
     session, now, request = decision_fixture
     decision_id = admit(request._replace(scope=SourceScope("claude_code", None, None)), now)
-    args = dict(decision_id=decision_id, scope=request.scope)
+    args = {"decision_id": decision_id, "scope": request.scope}
     assert not bind_decision_source(**args, observed_ref=NativeMessageRef("claude_message", "other"))
     assert not bind_decision_source(**args, observed_ref=NativeMessageRef("unresolved", "exact-answer"))
     assert bind_decision_source(**args, observed_ref=NativeMessageRef("claude_message", "exact-answer"))

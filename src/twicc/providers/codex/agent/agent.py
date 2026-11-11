@@ -2033,12 +2033,12 @@ class CodexAgent(BaseAgent):
         from datetime import UTC, datetime
 
         facts = {shell.key: shell for shell in self._shell_notice_snapshot().shells}
-        return tuple(dict(key=f"{thread_id}:{process_id}",
-            owner="root" if thread_id == self.session_id else "subagent", command=tracked.command,
-            description=facts[f"{thread_id}:{process_id}"].description,
-            started_at=datetime.fromtimestamp(tracked.started_at, tz=UTC).isoformat(),
-            start_line=None, owner_ref=None if thread_id == self.session_id else thread_id,
-            generation=tracked.generation, output_path=None, tool_id=None)
+        return tuple({"key": f"{thread_id}:{process_id}",
+            "owner": "root" if thread_id == self.session_id else "subagent", "command": tracked.command,
+            "description": facts[f"{thread_id}:{process_id}"].description,
+            "started_at": datetime.fromtimestamp(tracked.started_at, tz=UTC).isoformat(),
+            "start_line": None, "owner_ref": None if thread_id == self.session_id else thread_id,
+            "generation": tracked.generation, "output_path": None, "tool_id": None}
             for (thread_id, process_id), tracked in self._live_shells.items() if f"{thread_id}:{process_id}" in facts)
 
     def _completion_root_delivery_idle(self) -> bool:

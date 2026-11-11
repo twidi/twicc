@@ -125,11 +125,11 @@ def admit_decision(
         raise ValueError("Decision identity and source incarnation must not be empty")
     # A JSON copy freezes caller-owned dictionaries, including nested references.
     payload = orjson.loads(orjson.dumps(request.payload))
-    identity = dict(
-        session_id=request.session_id, provider=request.scope.provider,
-        storage_incarnation=request.scope.storage_incarnation, history_epoch=request.scope.history_epoch,
-        kind=request.kind, identity_key=identity_key,
-    )
+    identity = {
+        "session_id": request.session_id, "provider": request.scope.provider,
+        "storage_incarnation": request.scope.storage_incarnation, "history_epoch": request.scope.history_epoch,
+        "kind": request.kind, "identity_key": identity_key,
+    }
     with transaction.atomic():
         row = TimelineDecision.objects.filter(**identity).first()
         if row is not None:
@@ -152,10 +152,10 @@ def _resolve(
     row: TimelineDecision, *, status: str, reason: str, now: datetime,
     effective_route: str | None, event: str, verdict: str | None = None,
 ) -> bool:
-    values = dict(
-        status=status, reason=_reason(reason), resolved_at=now, effective_route=effective_route,
-        force_pending=row.kind == "ending" and status == "accepted",
-    )
+    values = {
+        "status": status, "reason": _reason(reason), "resolved_at": now, "effective_route": effective_route,
+        "force_pending": row.kind == "ending" and status == "accepted",
+    }
     changed = TimelineDecision.objects.filter(pk=row.pk, status__in=_UNRESOLVED, forced=False).update(**values)
     if not changed:
         return False
@@ -212,7 +212,7 @@ def force_message(*, decision_id: str, reason: str) -> None:
         row = rows.first()
         if row is None:
             return
-        values = dict(status="accepted", forced=True, reason=_reason(reason), resolved_at=row.resolved_at or timezone.now())
+        values = {"status": "accepted", "forced": True, "reason": _reason(reason), "resolved_at": row.resolved_at or timezone.now()}
         if not rows.update(**values):
             return
         for key, value in values.items():
