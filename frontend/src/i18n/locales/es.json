@@ -3656,7 +3656,7 @@
     "usage.provider.label": "Uso de {provider}",
     "usage.provider.next": "Haz clic para cambiar al siguiente proveedor",
     "usage.quota.back": "Vuelve {moment}",
-    "usage.quota.burnRate": "Tasa de consumo",
+    "usage.quota.burnRate": "Ritmo",
     "usage.quota.capped": "Limitado: la tasa de consumo supera el 100 %. La estimación a 30 días usa el valor limitado.",
     "usage.quota.currentPace": "Al ritmo actual",
     "usage.quota.exhausted": "Cuota agotada",

@@ -3656,7 +3656,7 @@
     "usage.provider.label": "Nutzung {provider}",
     "usage.provider.next": "Klicken, um zum nächsten Anbieter zu wechseln",
     "usage.quota.back": "Wieder verfügbar {moment}",
-    "usage.quota.burnRate": "Verbrauchsrate",
+    "usage.quota.burnRate": "Rate",
     "usage.quota.capped": "Begrenzt: Die Verbrauchsrate liegt über 100 %. Die 30-Tage-Schätzung verwendet den begrenzten Wert.",
     "usage.quota.currentPace": "Im aktuellen Tempo",
     "usage.quota.exhausted": "Kontingent aufgebraucht",
