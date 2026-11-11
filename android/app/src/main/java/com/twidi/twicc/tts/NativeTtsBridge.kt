@@ -36,7 +36,10 @@ class NativeTtsBridge(
                     val label = if (scope.isNull("label")) null else scope.string("label")
                     val boundary = args.string("boundary", 40)
                     require(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z").matches(boundary))
-                    TtsCommand.Listen(document, ListeningScope(kind, id, label), args.boolean("includeMuted"), boundary, args.string("pageId"))
+                    val telemetryEpoch = if (args.isNull("telemetryEpoch")) null else args.string("telemetryEpoch", 64).also {
+                        require(Regex("[a-f0-9]{64}").matches(it))
+                    }
+                    TtsCommand.Listen(document, ListeningScope(kind, id, label), args.boolean("includeMuted"), boundary, args.string("pageId"), telemetryEpoch)
                 }
                 "tts.set_muted" -> TtsCommand.SetMuted(document, args.string("activationId"), args.boolean("includeMuted"))
                 "tts.disable" -> TtsCommand.Disable(document, args.string("activationId"))

@@ -44,9 +44,10 @@ class NativeTtsBridgeTest {
         assertEquals("selection", ((command.request["summary"] as Map<*, *>)["source"] as Map<*, *>)["text"])
     }
     @Test fun listeningRestoresStableTimelinePageWithoutReplacingDocumentAuthority() {
-        bridge().request("tts.listen", JSONObject("""{"pageId":"project-one","scope":{"kind":"project","id":"project-one","label":"One"},"includeMuted":true,"boundary":"2026-11-05T12:00:00.000000Z"}"""))
+        bridge().request("tts.listen", JSONObject("""{"pageId":"project-one","scope":{"kind":"project","id":"project-one","label":"One"},"includeMuted":true,"boundary":"2026-11-05T12:00:00.000000Z"}""").put("telemetryEpoch", "a".repeat(64)))
         val command = commands.single() as TtsCommand.Listen
         assertEquals(owner, command.owner); assertEquals("project-one", command.pageId)
+        assertEquals("a".repeat(64), command.telemetryEpoch)
         val controller = TtsController("instance")
         controller.dispatch(TtsCommand.AttachDocument(owner)); controller.dispatch(command)
         assertEquals("project-one", controller.snapshot().listening!!.pageId)

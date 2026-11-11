@@ -36,6 +36,22 @@ def test_scalar_patch_is_merged_and_version_bumped(temp_settings):
     assert r2.version == v1 + 1
 
 
+def test_telemetry_setting_observes_short_off_on_and_storage_failure_is_nonfatal(temp_settings, monkeypatch, tmp_path):
+    from twicc.telemetry import activity, state
+    monkeypatch.setattr(state, 'get_data_dir', lambda: tmp_path)
+    _update({'telemetryNoticeSeen': True, 'telemetryEnabled': True})
+    token = activity.collection_token()
+    _update({'telemetryEnabled': False})
+    _update({'telemetryEnabled': True})
+    assert activity.collection_token() != token
+    activity.record_activity('manual_tts_messages', token=token)
+    assert not state.ensure_state()['days']
+    def fail(_):
+        raise OSError('Full disk')
+    monkeypatch.setattr(state, 'note_active_transition', fail)
+    assert _update({'telemetryEnabled': False}).status == 'accepted'
+
+
 class _NoAgentsRegistry:
     """Stub: every provider resolves to a manager with no live agents."""
 

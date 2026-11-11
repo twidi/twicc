@@ -2,6 +2,7 @@ import { remoteUiMessage } from '../i18n/remoteMessages.js'
 import { i18n } from '../i18n/index.js'
 import { defineStore } from 'pinia'
 import { generateUUID } from '../utils/crypto.js'
+import { captureTelemetry, reportActivity } from '../utils/telemetryClient.js'
 import { isPcmType, parsePcmType, pcmToWavBlob } from '../utils/pcmAudio.js'
 import { createPcmStreamPlayer } from '../utils/pcmStreamPlayer.js'
 import { buffersSending, currentPlatform, playbackMode, speechEndResult, unreachableMessage } from '../utils/speechOutcome.js'
@@ -156,6 +157,7 @@ function primePlayers() {
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
 async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '', summaryRef = null, identity = null, nativeRequest = null }) {
+    const telemetryToken = captureTelemetry()
     if (store.nativeNegotiating) return { ok: false, error: i18n.global.t('session.speech.errors.initializing') }
     const native = nativeClients.get(store)?.client
     if (store.nativeMode) {
@@ -243,7 +245,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     }
     controller = null
     currentAudio = { id: opened.audioId, store }
-    return new Promise(resolveStart => playOpened(store, mine, opened, { text, source, configId, owner, ...(identity ? { identity } : {}) }, resolveStart))
+    return new Promise(resolveStart => playOpened(store, mine, opened, { text, source, configId, owner, telemetryToken, ...(identity ? { identity } : {}) }, resolveStart))
 }
 
 function backToIdle(store, mine) {
@@ -254,7 +256,7 @@ function backToIdle(store, mine) {
 }
 
 /** Play the open audio with the player of its type and platform, then run the ending step. */
-function playOpened(store, mine, { audioId, contentType }, { text, source, configId, owner, identity }, resolveStart) {
+function playOpened(store, mine, { audioId, contentType }, { text, source, configId, owner, identity, telemetryToken }, resolveStart) {
     let started = false
     let finishing = false
     let resolveEnded
@@ -282,6 +284,7 @@ function playOpened(store, mine, { audioId, contentType }, { text, source, confi
         onPlaying() {
             if (generation !== mine || started || finishing) return
             started = true
+            if (!configId) reportActivity(owner === null ? 'manual_tts_messages' : 'timeline_tts_messages', telemetryToken)
             store.playback = { text, status: 'playing', source, configId, owner, ...(identity ? { identity } : {}) }
             resolveStart({ ok: true, ended })
         },

@@ -9889,9 +9889,12 @@ var Rg = /* @__PURE__ */ ga(!1);
 function zg() {
 	Rg.value || (Rg.value = !0, globalThis.window?.dispatchEvent(new Event("twicc:android-ready")));
 }
+function Bg(e) {
+	typeof e?.engine == "string" && (/^Gecko/i.test(e.engine) || /WebView/i.test(e.engine)) && typeof e.version == "string" && e.version;
+}
 //#endregion
 //#region src/utils/androidAppClient.js
-var Bg = "twicc.android.response", Vg = "twicc.android.request", Hg = /* @__PURE__ */ new Set([
+var Vg = "twicc.android.response", Hg = "twicc.android.request", Ug = /* @__PURE__ */ new Set([
 	"tts.attach",
 	"tts.state",
 	"tts.acknowledge",
@@ -9901,8 +9904,8 @@ var Bg = "twicc.android.response", Vg = "twicc.android.request", Hg = /* @__PURE
 	"tts.disable",
 	"tts.skip",
 	"tts.stop_all"
-]), Ug = /* @__PURE__ */ new Set([...Hg, "locale.set"]);
-function Wg(e, { timeoutMs: t = 1500 } = {}) {
+]), Wg = /* @__PURE__ */ new Set([...Ug, "locale.set"]);
+function Gg(e, { timeoutMs: t = 1500 } = {}) {
 	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = typeof e.TwiccAndroid?.postMessage == "function" ? e.TwiccAndroid : null;
 	c && zg();
 	function l(e) {
@@ -9914,7 +9917,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		if (!e || e.protocol !== 1 || typeof e.id != "string") return;
 		let t = n.get(e.id);
 		if (t && typeof e.ok == "boolean") {
-			if (zg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.resolve(e.state ?? null);
+			if (zg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.command === "getState" && Bg(e.state), t.resolve(e.state ?? null);
 			else {
 				let n = e.ui_message || typeof e.error == "string" ? Lg(e, Fg("common.android.errors.actionFailed").message) : Fg("common.android.errors.actionFailed");
 				e.state !== void 0 && (n.state = e.state), t.reject(n);
@@ -9922,7 +9925,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	}
 	function u(t) {
-		t.source === e && t.origin === e.location.origin && (t.data?.channel === Bg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && zg());
+		t.source === e && t.origin === e.location.origin && (t.data?.channel === Vg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && zg());
 	}
 	function d(e) {
 		try {
@@ -9935,7 +9938,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		},
 		async request(r, l = {}) {
 			if (o) return Promise.reject(Fg("common.android.errors.closed"));
-			if (c && Ug.has(r)) {
+			if (c && Wg.has(r)) {
 				let n = Date.now() + t;
 				for (; !s && !o;) {
 					let t = e.__twiccNativeTtsDocument;
@@ -9950,14 +9953,14 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 			}
 			let u = `${i}-${++a}`, d = {
 				...l,
-				...s && Ug.has(r) ? { documentToken: s } : {},
+				...s && Wg.has(r) ? { documentToken: s } : {},
 				protocol: 1,
 				id: u,
 				command: r
 			}, f;
 			try {
 				f = JSON.stringify(d);
-				let e = Hg.has(r) ? 12582912 : 16384;
+				let e = Ug.has(r) ? 12582912 : 16384;
 				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Fg("common.android.errors.tooLarge"));
 			} catch (e) {
 				return console.warn("Android request serialization failed", e), Promise.reject(Fg("common.android.errors.actionFailed"));
@@ -9974,7 +9977,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 				});
 				try {
 					c ? c.postMessage(f) : e.postMessage({
-						channel: Vg,
+						channel: Hg,
 						request: d
 					}, e.location.origin);
 				} catch (e) {
@@ -9989,9 +9992,9 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	};
 }
-var Gg;
-function Kg() {
-	return Gg ?? (Gg = Wg(window));
+var Kg;
+function qg() {
+	return Kg ?? (Kg = Gg(window));
 }
 //#endregion
-export { Wg as createAndroidAppClient, Kg as getAndroidAppClient };
+export { Gg as createAndroidAppClient, qg as getAndroidAppClient };

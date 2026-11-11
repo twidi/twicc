@@ -9,6 +9,7 @@ import { useTextToSpeechStore, _resetSpeechForTests } from './textToSpeech.js'
 import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
 import { REFUSED } from '../utils/speechOutcome.js'
+import { configureTelemetry, setTelemetryEpoch } from '../utils/telemetryClient.js'
 
 const CLICK = Date.parse('2026-11-04T10:30:00.000000Z')
 const fields = { model: 'tts', voice: 'voice', response_format: 'mp3', speed: null, instructions: '' }
@@ -156,6 +157,24 @@ test('activation spans multiple pages without losing arrivals', async () => {
     assert.equal(h.requests.length, 5)
     await h.live([message(9)])
     assert.equal(h.store.pendingCount, 7)
+})
+
+test('activation telemetry ignores reconnect, suspension, and resume', async () => {
+    const sent = []
+    configureTelemetry({ send: value => sent.push(value), enabled: () => true })
+    setTelemetryEpoch('epoch')
+    try {
+        const h = setup()
+        await h.enable([])
+        h.status.value = 'CLOSED'; await settle()
+        h.replies.push(page([]))
+        h.status.value = 'OPEN'; await settle()
+        h.visibility('hidden'); await settle()
+        h.replies.push(page([]))
+        h.visibility('visible'); await settle()
+        h.store.resume(); await settle()
+        assert.equal(sent.filter(item => item.metric === 'timeline_tts_activations').length, 1)
+    } finally { configureTelemetry({}) }
 })
 
 test('one second late is accepted but more than five seconds late is rejected', async () => {

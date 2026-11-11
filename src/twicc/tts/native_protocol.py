@@ -17,7 +17,7 @@ _COMMON = {'protocol', 'type', 'seq'}
 _FIELDS = {
     'open': {'client_id'},
     'resume': {'session_id', 'resume_secret', 'ack_seq', 'commands', 'current'},
-    'listen': {'activation_id', 'scope', 'page_id', 'include_muted', 'boundary', 'fresh', 'notice', 'excluded_event_ids'},
+    'listen': {'activation_id', 'scope', 'page_id', 'include_muted', 'boundary', 'fresh', 'notice', 'excluded_event_ids', 'telemetry_epoch'},
     'set_muted': {'activation_id', 'include_muted'},
     'disable': {'activation_id'},
     'manual': {'reading_id', 'generation', 'request'},
@@ -164,6 +164,9 @@ def parse_native_command(data: object) -> dict:
         _string(data.get('page_id'), 'page_id')
         if 'fresh' in data and type(data['fresh']) is not bool:
             raise ValueError('fresh must be boolean')
+        if 'telemetry_epoch' in data and (not isinstance(data['telemetry_epoch'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', data['telemetry_epoch'])):
+            raise ValueError('Invalid telemetry epoch')
         excluded = data.get('excluded_event_ids', [])
         if not isinstance(excluded, list):
             raise ValueError('excluded_event_ids must be an array')

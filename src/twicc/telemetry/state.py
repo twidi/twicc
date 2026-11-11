@@ -2,8 +2,8 @@
 
 Holds the anonymous instance id, the last-sent marker (the no-backfill
 rule: initialized to *today* on first run so pre-telemetry DB history is
-never sent — design doc §5.1), the per-day accumulators for the two
-metrics that have no DB trace (presence minutes, peak concurrent agents),
+never sent — design doc §5.1), per-day presence/peak and feature counters,
+daily salted client digests and coarse descriptions (no raw client keys),
 a copy of the last payload sent (for the settings "View last payload"
 dialog), and ``last_sent_at`` (UTC timestamp of that last successful send).
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import uuid
 from contextlib import contextmanager
-from datetime import date, datetime, UTC
+from datetime import date, datetime, timedelta, UTC
 from pathlib import Path
 
 from twicc.atomic_json import locked_json_file
@@ -60,6 +60,10 @@ def state_txn():
         if not txn.data["last_sent_date"]:
             txn.data["last_sent_date"] = utc_today().isoformat()
             txn.write()
+        if 'usage_started_date' not in txn.data:
+            # New counters must not manufacture zeros for pre-upgrade history.
+            txn.data['usage_started_date'] = utc_today().isoformat()
+            txn.write()
         yield txn
 
 
@@ -102,6 +106,8 @@ def record_tick(*, present: bool, live_agents: int) -> None:
     day = utc_today().isoformat()
     with state_txn() as txn:
         entry = txn.data["days"].setdefault(day, {"presence_minutes": 0, "peak_agents": 0})
+        entry.setdefault('presence_minutes', 0)
+        entry.setdefault('peak_agents', 0)
         if present:
             entry["presence_minutes"] += 1
         entry["peak_agents"] = max(entry["peak_agents"], live_agents)
@@ -135,6 +141,8 @@ def note_active_transition(active: bool) -> None:
     start of its grace window.
     """
     with state_txn() as txn:
+        if _prune(txn.data):
+            txn.write()
         was_active = txn.data.get("was_active")
         if active and was_active is False:
             today = utc_today().isoformat()
@@ -148,8 +156,15 @@ def note_active_transition(active: bool) -> None:
             txn.write()
 
 
-def _prune(data: dict) -> None:
+def _prune(data: dict) -> bool:
+    """Retain the 30 complete UTC days the sender can cover, plus today."""
     days = data["days"]
-    if len(days) > MAX_DAY_ENTRIES:
-        for day in sorted(days)[: len(days) - MAX_DAY_ENTRIES]:
+    previous_size = len(days)
+    cutoff = (utc_today() - timedelta(days=MAX_DAY_ENTRIES)).isoformat()
+    for day in list(days):
+        if day < cutoff:
             del days[day]
+    max_entries = MAX_DAY_ENTRIES + 1
+    for day in sorted(days)[:max(0, len(days) - max_entries)]:
+        del days[day]
+    return len(days) != previous_size

@@ -1,5 +1,11 @@
 # Anonymous Telemetry — Design
 
+> Historical design. The approved [2026-11-11 feature extension](../../plans/2026-11-11-telemetry-usage-design.md)
+> supersedes the no-instrumentation restriction for four daily summary/TTS
+> counters and coarse active-client metadata. It also permits the configured
+> OpenRouter TTS model identifier verbatim. All other content exclusions remain.
+> Current collection requires notice acknowledgement and stops while disabled.
+
 **Status:** design complete, decisions resolved with the user 2026-07-18; implementation not started
 **Date:** 2026-07-18
 **Scope:** opt-out anonymous usage telemetry for self-hosted TwiCC instances — what is measured (usage level first, feature adoption second), how it is derived and sent (daily snapshot computed from the DB, one POST per day), where it lands (a minimal self-hosted collector), and the privacy/transparency guarantees (no content ever, random instance id, visible payload, first-launch notice, settings toggle + env kill switch).

@@ -750,7 +750,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if self._should_send("synced_settings_updated"):
             raw_settings = await sync_to_async(read_synced_settings)()
             clean_settings, version = prepare_settings_for_client(raw_settings)
-            await self.send_json({"type": "synced_settings_updated", "settings": clean_settings, "version": version})
+            from twicc.telemetry.activity import client_epoch
+            epoch = await sync_to_async(client_epoch)()
+            await self.send_json({"type": "synced_settings_updated", "settings": clean_settings, "version": version,
+                                  "telemetry_epoch": epoch})
 
         # Send agent settings presets for every registered provider (cross-provider:
         # the on-disk format is identical, only the file path differs per provider).
@@ -953,6 +956,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
         if msg_type == "ping":
             await self.send_json({"type": "pong"})
+
+        elif msg_type == "telemetry_activity":
+            from twicc.telemetry.activity import record_report
+            await sync_to_async(record_report)(content)
 
         elif msg_type == "presence":
             # Lightweight human-presence heartbeat (no reply). Gates "away-only"
@@ -2213,6 +2220,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
         new_id = await sync_to_async(reset_instance_id)()
         await self.send_json({"type": "telemetry_instance_id_reset", "instance_id": new_id})
+        from twicc.telemetry.activity import client_epoch
+        await self.channel_layer.group_send('updates', {'type': 'broadcast', 'data': {
+            'type': 'telemetry_collection_updated', 'telemetry_epoch': await sync_to_async(client_epoch)(),
+        }})
 
     async def _handle_update_workspaces(self, content: dict) -> None:
         """Handle workspace definitions update from a client."""
@@ -2727,6 +2738,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         data = event["data"]
         if not self._should_send(data.get("type", "")):
             return
+        if data.get('type') == 'synced_settings_updated':
+            from twicc.telemetry.activity import client_epoch
+            data = {**data, 'telemetry_epoch': await sync_to_async(client_epoch)()}
         await self.send_json(data)
 
 

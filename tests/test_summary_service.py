@@ -45,6 +45,47 @@ async def terminal(service, handle):
     return snapshots[-1]
 
 
+@pytest.mark.parametrize('origin, expected', [('manual', 1), ('timeline', 0), ('unknown', 0)])
+def test_telemetry_counts_new_manual_results_once(service, source, monkeypatch, origin, expected):
+    from twicc.telemetry import activity
+    counted = []
+    monkeypatch.setattr(activity, 'collection_token', lambda: ('test', 'epoch'))
+    monkeypatch.setattr(activity, 'record_activity', lambda metric, **kwargs: counted.append(metric))
+    async def stream(*args):
+        yield 'A new summary.'
+    monkeypatch.setattr(service, 'stream_text', stream)
+    async def scenario():
+        handle = await service.acquire_summary({}, usage_origin=origin)
+        assert (await terminal(service, handle))['state'] == 'complete'
+        cached = await service.acquire_summary({}, usage_origin='manual')
+        assert cached.state == 'complete'
+        assert counted == ['manual_summaries'] * expected
+        await service.release_summary(handle.id)
+        await service.release_summary(cached.id)
+    asyncio.run(scenario())
+
+
+def test_manual_join_does_not_relabel_automatic_generation(service, source, monkeypatch):
+    from twicc.telemetry import activity
+    counted = []
+    monkeypatch.setattr(activity, 'collection_token', lambda: ('test', 'epoch'))
+    monkeypatch.setattr(activity, 'record_activity', lambda *args, **kwargs: counted.append(args))
+    async def scenario():
+        gate = asyncio.Event()
+        async def stream(*args):
+            await gate.wait()
+            yield 'Automatic summary.'
+        monkeypatch.setattr(service, 'stream_text', stream)
+        auto = await service.acquire_summary({}, usage_origin='timeline')
+        manual = await service.acquire_summary({}, usage_origin='manual')
+        gate.set()
+        await terminal(service, manual)
+        assert counted == []
+        await service.release_summary(auto.id)
+        await service.release_summary(manual.id)
+    asyncio.run(scenario())
+
+
 def test_two_handles_share_live_progress_and_release_independently(service, source, monkeypatch):
     async def scenario():
         gate, sent, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()

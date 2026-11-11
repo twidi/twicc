@@ -119,6 +119,11 @@ class TimelineListener:
             if command.get('fresh'):
                 command = {**command, 'boundary': format_occurred_at(self.clock())}
             self._activate(command)
+            # Only explicit user activations carry an epoch. Android recovery
+            # and notification resume issue listen too, without this field.
+            from twicc.telemetry.activity import record_report
+            await sync_to_async(record_report)({'metric': 'timeline_tts_activations',
+                                                'epoch': command.get('telemetry_epoch')})
             active = self.active
             # Reserve the notice before initialization can offer fresh messages.
             notice = command.get('notice')
@@ -386,6 +391,7 @@ class TimelineListener:
             try:
                 handle = await summaries.acquire_summary(
                     {'event_id': event['id']}, _temporary_source=preparation['source'],
+                    usage_origin='timeline',
                 )
                 handle.claim()
                 if self.active is not active:

@@ -77,6 +77,37 @@ async def finish(h, outcome='complete', started=True):
                           'reading_id': reading['reading_id'], 'generation': reading['generation'], 'outcome': outcome})
 
 
+async def test_activation_telemetry_excludes_replay_recovery_resume_and_stale_epoch(harness, monkeypatch, tmp_path):
+    from twicc.telemetry import activity, state
+    monkeypatch.setattr(state, 'get_data_dir', lambda: tmp_path)
+    monkeypatch.setattr(activity, 'is_telemetry_active', lambda: True)
+    monkeypatch.setattr(harness.listener, '_initialize', lambda _: asyncio.sleep(0))
+    epoch = await sync_to_async(activity.client_epoch)()
+    command = {**activation(), 'protocol': 1, 'seq': 1, 'type': 'listen', 'telemetry_epoch': epoch}
+    await harness.session.apply(command)
+    await harness.session.apply(command)
+    for seq, extra in ((2, {'fresh': True}), (3, {'fresh': False}), (4, {}), (5, {'telemetry_epoch': '0' * 64})):
+        await harness.session.apply({**activation(), 'protocol': 1, 'seq': seq, 'type': 'listen', **extra})
+    stored = await sync_to_async(state.ensure_state)()
+    assert stored['days'][state.utc_today().isoformat()]['usage'] == {'timeline_tts_activations': 1}
+    await harness.registry.shutdown()
+
+
+async def test_automatic_started_counts_configured_reading_but_not_recovery_notice(harness, monkeypatch):
+    from twicc.telemetry import activity
+    counted = []
+    monkeypatch.setattr(activity, 'collection_token', lambda: ('test', 'epoch'))
+    monkeypatch.setattr(activity, 'record_activity', lambda metric, **kw: counted.append(metric))
+    row = await event()
+    await harness.listener.enable(activation())
+    await select(harness, row)
+    await finish(harness)
+    assert counted == ['timeline_tts_messages']
+    await harness.session._record_started({'automatic': True, 'source': 'recovery', 'config_id': 'voice'}, ('test', 'epoch'))
+    assert counted == ['timeline_tts_messages']
+    await harness.registry.shutdown()
+
+
 @pytest.mark.parametrize(('kind', 'scope_id', 'expected'), [
     ('global', None, ['p', 'q', 'wt']), ('workspace', 'w', ['p', 'wt']),
     ('project', 'p', ['p', 'wt']), ('worktree', 'wt', ['wt']),
@@ -372,7 +403,7 @@ async def test_selected_summary_freezes_config_adapt_and_announcement(harness, f
     await h.listener.enable(activation())
     entered, release = asyncio.Event(), asyncio.Event()
     closed = []
-    async def retain(reference):
+    async def retain(reference, *, usage_origin="unknown"):
         entered.set()
         await release.wait()
         async def close():
@@ -584,7 +615,7 @@ async def test_selection_uses_pending_summary_setting_changed_before_invalidatio
     row = await event(1)
     await h.listener.enable(activation())
     h.policy['summary'] = True
-    async def retain(reference):
+    async def retain(reference, *, usage_origin="unknown"):
         async def close():
             pass
         return SimpleNamespace(id='reader', aclose=close)
@@ -623,7 +654,7 @@ async def test_selection_rechecks_current_visibility_and_scope_before_invalidati
     active = activation('workspace', 'w', include_muted=change == 'muted_choice')
     await h.listener.enable(active)
     retained_handle = h.listener.preparations[row.id]['handle'].id
-    async def retain(reference):
+    async def retain(reference, *, usage_origin="unknown"):
         async def close():
             pass
         return SimpleNamespace(id='reader', aclose=close)

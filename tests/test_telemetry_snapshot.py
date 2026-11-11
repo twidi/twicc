@@ -292,6 +292,45 @@ def test_instance_configuration_defaults(project, monkeypatch):
     assert block["title_auto_apply"] is True
 
 
+def test_new_configuration_snapshots_are_not_content(project, monkeypatch):
+    from twicc.telemetry import configuration
+    from twicc.core.enums import Provider
+    fields = {'model': 'future-vendor/tts-2099-custom', 'voice': 'private voice',
+              'response_format': 'mp3', 'speed': None, 'instructions': 'private instructions'}
+    monkeypatch.setattr(configuration, 'read_tts_config', lambda: {
+        'active_id': 'private-config', 'configs': [{'id': 'private-config', 'kind': 'openrouter',
+            **fields, 'validated': fields}]})
+    monkeypatch.setattr(configuration, 'openrouter_api_key', lambda: 'private key')
+    monkeypatch.setattr(configuration, 'get_enabled_providers', lambda: {Provider.CODEX})
+    monkeypatch.setattr(configuration, 'read_agent_settings_presets', lambda provider: {'presets': [
+        {'name': 'private preset', 'selected_model': 'private model'}] * 2})
+    monkeypatch.setattr(snapshot, 'read_synced_settings', lambda: {
+        'summaryModel': 'auto', 'titleSuggestionModel': 'openrouter', 'defaultLayoutId': 'private-layout'})
+    monkeypatch.setattr(snapshot, 'read_layouts', lambda: {'layouts': [{'id': 'private-layout'}]})
+    block = snapshot.build_instance_block()
+    assert block['tts'] == {'kind': 'openrouter', 'model': 'future-vendor/tts-2099-custom'}
+    assert block['summary_model'] == 'luna'
+    assert block['title_model'] == 'openrouter'
+    assert block['default_layout'] == 'custom'
+    assert all(value == '2-5' for value in block['agent_presets_bucket'].values())
+    assert 'private' not in orjson.dumps(block).decode()
+
+
+@pytest.mark.parametrize('choice, providers, key, expected', [
+    ('auto', ['claude_code', 'codex'], False, 'haiku'),
+    ('haiku', ['codex'], False, 'luna'),
+    ('luna', ['claude_code'], False, 'haiku'),
+    ('openrouter', [], True, 'openrouter'),
+    ('openrouter', [], False, 'none'),
+])
+def test_effective_summary_snapshot_matches_ui(project, monkeypatch, choice, providers, key, expected):
+    from twicc.telemetry import configuration
+    from twicc.core.enums import Provider
+    monkeypatch.setattr(configuration, 'get_enabled_providers', lambda: {Provider(p) for p in providers})
+    monkeypatch.setattr(configuration, 'openrouter_api_key', lambda: 'key' if key else None)
+    assert configuration.build_configuration_block({'summaryModel': choice}, [])['summary_model'] == expected
+
+
 def test_build_day_block_groups_mcp_calls(project):
     connection = _make_mcp_connection()
     _make_mcp_operation(connection, "sessions")

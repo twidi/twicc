@@ -221,7 +221,9 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 val next = NativeListening(newId(), command.pageId, command.scope, command.boundary, command.includeMuted)
                 listening = next; pendingCount = 0; checkpoint = null; checkpointEvents.clear()
                 outageAt = if (!ready) elapsedMs() else null; recoverySeq = null; noticeDue = false; longPolicyApplied = false
-                queue("listen", listenFields(next))
+                // Only explicit user activation carries the collection epoch.
+                // Recovery and notification resume rebuild listenFields without it.
+                queue("listen", listenFields(next) + (command.telemetryEpoch?.let { mapOf("telemetry_epoch" to it) } ?: emptyMap()))
             }
             is TtsCommand.SetMuted -> {
                 if (!valid(command.owner) || listening?.activationId != command.activationId) return emptyList()

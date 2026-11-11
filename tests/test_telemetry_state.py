@@ -1,4 +1,4 @@
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 
 import orjson
 import pytest
@@ -89,25 +89,31 @@ def test_continuous_on_never_advances_marker(data_dir):
     assert state.ensure_state()["last_sent_date"] == "2026-07-10"
 
 
-def test_prune_keeps_newest_max_day_entries(data_dir):
+def test_prune_keeps_complete_catchup_window_and_today(data_dir):
     state.ensure_state()
+    today = state.utc_today()
     with state.state_txn() as txn:
         txn.data["days"] = {
-            f"2026-06-{day:02d}": {"presence_minutes": day, "peak_agents": day}
-            for day in range(1, 32)  # 31 entries: 2026-06-01 .. 2026-06-31
+            (today - timedelta(days=offset)).isoformat(): {"presence_minutes": offset, "peak_agents": offset}
+            for offset in range(1, 35)
         }
         txn.write()
-    # record_tick adds/updates a 32nd entry for today and triggers _prune,
-    # which must drop exactly the 2 oldest (32 - MAX_DAY_ENTRIES) to land at 30.
     state.record_tick(present=False, live_agents=0)
     st = state.ensure_state()
-    today = state.utc_today().isoformat()
-    assert len(st["days"]) == state.MAX_DAY_ENTRIES
-    assert "2026-06-01" not in st["days"]
-    assert "2026-06-02" not in st["days"]
-    assert "2026-06-03" in st["days"]
-    assert "2026-06-31" in st["days"]
-    assert today in st["days"]
+    assert len(st["days"]) == state.MAX_DAY_ENTRIES + 1
+    assert (today - timedelta(days=31)).isoformat() not in st['days']
+    assert (today - timedelta(days=30)).isoformat() in st['days']
+    assert today.isoformat() in st["days"]
+
+
+def test_sparse_expired_client_metadata_is_pruned_even_while_disabled(data_dir):
+    today = state.utc_today()
+    old = (today - timedelta(days=45)).isoformat()
+    with state.state_txn() as txn:
+        txn.data['days'][old] = {'clients': {'private-digest': {'browser': 'chrome'}}, 'client_salt': 'old-salt'}
+        txn.write()
+    state.note_active_transition(False)
+    assert old not in state.ensure_state()['days']
 
 
 def test_off_to_on_stamps_active_since(data_dir):

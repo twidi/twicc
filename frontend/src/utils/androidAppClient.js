@@ -1,6 +1,7 @@
 import { localUiError } from '../i18n/uiMessages.js'
 import { remoteUiError } from '../i18n/remoteMessages.js'
 import { markAndroidApp } from './androidEnvironment.js'
+import { setAndroidTelemetry } from './telemetryClient.js'
 
 const RESPONSE_CHANNEL = 'twicc.android.response'
 const REQUEST_CHANNEL = 'twicc.android.request'
@@ -27,7 +28,10 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         markAndroidApp()
         pending.delete(response.id)
         clearTimeout(entry.timer)
-        if (response.ok) entry.resolve(response.state ?? null)
+        if (response.ok) {
+            if (entry.command === 'getState') setAndroidTelemetry(response.state)
+            entry.resolve(response.state ?? null)
+        }
         else {
             const error = response.ui_message || typeof response.error === 'string'
                 ? remoteUiError(response, localUiError('common.android.errors.actionFailed').message)

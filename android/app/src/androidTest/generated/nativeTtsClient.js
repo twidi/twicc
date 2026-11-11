@@ -9890,9 +9890,12 @@ var Rg = /* @__PURE__ */ _a(!1);
 function zg() {
 	Rg.value || (Rg.value = !0, globalThis.window?.dispatchEvent(new Event("twicc:android-ready")));
 }
+function Bg(e) {
+	typeof e?.engine == "string" && (/^Gecko/i.test(e.engine) || /WebView/i.test(e.engine)) && typeof e.version == "string" && e.version;
+}
 //#endregion
 //#region src/utils/androidAppClient.js
-var Bg = "twicc.android.response", Vg = "twicc.android.request", Hg = /* @__PURE__ */ new Set([
+var Vg = "twicc.android.response", Hg = "twicc.android.request", Ug = /* @__PURE__ */ new Set([
 	"tts.attach",
 	"tts.state",
 	"tts.acknowledge",
@@ -9902,8 +9905,8 @@ var Bg = "twicc.android.response", Vg = "twicc.android.request", Hg = /* @__PURE
 	"tts.disable",
 	"tts.skip",
 	"tts.stop_all"
-]), Ug = /* @__PURE__ */ new Set([...Hg, "locale.set"]);
-function Wg(e, { timeoutMs: t = 1500 } = {}) {
+]), Wg = /* @__PURE__ */ new Set([...Ug, "locale.set"]);
+function Gg(e, { timeoutMs: t = 1500 } = {}) {
 	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = typeof e.TwiccAndroid?.postMessage == "function" ? e.TwiccAndroid : null;
 	c && zg();
 	function l(e) {
@@ -9915,7 +9918,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		if (!e || e.protocol !== 1 || typeof e.id != "string") return;
 		let t = n.get(e.id);
 		if (t && typeof e.ok == "boolean") {
-			if (zg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.resolve(e.state ?? null);
+			if (zg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.command === "getState" && Bg(e.state), t.resolve(e.state ?? null);
 			else {
 				let n = e.ui_message || typeof e.error == "string" ? Lg(e, Fg("common.android.errors.actionFailed").message) : Fg("common.android.errors.actionFailed");
 				e.state !== void 0 && (n.state = e.state), t.reject(n);
@@ -9923,7 +9926,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	}
 	function u(t) {
-		t.source === e && t.origin === e.location.origin && (t.data?.channel === Bg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && zg());
+		t.source === e && t.origin === e.location.origin && (t.data?.channel === Vg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && zg());
 	}
 	function d(e) {
 		try {
@@ -9936,7 +9939,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		},
 		async request(r, l = {}) {
 			if (o) return Promise.reject(Fg("common.android.errors.closed"));
-			if (c && Ug.has(r)) {
+			if (c && Wg.has(r)) {
 				let n = Date.now() + t;
 				for (; !s && !o;) {
 					let t = e.__twiccNativeTtsDocument;
@@ -9951,14 +9954,14 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 			}
 			let u = `${i}-${++a}`, d = {
 				...l,
-				...s && Ug.has(r) ? { documentToken: s } : {},
+				...s && Wg.has(r) ? { documentToken: s } : {},
 				protocol: 1,
 				id: u,
 				command: r
 			}, f;
 			try {
 				f = JSON.stringify(d);
-				let e = Hg.has(r) ? 12582912 : 16384;
+				let e = Ug.has(r) ? 12582912 : 16384;
 				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Fg("common.android.errors.tooLarge"));
 			} catch (e) {
 				return console.warn("Android request serialization failed", e), Promise.reject(Fg("common.android.errors.actionFailed"));
@@ -9975,7 +9978,7 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 				});
 				try {
 					c ? c.postMessage(f) : e.postMessage({
-						channel: Vg,
+						channel: Hg,
 						request: d
 					}, e.location.origin);
 				} catch (e) {
@@ -9990,17 +9993,17 @@ function Wg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	};
 }
-var Gg;
-function Kg() {
-	return Gg ?? (Gg = Wg(window));
+var Kg;
+function qg() {
+	return Kg ?? (Kg = Gg(window));
 }
 //#endregion
 //#region src/utils/nativeTtsClient.js
-var qg = Object.freeze({
+var Jg = Object.freeze({
 	ok: !1,
 	aborted: !0
-}), Jg = (e) => JSON.parse(JSON.stringify(e));
-function Yg(e, t = "error") {
+}), Yg = (e) => JSON.parse(JSON.stringify(e));
+function Xg(e, t = "error") {
 	if (!e) return e;
 	let n = e.uiMessage ?? Ig(e, null);
 	return n ? {
@@ -10011,22 +10014,22 @@ function Yg(e, t = "error") {
 		}
 	} : e;
 }
-function Xg(e) {
+function Zg(e) {
 	return {
 		...e,
-		error: Yg(e.error, "message"),
+		error: Xg(e.error, "message"),
 		results: e.results?.map((e) => ({
 			...e,
-			start: Yg(e.start),
-			ended: Yg(e.ended)
+			start: Xg(e.start),
+			ended: Xg(e.ended)
 		}))
 	};
 }
-function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = (...e) => fetch(...e) }) {
+function Qg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = (...e) => fetch(...e) }) {
 	let i = null, a = !1, o = null, s = null, c = -1, l = null, u = 0, d = 0, f = Math.random().toString(36).slice(2), p = /* @__PURE__ */ new Map(), m = /* @__PURE__ */ new Set(), h = /* @__PURE__ */ new Set();
 	function g(e, t = !1) {
 		if (e && e.version === 1 && Number.isSafeInteger(e.revision) && !(i && (e.instanceId !== i.instanceId || e.revision < i.revision || e.revision === i.revision && !t))) {
-			e = Xg(e), i = e;
+			e = Zg(e), i = e;
 			for (let [t, n] of p) {
 				let r = e.results?.find((e) => e.operationId === t);
 				if (r) {
@@ -10038,7 +10041,7 @@ function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				} else !n.started && e.playback?.operationId === t && e.playback.started ? (n.started = !0, n.resolve({
 					ok: !0,
 					ended: n.ended
-				})) : n.accepted && e.playback?.operationId !== t && !["starting", "reconnecting"].includes(e.sessionStatus) && (n.resolve(qg), n.resolveEnded(qg), p.delete(t));
+				})) : n.accepted && e.playback?.operationId !== t && !["starting", "reconnecting"].includes(e.sessionStatus) && (n.resolve(Jg), n.resolveEnded(Jg), p.delete(t));
 			}
 			for (let n of m) n(e, t);
 		}
@@ -10073,12 +10076,12 @@ function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 			let i = await e.request(`tts.${t}`, n);
 			return a && r === u && g(i?.snapshot), i?.error ? {
 				...i,
-				error: Yg(i.error, "message")
+				error: Xg(i.error, "message")
 			} : i;
 		} catch (e) {
 			return {
 				accepted: !1,
-				error: Yg({
+				error: Xg({
 					code: e.code,
 					status: e.status,
 					message: e.message,
@@ -10088,7 +10091,7 @@ function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		}
 	}
 	function x(e = () => !0) {
-		for (let [t, n] of p) e(t) && (n.resolve(qg), n.resolveEnded(qg), p.delete(t));
+		for (let [t, n] of p) e(t) && (n.resolve(Jg), n.resolveEnded(Jg), p.delete(t));
 	}
 	return {
 		attach() {
@@ -10126,7 +10129,7 @@ function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		},
 		acknowledge: (e) => b("acknowledge", { revision: e }),
 		manual(e) {
-			if (!a) return Promise.resolve(Yg({
+			if (!a) return Promise.resolve(Xg({
 				ok: !1,
 				uiMessage: Ng("session.speech.errors.unavailable")
 			}));
@@ -10137,7 +10140,7 @@ function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				n = e;
 			}), o = new Promise((e) => {
 				r = e;
-			}), s = Jg(e);
+			}), s = Yg(e);
 			return p.set(t, {
 				resolve: n,
 				ended: o,
@@ -10149,15 +10152,15 @@ function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 				request: s
 			}).then((e) => {
 				let n = p.get(t);
-				n && (e?.accepted ? n.accepted = !0 : (p.delete(t), n.resolve(Yg({
+				n && (e?.accepted ? n.accepted = !0 : (p.delete(t), n.resolve(Xg({
 					...e?.error,
 					ok: !1,
 					error: e?.error?.message,
 					uiMessage: e?.error?.uiMessage ?? (e?.error?.message ? void 0 : Ng("session.speech.errors.startFailed"))
-				})), n.resolveEnded(qg)));
+				})), n.resolveEnded(Jg)));
 			}), Object.assign(i, { operationId: t });
 		},
-		listen: (e) => b("listen", Jg(e)),
+		listen: (e) => b("listen", Yg(e)),
 		setMuted: (e) => b("set_muted", {
 			activationId: i?.listening?.activationId,
 			includeMuted: e
@@ -10178,12 +10181,12 @@ function Zg({ appClient: e, document: t, timers: n = globalThis, fetchImpl: r = 
 		}
 	};
 }
-var Qg;
-function $g() {
-	return Qg ?? (Qg = Zg({
-		appClient: Kg(),
+var $g;
+function e_() {
+	return $g ?? ($g = Qg({
+		appClient: qg(),
 		document
 	}));
 }
 //#endregion
-export { Zg as createNativeTtsClient, $g as getNativeTtsClient };
+export { Qg as createNativeTtsClient, e_ as getNativeTtsClient };

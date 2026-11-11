@@ -6,6 +6,7 @@ import secrets
 import time
 from collections import deque
 from uuid import uuid4
+from asgiref.sync import sync_to_async
 
 from twicc.summaries import service as summaries
 from twicc.tts.native_protocol import parse_native_command
@@ -51,6 +52,7 @@ class NativeSession:
         self._heartbeat_timer = None
         self._reconciling = False
         self._candidate = None
+        self._usage_token = None
 
     def snapshot(self) -> dict:
         """Return credential-free authoritative state."""
@@ -152,7 +154,7 @@ class NativeSession:
             self._release(audio_id)
             return True
 
-    def _reserve(self, command, request, metadata, automatic=False, policy=None):
+    def _reserve(self, command, request, metadata, automatic=False, policy=None, usage_token=None):
         if command['generation'] <= self.generation:
             return False
         if automatic and self.playback is not None:
@@ -165,6 +167,7 @@ class NativeSession:
                    'audio_id': None, 'phase': 'loading', 'started': False,
                    'automatic': automatic, **metadata}
         self.playback = reading
+        self._usage_token = usage_token
         task = asyncio.create_task(self._prepare(reading, request, policy=policy), name='native-tts-prepare')
         self.preparation = task
         self._tasks.add(task)
@@ -173,8 +176,10 @@ class NativeSession:
 
     async def select_reading(self, command: dict, request: dict, metadata: dict, *, policy=None) -> bool:
         """Task 4 boundary: reserve automatic speech only when no reading exists."""
+        from twicc.telemetry.activity import collection_token
+        token = await sync_to_async(collection_token)()
         async with self._lock:
-            accepted = not self.closed and self._reserve(command, request, metadata, automatic=True, policy=policy)
+            accepted = not self.closed and self._reserve(command, request, metadata, automatic=True, policy=policy, usage_token=token)
             if accepted:
                 self.publish_state()
             return accepted
@@ -204,7 +209,8 @@ class NativeSession:
         try:
             speech = dict(request['speech'])
             if request['kind'] == 'summary':
-                reader = await summaries.retain_summary_for_speech(request['summary'])
+                reader = await summaries.retain_summary_for_speech(request['summary'],
+                    usage_origin='timeline' if reading['automatic'] else 'manual')
                 # The shared opener acquires a second reader before this one closes.
                 for key in ('text', 'config_id', 'saved_summary_id', 'summary_result_hash'):
                     speech.pop(key, None)
@@ -259,6 +265,8 @@ class NativeSession:
 
     async def apply(self, command: dict, *, connection_id: str | None = None) -> None:
         command = parse_native_command(command)
+        from twicc.telemetry.activity import collection_token
+        token = await sync_to_async(collection_token)() if command['type'] == 'manual' else None
         if command['type'] in ('open', 'resume'):
             raise ValueError('Handshake commands belong to the transport')
         async with self._commands:
@@ -279,7 +287,7 @@ class NativeSession:
                         metadata['source'] = 'summary'
                     if command['generation'] > self.generation:
                         old = self.playback.copy() if self.playback else None
-                    self._reserve(command, request, metadata)
+                    self._reserve(command, request, metadata, usage_token=token)
                 elif kind in ('skip', 'finished') and self._matches(command):
                     old = self._cancel_reading()
                 elif kind == 'started' and self._matches(command) and not self.playback['started']:
@@ -303,6 +311,8 @@ class NativeSession:
                     self.error = None
                 self.publish_state()
             # Coordinator methods may reserve speech; never call them under _lock.
+            if started:
+                await self._record_started(started, self._usage_token)
             if self.coordinator:
                 if started:
                     await self.coordinator.started(started)
@@ -366,8 +376,18 @@ class NativeSession:
                 self._emit({'type': 'candidate', **self._candidate})
         if expired and self.coordinator:
             await self.coordinator.finished(expired, 'failed')
+        if started:
+            await self._record_started(started, self._usage_token)
         if started and self.coordinator:
             await self.coordinator.started(started)
+
+    async def _record_started(self, reading, token):
+        if (token is None or reading.get('config_id') and not reading['automatic']
+                or reading.get('source') == 'recovery'):
+            return
+        from twicc.telemetry.activity import record_activity
+        metric = 'timeline_tts_messages' if reading['automatic'] else 'manual_tts_messages'
+        await sync_to_async(record_activity)(metric, token=token)
 
     async def close(self) -> None:
         async with self._lock:

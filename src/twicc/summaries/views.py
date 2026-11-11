@@ -50,7 +50,8 @@ async def summaries_open(request):
         return _method('POST')
     try:
         data = _body(request)
-        if 'source' not in data or set(data) - {'source', 'regenerate', 'start'}:
+        if ('source' not in data or set(data) - {'source', 'regenerate', 'start', 'usage_origin'}
+                or data.get('usage_origin', 'unknown') not in ('unknown', 'manual', 'timeline', 'test')):
             raise UiMessageError("The body must contain 'source' and optional 'regenerate' and 'start'", 'backend.summaries.openFields')
         if not isinstance(data['source'], dict):
             raise UiMessageError("'source' must be an object", 'backend.summaries.sourceObject')  # noqa: TRY004 - HTTP validation contract
@@ -58,7 +59,7 @@ async def summaries_open(request):
             if field in data and not isinstance(data[field], bool):
                 raise UiMessageError(f"'{field}' must be a boolean", 'backend.summaries.booleanField', {"field": field})
         handle = await service.acquire_summary(data['source'], regenerate=data.get('regenerate', False),
-                                               start=data.get('start', True))
+                                               start=data.get('start', True), usage_origin=data.get('usage_origin', 'unknown'))
         return JsonResponse({'id': handle.id, 'descriptor': handle.descriptor, 'state': handle.state})
     except RequestDataTooBig:
         return _error(ui_message_text('The request is too long to send', 'backend.summaries.requestTooLong'), 413)

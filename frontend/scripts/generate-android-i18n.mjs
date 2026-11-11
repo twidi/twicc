@@ -180,6 +180,7 @@ export async function generateAndroidI18n({ check = false } = {}) {
         'frontend/src/i18n/uiMessages.js', 'frontend/src/i18n/uiMessageRenderer.js',
         'frontend/src/i18n/remoteMessages.js', 'frontend/src/i18n/messageDescriptors.js',
         'frontend/src/utils/androidAppClient.js', 'frontend/src/utils/androidEnvironment.js', 'frontend/src/utils/nativeTtsClient.js',
+        'frontend/src/utils/telemetryClient.js', 'frontend/src/utils/crypto.js',
         ...supportedLocales.filter(locale => locale !== 'en').map(locale => `frontend/src/i18n/locales/${locale}.js`),
         ...supportedLocales.map(locale => `frontend/src/i18n/locales/${locale}.json`)]
     const sources = Object.fromEntries(await Promise.all(sourcePaths.map(async path => [path, await readFile(resolve(root, path))])))

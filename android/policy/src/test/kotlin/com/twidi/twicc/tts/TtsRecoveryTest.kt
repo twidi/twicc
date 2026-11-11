@@ -4,6 +4,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TtsRecoveryTest {
+    @Test fun onlyExplicitUserActivationCarriesTelemetryEpoch() {
+        val h = Harness()
+        val epoch = "a".repeat(64)
+        val explicit = h.controller.dispatch(TtsCommand.Listen(h.owner, ListeningScope("global", null), false,
+            "2026-11-05T12:00:00.000000Z", telemetryEpoch = epoch))
+        assertEquals(epoch, listen(explicit)["telemetry_epoch"])
+        val activationId = h.controller.snapshot().listening!!.activationId
+        h.controller.dispatch(TtsCommand.PauseTimeline(activationId))
+        val resumed = h.controller.dispatch(TtsCommand.ResumeTimeline(activationId, "2026-11-05T12:00:01.000000Z"))
+        assertFalse(listen(resumed).containsKey("telemetry_epoch"))
+        h.lost(); h.now = 120000
+        val handshake = h.reconnect()
+        assertFalse(listen(h.state("recovery", handshake["seq"])).containsKey("telemetry_epoch"))
+    }
+
     private class Harness {
         var now = 0L
         val owner = DocumentOwner("instance", "page", 1)

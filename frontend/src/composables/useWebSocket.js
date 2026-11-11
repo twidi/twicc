@@ -1,4 +1,5 @@
 import { i18n } from '../i18n/index.js'
+import { configureTelemetry, setTelemetryEpoch, reportClient } from '../utils/telemetryClient.js'
 import { localUiMessage } from '../i18n/uiMessages.js'
 import { remoteUiMessage } from '../i18n/remoteMessages.js'
 import { useSummariesStore } from '../stores/summaries'
@@ -232,6 +233,7 @@ if (!__hmrState.presenceHeartbeatInstalled) {
     installPresenceHeartbeat(
         (data) => {
             if (__hmrState.wsSendFn) sendWsMessage(data)
+            reportClient({ locale: i18n.global.locale.value })
         },
         // On resumed local activity, refresh "viewed" for the session currently
         // on the route. Covers the case where the user steps away and returns
@@ -1035,6 +1037,12 @@ function formatExtraUsageStartedDetail(extra) {
 }
 
 export function useWebSocket() {
+    configureTelemetry({
+        send: data => sendWsMessage(data, { buffer: false }),
+        enabled: () => useSettingsStore().isTelemetryEnabled && useSettingsStore().isTelemetryNoticeSeen,
+        metadataChanged: () => { if (isLocallyPresent()) reportClient({ locale: i18n.global.locale.value }) },
+    })
+    watch(() => i18n.global.locale.value, locale => { if (isLocallyPresent()) reportClient({ locale }) })
     const store = useDataStore()
     const route = useRoute()
     const { onReconnected } = useReconciliation()
@@ -1839,11 +1847,17 @@ export function useWebSocket() {
                     __hmrState.telemetryInstanceIdResetResolve = null
                 }
                 break
+            case 'telemetry_collection_updated':
+                setTelemetryEpoch(msg.telemetry_epoch)
+                if (isLocallyPresent()) reportClient({ locale: i18n.global.locale.value })
+                break
             case 'synced_settings_updated':
+                setTelemetryEpoch(msg.telemetry_epoch)
                 // Apply synced settings from backend (on connect or when another client updates)
                 // Lazy import to avoid circular dependency (useWebSocket.js → settings.js)
                 import('../stores/settings').then(({ useSettingsStore }) => {
                     useSettingsStore().applySyncedSettings(msg.settings, msg.version)
+                    if (isLocallyPresent()) reportClient({ locale: i18n.global.locale.value })
                 })
                 break
             case 'synced_settings_result':

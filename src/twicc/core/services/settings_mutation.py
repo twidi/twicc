@@ -321,7 +321,19 @@ def _merge_and_write(patch: dict, base_version: int | None) -> dict:
             "to_stop": old_running - new_running,
             "corrections": corrections,
             "previous_peer_base_url": previous_peer_base_url,
+            "telemetry_active": existing_settings.get('telemetryNoticeSeen') is True
+                and existing_settings.get('telemetryEnabled') is not False,
         }
+
+
+def _merge_with_telemetry_transition(patch, base_version):
+    result = _merge_and_write(patch, base_version)
+    if result['status'] == 'accepted' and set(patch) & {'telemetryEnabled', 'telemetryNoticeSeen'}:
+        # Keep the merge and transition in one synchronous turn. A short off/on
+        # window between periodic ticks must still invalidate pending readings.
+        from twicc.telemetry.activity import note_collection_setting
+        note_collection_setting(result['telemetry_active'])
+    return result
 
 
 async def _apply_transitions_and_broadcast(patch: dict, result: dict) -> None:
@@ -396,7 +408,7 @@ async def update_synced_settings(
     obsolete_keys = get_obsolete_synced_settings_keys()
     patch = {key: value for key, value in patch.items() if key not in obsolete_keys}
     previous_mcp = read_synced_settings()
-    result = await sync_to_async(_merge_and_write)(patch, base_version)
+    result = await sync_to_async(_merge_with_telemetry_transition)(patch, base_version)
     if result["status"] == "accepted" and set(patch) & {"mcpBaseUrl", "externalMcpEnabled"}:
         current_mcp = read_synced_settings()
         if (

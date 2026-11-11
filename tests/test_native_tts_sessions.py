@@ -32,6 +32,35 @@ async def settle(session):
 
 
 @pytest.mark.asyncio
+async def test_playback_telemetry_counts_started_once_and_excludes_tests(monkeypatch):
+    from twicc.telemetry import activity
+    counted = []
+    monkeypatch.setattr(activity, 'collection_token', lambda: ('test', 'epoch'))
+    monkeypatch.setattr(activity, 'record_activity', lambda metric, **kwargs: counted.append(metric))
+    async def opened(*args, **kwargs):
+        stream = stream_from_bytes(b'hello', 'audio/mpeg', label={})
+        return OpenedSpeech(stream.id, stream.content_type)
+    monkeypatch.setattr(native_sessions, 'open_speech', opened)
+    registry = native_sessions.NativeSessionRegistry()
+    session = registry.open(str(uuid4()), ('cookie', 'test'))
+    reading = manual()
+    await session.apply(reading)
+    await settle(session)
+    assert counted == []
+    start = command('started', 2, reading_id=reading['reading_id'], generation=1)
+    await session.apply(start)
+    await session.apply({**start, 'seq': 3})
+    assert counted == ['manual_tts_messages']
+    test_reading = manual(seq=4, generation=2)
+    test_reading['request']['config_id'] = 'settings-test'
+    await session.apply(test_reading)
+    await settle(session)
+    await session.apply(command('started', 5, reading_id=test_reading['reading_id'], generation=2))
+    assert counted == ['manual_tts_messages']
+    await registry.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_listen_acknowledgements_do_not_publish_previous_listener_error(monkeypatch):
     registry = native_sessions.NativeSessionRegistry()
     session = registry.open(str(uuid4()), ('cookie', 'fp'))
@@ -170,6 +199,10 @@ async def test_disconnect_expiry_and_wrong_binding():
 
 @pytest.mark.asyncio
 async def test_resume_started_feedback_is_idempotent(monkeypatch):
+    from twicc.telemetry import activity
+    counted = []
+    monkeypatch.setattr(activity, 'collection_token', lambda: ('test', 'epoch'))
+    monkeypatch.setattr(activity, 'record_activity', lambda metric, **kwargs: counted.append(metric))
     stream = stream_from_bytes(b'audio', 'audio/mpeg', label={})
     monkeypatch.setattr(native_sessions, 'open_speech', AsyncMock(return_value=OpenedSpeech(stream.id, stream.content_type)))
     registry = native_sessions.NativeSessionRegistry()
@@ -184,6 +217,7 @@ async def test_resume_started_feedback_is_idempotent(monkeypatch):
     await session.reconcile([], current)
     await session.reconcile([], current)
     assert coordinator.started.await_count == 1
+    assert counted == ['manual_tts_messages']
     assert session.snapshot()['playback']['started'] is True
     await registry.shutdown()
 
@@ -393,7 +427,7 @@ async def test_resume_offers_only_last_candidate_after_all_replay_commands():
 async def test_stop_all_during_summary_validation_is_immediate(monkeypatch):
     started, gate = asyncio.Event(), asyncio.Event()
     cancelled = asyncio.Event()
-    async def retain(reference):
+    async def retain(reference, *, usage_origin="unknown"):
         started.set()
         try:
             await gate.wait()
@@ -462,10 +496,10 @@ async def test_manual_summary_reconstructs_after_page_releases_before_acquisitio
     page, reference = await complete_temporary_reference(service, monkeypatch, 'live')
     entered, gate = asyncio.Event(), asyncio.Event()
     original_retain = service.retain_summary_for_speech
-    async def retain(source):
+    async def retain(source, *, usage_origin="unknown"):
         entered.set()
         await gate.wait()
-        return await original_retain(source)
+        return await original_retain(source, usage_origin=usage_origin)
     monkeypatch.setattr(service, 'retain_summary_for_speech', retain)
     stream = stream_from_bytes(b'audio', 'audio/mpeg', label={})
     async def prepare(data):

@@ -9,6 +9,7 @@ import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
 import { createNativeTtsClient } from '../utils/nativeTtsClient.js'
 import * as uiMessages from '../i18n/uiMessages.js'
+import { configureTelemetry, setTelemetryEpoch } from '../utils/telemetryClient.js'
 beforeEach(() => { setActivePinia(createPinia()); _resetSpeechForTests(); setSpeechPlayerFactory(() => assert.fail('native cannot create HTMLAudio')); setPcmStreamPlayerFactory(() => assert.fail('native cannot create AudioContext')) })
 test('displayed native errors are consumed before reload, including after a successful new reading', async () => {
     const audioError = 'Audio playback was interrupted.'
@@ -219,13 +220,16 @@ test('paused native timeline stays enabled, permits manual speech, and can be di
     timeline.dispose(); tts.detachNative()
 })
 test('native automatic activation sends real worktree scope and six-fraction UTC boundary without a Web coordinator', async () => {
+    configureTelemetry({ send() {}, enabled: () => true })
+    setTelemetryEpoch('a'.repeat(64))
     const { tts, calls } = await fixture()
     const timeline = useTimelineSpeechStore()
     timeline._now = () => Date.parse('2026-11-05T12:00:00Z')
     timeline.initialize({ dataStore: { projectsLoaded: true, getProject: id => ({ id, worktree_of: 'parent' }), getProjectScopeIds: id => [id], getProjectDisplayName: () => 'Worktree', getMainRepoProjectId: id => id }, workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() })
     await timeline.enable('worktree')
-    assert.deepEqual(calls[0], ['listen', { pageId: 'worktree', scope: { kind: 'worktree', id: 'worktree', label: 'Worktree' }, includeMuted: false, boundary: '2026-11-05T12:00:00.000000Z' }])
+    assert.deepEqual(calls[0], ['listen', { pageId: 'worktree', scope: { kind: 'worktree', id: 'worktree', label: 'Worktree' }, includeMuted: false, boundary: '2026-11-05T12:00:00.000000Z', telemetryEpoch: 'a'.repeat(64) }])
     timeline.dispose(); tts.detachNative()
+    configureTelemetry({})
 })
 test('actual logout Stop all reaches native while capability negotiation still runs', async () => {
     const { tts, calls } = await fixture()

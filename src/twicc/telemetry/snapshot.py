@@ -1,7 +1,8 @@
 """Daily telemetry snapshot, derived from the DB at send time (design §3/§5.2).
 
-Counters, booleans, enums and buckets only — never content, titles,
-paths, or identifiers (§3.3). Sync code: run it in a thread from the task.
+Counters, booleans, enums, buckets and coarse metadata — never content,
+titles, paths, or client identifiers. The configured OpenRouter TTS model
+is explicitly sent verbatim. Sync code: run it in a thread from the task.
 """
 
 from __future__ import annotations
@@ -41,10 +42,15 @@ from twicc.providers.state import get_enabled_providers
 from twicc.synced_settings import read_synced_settings
 from twicc.telemetry.install_method import detect_install_method
 from twicc.telemetry.state import MAX_DAY_ENTRIES
+from twicc.telemetry.activity import METRICS, client_payload
+from twicc.telemetry.configuration import build_configuration_block
 from twicc.terminal_config import read_terminal_config
 from twicc.workspaces import read_workspaces
 
 SCHEMA_VERSION = 1
+
+USAGE_BUCKETS = ((0, '0'), (2, '1'), (6, '2-5'), (21, '6-20'),
+                 (51, '21-50'), (101, '51-100'), (None, '101+'))
 
 # Buckets are part of the public schema (the collector's transparency page
 # lists the exact edges) — do not change edges without a schema bump.
@@ -232,6 +238,7 @@ def build_instance_block() -> dict:
     layouts = read_layouts().get("layouts", [])
     targets = preferences.get("externalNotificationTargets", [])
     return {
+        **build_configuration_block(preferences, layouts),
         "twicc_version": settings.APP_VERSION,
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
         "os": {"win32": "windows"}.get(sys.platform, sys.platform),
@@ -277,7 +284,7 @@ def build_instance_block() -> dict:
     }
 
 
-def build_day_block(day: date, day_state: dict) -> dict:
+def build_day_block(day: date, day_state: dict, *, include_usage: bool = False) -> dict:
     start = datetime.combine(day, time.min, tzinfo=UTC)
     end = start + timedelta(days=1)
 
@@ -361,7 +368,13 @@ def build_day_block(day: date, day_state: dict) -> dict:
         group = groups.get(tool, "other")
         mcp_calls_by_group[group] = mcp_calls_by_group.get(group, 0) + 1
 
+    usage = {}
+    if include_usage:
+        usage = {f'{metric}_bucket': bucket(day_state.get('usage', {}).get(metric, 0), USAGE_BUCKETS)
+                 for metric in sorted(METRICS)}
+        usage.update(client_payload(day_state))
     return {
+        **usage,
         "date": day.isoformat(),
         "sessions_by_model_effort": sessions_by_model_effort,
         "sessions_by_permission_mode": sessions_by_permission_mode,
@@ -401,7 +414,9 @@ def build_payload(state: dict) -> dict | None:
     complete_days = complete_days[-MAX_DAY_ENTRIES:]
 
     day_states = state.get("days", {})
-    day_blocks = [build_day_block(d, day_states.get(d.isoformat(), {})) for d in complete_days]
+    day_blocks = [build_day_block(d, day_states.get(d.isoformat(), {}),
+                 include_usage=bool(state.get('usage_started_date') and d.isoformat() > state['usage_started_date']))
+                 for d in complete_days]
 
     return {
         "schema": SCHEMA_VERSION,

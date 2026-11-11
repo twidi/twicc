@@ -116,7 +116,7 @@ export const useSummariesStore = defineStore('summaries', {
                 })
             }))
         },
-        request(source, { manual = true, regenerate = false, start = true } = {}) {
+        request(source, { manual = true, regenerate = false, start = true, usageOrigin = manual ? 'manual' : 'timeline' } = {}) {
             const rt = runtime(this), temporary = 'text' in source
             const subscription = reactive({ entry: entryFor(source) })
             let resolveReady, rejectReady
@@ -156,7 +156,7 @@ export const useSummariesStore = defineStore('summaries', {
                         controller.entry.descriptor = descriptor
                         rt.runs.set(key, controller)
                         if (!temporary) this.entries[++rt.sequence] = controller.entry
-                        controller.ready = this._acquire(controller, source, { regenerate, start })
+                        controller.ready = this._acquire(controller, source, { regenerate, start, usage_origin: usageOrigin })
                         controller.ready.catch(() => {})
                     }
                     owner.controller = controller
@@ -334,7 +334,7 @@ export const useSummariesStore = defineStore('summaries', {
         openTemporary(text, purpose = 'selection') {
             this.closeTemporary()
             const rt = runtime(this), source = { text: String(text), purpose }
-            const subscription = this.request(source, { manual: false })
+            const subscription = this.request(source, { manual: false, usageOrigin: purpose === 'test' ? 'test' : 'manual' })
             rt.temporary = subscription
             this.temporary = { id: `selection:${++rt.sequence}`, source, entry: subscription.entry }
             return subscription

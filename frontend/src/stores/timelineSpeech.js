@@ -10,6 +10,7 @@ import { resolveTimelineScope } from '../utils/timeline/scope.js'
 import { sessionMention } from '../utils/timeline/sessions.js'
 import { extractWorkspaceId } from '../utils/workspaceIds.js'
 import { REFUSED } from '../utils/speechOutcome.js'
+import { captureTelemetry, reportActivity } from '../utils/telemetryClient.js'
 import { useTextToSpeechStore } from './textToSpeech.js'
 import { useTimelineFiltersStore } from './timelineFilters.js'
 import { useSummariesStore } from './summaries.js'
@@ -113,7 +114,8 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
             const label = scope.kind === 'global' ? i18n.global.t('session.timelineSpeech.allProjects') : scope.kind === 'workspace'
                 ? workspacesStore.getWorkspaceById(id)?.name ?? '' : dataStore.getProjectDisplayName(pageId)
             const accepted = await client.listen({ pageId, scope: { kind: scope.kind, id, label },
-                includeMuted: filters.filtersFor(pageId).includeMuted, boundary: wireTime(store._now()) })
+                includeMuted: filters.filtersFor(pageId).includeMuted, boundary: wireTime(store._now()),
+                telemetryEpoch: captureTelemetry() })
             // Native displays the advice. Its next state poll adopts listening only after confirmation.
             if (!accepted?.accepted && accepted?.error?.code !== 'confirmation_required')
                 showError(store, accepted?.error?.uiMessage || accepted?.error?.message || localUiMessage('session.timelineSpeech.startFailed'))
@@ -535,6 +537,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 outageSince: connectionStatus.value === 'OPEN' ? null : store._now(),
             }
             store.activePageId = pageId
+            reportActivity('timeline_tts_activations')
             if (pageHidden()) suspend()
         },
         resume,

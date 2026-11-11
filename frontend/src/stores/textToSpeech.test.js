@@ -8,6 +8,7 @@ import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
 import { CUT, GONE, REFUSED, UNREACHABLE } from '../utils/speechOutcome.js'
 import { createScriptConfig, createTtsConfig } from '../utils/ttsConfig.js'
+import { configureTelemetry, setTelemetryEpoch } from '../utils/telemetryClient.js'
 
 const FIELDS = {
     model: 'openai/gpt-4o-mini-tts',
@@ -124,6 +125,37 @@ async function startPlaying(text = 'hello') {
     fakePlayer.handlers.onPlaying()
     return pending
 }
+
+test('telemetry records first playback only, distinguishes ownership and excludes config tests', async () => {
+    const reports = []
+    configureTelemetry({ send: value => reports.push(value), enabled: () => true })
+    setTelemetryEpoch('test-epoch')
+    try {
+        store.applyConfig(payload())
+        store._openSpeech = async () => opened()
+        const pending = store.play('manual')
+        await until(() => fakePlayer.handlers)
+        assert.equal(reports.length, 0)
+        fakePlayer.handlers.onPlaying()
+        fakePlayer.handlers.onPlaying()
+        await pending
+        assert.deepEqual(reports.map(value => value.metric), ['manual_tts_messages'])
+        store.stop()
+        fakePlayer.handlers = null
+        const automatic = store.play('automatic', { owner: Symbol('timeline') })
+        await until(() => fakePlayer.handlers)
+        fakePlayer.handlers.onPlaying()
+        await automatic
+        assert.deepEqual(reports.map(value => value.metric), ['manual_tts_messages', 'timeline_tts_messages'])
+        store.stop()
+        fakePlayer.handlers = null
+        const preview = store.playWith('preview', FIELDS, { configId: 'c1' })
+        await until(() => fakePlayer.handlers)
+        fakePlayer.handlers.onPlaying()
+        await preview
+        assert.equal(reports.length, 2)
+    } finally { store.stop(); configureTelemetry({}) }
+})
 
 const IPHONE = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 }
 const DESKTOP_SAFARI = {

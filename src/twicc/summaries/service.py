@@ -219,6 +219,7 @@ def _save_result(run: '_SummaryRun') -> dict | None:
 
 class _SummaryRun:
     def __init__(self, source: SummarySource, requested: str, policy: str):
+        self.usage_origin, self.usage_token = 'unknown', None
         self.source, self.requested, self.policy = source, requested, policy
         self.key = _key(source, policy)
         self.state = 'running'
@@ -354,6 +355,9 @@ class _SummaryRun:
         finally:
             if self.total_ms is None:
                 self.total_ms = self.elapsed()
+            if self.state == 'complete' and self.usage_origin == 'manual' and self.usage_token is not None:
+                from twicc.telemetry.activity import record_activity
+                await sync_to_async(record_activity)('manual_summaries', token=self.usage_token)
             self.wake()
 
 
@@ -397,7 +401,10 @@ def _handle(handle_id: str) -> SummaryHandle:
 async def acquire_summary(
     source: dict, *, regenerate: bool = False, start: bool = True,
     _temporary_source: SummarySource | None = None, _requested_model: str | None = None,
+    usage_origin: str = 'unknown',
 ) -> SummaryHandle:
+    from twicc.telemetry.activity import collection_token
+    usage_token = await sync_to_async(collection_token)() if usage_origin == 'manual' else None
     resolved, requested, policy, descriptor, saved = await sync_to_async(_prepare)(
         source, _temporary_source=_temporary_source, _requested_model=_requested_model,
     )
@@ -426,6 +433,8 @@ async def acquire_summary(
         raise SummaryUnavailable(ui_message_text('No matching summary is available', 'backend.summaries.noMatch'))
     else:
         run = _SummaryRun(resolved, requested, policy)
+        if resolved.purpose != 'test':
+            run.usage_origin, run.usage_token = usage_origin, usage_token
     handle = SummaryHandle(run, descriptor)
     if key is not None:
         _runs[key] = run
@@ -516,7 +525,7 @@ async def acquire_summary_reader(handle_id: str) -> SummaryReader:
     return SummaryReader(SummaryHandle(handle._run, handle.descriptor, claimed=True))
 
 
-async def retain_summary_for_speech(reference: dict) -> SummaryReader:
+async def retain_summary_for_speech(reference: dict, *, usage_origin: str = 'unknown') -> SummaryReader:
     """Retain a saved result or a reconstructible frozen source independently.
 
     A live handle is only a reuse hint. The returned reader owns its subscription;
@@ -557,7 +566,8 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
             raise UiMessageError('Invalid temporary summary reference', 'backend.summaries.temporaryReference')
         requested = validate_temporary_model_request(reference['source'], reference['requested_model'])
         temporary = await sync_to_async(validate_source, thread_sensitive=False)(reference['source'])
-        handle = await acquire_summary(reference['source'], _temporary_source=temporary, _requested_model=requested)
+        handle = await acquire_summary(reference['source'], _temporary_source=temporary, _requested_model=requested,
+                                       usage_origin=usage_origin)
         handle.claim()
         return SummaryReader(handle)
     fields = ('source_key', 'source_hash', 'policy_key')
@@ -577,7 +587,7 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         if any(handle.descriptor[field] != reference[field] for field in fields):
             raise SummaryUnavailable(ui_message_text('The summary source changed. Refresh it before reading.', 'backend.summaries.sourceChanged'))
         return await acquire_summary_reader(handle.id)
-    handle = await acquire_summary(reference['source'], _temporary_source=temporary)
+    handle = await acquire_summary(reference['source'], _temporary_source=temporary, usage_origin=usage_origin)
     if any(handle.descriptor[field] != reference[field] for field in fields):
         await release_summary(handle.id)
         raise SummaryUnavailable(ui_message_text('The summary source changed. Refresh it before reading.', 'backend.summaries.sourceChanged'))

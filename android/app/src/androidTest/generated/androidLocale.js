@@ -9898,9 +9898,12 @@ var zg = /* @__PURE__ */ xn(!1);
 function Bg() {
 	zg.value || (zg.value = !0, globalThis.window?.dispatchEvent(new Event("twicc:android-ready")));
 }
+function Vg(e) {
+	typeof e?.engine == "string" && (/^Gecko/i.test(e.engine) || /WebView/i.test(e.engine)) && typeof e.version == "string" && e.version;
+}
 //#endregion
 //#region src/utils/androidAppClient.js
-var Vg = "twicc.android.response", Hg = "twicc.android.request", Ug = /* @__PURE__ */ new Set([
+var Hg = "twicc.android.response", Ug = "twicc.android.request", Wg = /* @__PURE__ */ new Set([
 	"tts.attach",
 	"tts.state",
 	"tts.acknowledge",
@@ -9910,8 +9913,8 @@ var Vg = "twicc.android.response", Hg = "twicc.android.request", Ug = /* @__PURE
 	"tts.disable",
 	"tts.skip",
 	"tts.stop_all"
-]), Wg = /* @__PURE__ */ new Set([...Ug, "locale.set"]);
-function Gg(e, { timeoutMs: t = 1500 } = {}) {
+]), Gg = /* @__PURE__ */ new Set([...Wg, "locale.set"]);
+function Kg(e, { timeoutMs: t = 1500 } = {}) {
 	let n = /* @__PURE__ */ new Map(), r = /* @__PURE__ */ new Set(), i = Math.random().toString(36).slice(2), a = 0, o = !1, s = null, c = typeof e.TwiccAndroid?.postMessage == "function" ? e.TwiccAndroid : null;
 	c && Bg();
 	function l(e) {
@@ -9923,7 +9926,7 @@ function Gg(e, { timeoutMs: t = 1500 } = {}) {
 		if (!e || e.protocol !== 1 || typeof e.id != "string") return;
 		let t = n.get(e.id);
 		if (t && typeof e.ok == "boolean") {
-			if (Bg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.resolve(e.state ?? null);
+			if (Bg(), n.delete(e.id), clearTimeout(t.timer), e.ok) t.command === "getState" && Vg(e.state), t.resolve(e.state ?? null);
 			else {
 				let n = e.ui_message || typeof e.error == "string" ? Rg(e, Ig("common.android.errors.actionFailed").message) : Ig("common.android.errors.actionFailed");
 				e.state !== void 0 && (n.state = e.state), t.reject(n);
@@ -9931,7 +9934,7 @@ function Gg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	}
 	function u(t) {
-		t.source === e && t.origin === e.location.origin && (t.data?.channel === Vg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && Bg());
+		t.source === e && t.origin === e.location.origin && (t.data?.channel === Hg && l(t.data.response), t.data?.channel === "twicc.android.environment" && t.data.protocol === 1 && typeof t.data.id == "string" && n.get(t.data.id)?.command === "getState" && Bg());
 	}
 	function d(e) {
 		try {
@@ -9944,7 +9947,7 @@ function Gg(e, { timeoutMs: t = 1500 } = {}) {
 		},
 		async request(r, l = {}) {
 			if (o) return Promise.reject(Ig("common.android.errors.closed"));
-			if (c && Wg.has(r)) {
+			if (c && Gg.has(r)) {
 				let n = Date.now() + t;
 				for (; !s && !o;) {
 					let t = e.__twiccNativeTtsDocument;
@@ -9959,14 +9962,14 @@ function Gg(e, { timeoutMs: t = 1500 } = {}) {
 			}
 			let u = `${i}-${++a}`, d = {
 				...l,
-				...s && Wg.has(r) ? { documentToken: s } : {},
+				...s && Gg.has(r) ? { documentToken: s } : {},
 				protocol: 1,
 				id: u,
 				command: r
 			}, f;
 			try {
 				f = JSON.stringify(d);
-				let e = Ug.has(r) ? 12582912 : 16384;
+				let e = Wg.has(r) ? 12582912 : 16384;
 				if (new TextEncoder().encode(f).byteLength > e) return Promise.reject(Ig("common.android.errors.tooLarge"));
 			} catch (e) {
 				return console.warn("Android request serialization failed", e), Promise.reject(Ig("common.android.errors.actionFailed"));
@@ -9983,7 +9986,7 @@ function Gg(e, { timeoutMs: t = 1500 } = {}) {
 				});
 				try {
 					c ? c.postMessage(f) : e.postMessage({
-						channel: Hg,
+						channel: Ug,
 						request: d
 					}, e.location.origin);
 				} catch (e) {
@@ -9998,22 +10001,22 @@ function Gg(e, { timeoutMs: t = 1500 } = {}) {
 		}
 	};
 }
-var Kg;
-function qg() {
-	return Kg ?? (Kg = Gg(window));
+var qg;
+function Jg() {
+	return qg ?? (qg = Kg(window));
 }
 //#endregion
 //#region src/i18n/androidLocale.js
-var Jg = gg.map(({ value: e }) => e);
-function Yg(e) {
+var Yg = gg.map(({ value: e }) => e);
+function Xg(e) {
 	return typeof e?.locale == "string" && Number.isSafeInteger(e.revision) && e.revision >= 0 && Array.isArray(e.supportedLocales) && e.supportedLocales.includes(e.locale) && e.supportedLocales.every((e) => typeof e == "string");
 }
-function Xg({ client: e, document: t, applyLocale: n, readBrowserLocale: r, onCompatibility: i = () => {} }) {
+function Zg({ client: e, document: t, applyLocale: n, readBrowserLocale: r, onCompatibility: i = () => {} }) {
 	let a = /* @__PURE__ */ ln({
 		mode: "browser",
 		locale: "en",
 		revision: null,
-		supportedLocales: [...Jg]
+		supportedLocales: [...Yg]
 	}), o, s, c = !1, l = !1, u, d = 0, f = 0, p = Promise.resolve(), m = 0, h, g, _ = !0, v = !1;
 	function y(e) {
 		i(e ? Pg(e) : null);
@@ -10038,7 +10041,7 @@ function Xg({ client: e, document: t, applyLocale: n, readBrowserLocale: r, onCo
 		}), await a.promise;
 	}
 	async function x(e, t, n = !1) {
-		Yg(e) && !c && (u && e.revision < u.revision || (u = {
+		Xg(e) && !c && (u && e.revision < u.revision || (u = {
 			...e,
 			supportedLocales: [...e.supportedLocales]
 		}, t === d && (Object.assign(a, u, { mode: _g(e.locale) ? "native" : "incompatible" }), y(a.mode === "incompatible" ? "android.language.errors.updateServer" : null), await b(e.locale, t, n))));
@@ -10060,7 +10063,7 @@ function Xg({ client: e, document: t, applyLocale: n, readBrowserLocale: r, onCo
 				o = await e.request("getState");
 			} catch {}
 			if (c) return a;
-			if (o?.capabilities?.appLanguage === 1 && Yg(o.appLanguage)) for (l = !0, v = !0; v && !c;) {
+			if (o?.capabilities?.appLanguage === 1 && Xg(o.appLanguage)) for (l = !0, v = !0; v && !c;) {
 				v = !1;
 				let t = ++d, n;
 				try {
@@ -10088,7 +10091,7 @@ function Xg({ client: e, document: t, applyLocale: n, readBrowserLocale: r, onCo
 				return;
 			}
 			if (c) return;
-			if (t?.capabilities?.appLanguage !== 1 || !Yg(t.appLanguage)) {
+			if (t?.capabilities?.appLanguage !== 1 || !Xg(t.appLanguage)) {
 				t && (a.mode = "incompatible", y("android.language.errors.updateApp"));
 				return;
 			}
@@ -10154,26 +10157,26 @@ function Xg({ client: e, document: t, applyLocale: n, readBrowserLocale: r, onCo
 		dispose: O
 	};
 }
-var Zg = /* @__PURE__ */ Sn(null), Qg = /* @__PURE__ */ Sn(null), $g;
-function e_() {
-	return $g || ($g = Xg({
-		client: qg(),
+var Qg = /* @__PURE__ */ Sn(null), $g = /* @__PURE__ */ Sn(null), e_;
+function t_() {
+	return e_ || (e_ = Zg({
+		client: Jg(),
 		document: globalThis.document,
 		applyLocale: (e) => Tg(e),
 		readBrowserLocale: vg,
 		onCompatibility: (e) => {
-			Qg.value = e;
+			$g.value = e;
 		}
 	}), globalThis.window?.addEventListener("pagehide", (e) => {
-		e.persisted || $g.dispose();
-	})), $g;
+		e.persisted || e_.dispose();
+	})), e_;
 }
-async function t_() {
-	let e = await e_().initialize();
-	return Zg.value = e, (e.mode === "native" || e.mode === "incompatible" && e.revision !== null) && Bg(), e;
+async function n_() {
+	let e = await t_().initialize();
+	return Qg.value = e, (e.mode === "native" || e.mode === "incompatible" && e.revision !== null) && Bg(), e;
 }
-async function n_(e) {
-	await t_(), await e_().select(e);
+async function r_(e) {
+	await n_(), await t_().select(e);
 }
 //#endregion
-export { Xg as createAndroidLocaleController, t_ as initializeInterfaceLocale, Qg as interfaceLocaleCompatibility, Zg as interfaceLocaleState, n_ as selectInterfaceLocale };
+export { Zg as createAndroidLocaleController, n_ as initializeInterfaceLocale, $g as interfaceLocaleCompatibility, Qg as interfaceLocaleState, r_ as selectInterfaceLocale };

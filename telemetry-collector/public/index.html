@@ -44,8 +44,9 @@
 
   <p>
     One JSON document per day, built from two parts: an instance block sent with every payload, and
-    a daily block for each not-yet-sent complete day (UTC). Every field is a counter, a boolean, an
-    enum, or a bucketed value &mdash; never free text.
+    a daily block for each not-yet-sent complete day (UTC). Fields contain counters, booleans,
+    enums, buckets, and version metadata. One configuration value is sent verbatim:
+    the active, validated OpenRouter TTS model identifier. No model allowlist restricts future models.
   </p>
 
   <div style="overflow-x: auto">
@@ -73,6 +74,11 @@
       <tr><td><code>sharing_configured</code></td><td>boolean</td><td>whether a usable share base origin is configured; never the address</td></tr>
       <tr><td><code>title_generation_enabled</code></td><td>boolean</td><td>whether automatic title generation is enabled; never the prompt or generated titles</td></tr>
       <tr><td><code>title_auto_apply</code></td><td>boolean</td><td>whether automatic application of generated titles is enabled</td></tr>
+      <tr><td><code>title_model</code></td><td><code>provider</code> / <code>haiku</code> / <code>luna</code> / <code>openrouter</code></td><td>configured title generation choice; <code>provider</code> follows the session provider</td></tr>
+      <tr><td><code>summary_model</code></td><td><code>haiku</code> / <code>luna</code> / <code>openrouter</code> / <code>none</code></td><td>effective summary choice shown in settings, after provider availability fallback; not the engine of each past generation</td></tr>
+      <tr><td><code>tts</code></td><td><code>kind</code>: <code>none</code> / <code>script</code> / <code>openrouter</code>; <code>model</code> only for OpenRouter</td><td>usable active TTS configuration at send time; verbatim configured OpenRouter model, never script details, voice, instructions, or keys</td></tr>
+      <tr><td><code>default_layout</code></td><td><code>single-pane</code> / <code>custom</code></td><td>global default layout; no layout identity or arrangement</td></tr>
+      <tr><td><code>agent_presets_bucket</code></td><td>per provider: <code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>saved agent settings presets; excludes the synthetic defaults preset, names, and settings</td></tr>
       <tr><td><code>peer_messaging</code></td><td>boolean</td><td>whether peer messaging is configured (a peer base URL is set); no address is ever sent</td></tr>
       <tr><td><code>peers_active_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>peer messaging adoption; active relationships only, never their identity</td></tr>
       <tr><td><code>external_mcp</code></td><td>boolean</td><td>whether external MCP access is configured and live; no address is ever sent</td></tr>
@@ -88,6 +94,12 @@
       <tr><td><code>presence_bucket</code></td><td>minutes of human presence: <code>0</code>, <code>&lt;30</code>, <code>30-120</code>, <code>120-360</code>, <code>360-720</code>, <code>720+</code></td><td>intensity</td></tr>
       <tr><td>peak concurrent agents</td><td>max simultaneous live processes that day</td><td>scale of use</td></tr>
       <tr><td><code>cost_bucket</code></td><td><code>0</code>, <code>&lt;1</code>, <code>1-10</code>, <code>10-50</code>, <code>50-100</code>, <code>100-250</code>, <code>250-500</code>, <code>500-1000</code>, <code>1000+</code> USD/day</td><td>scale of use</td></tr>
+      <tr><td><code>manual_summaries_bucket</code></td><td rowspan="4"><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21-50</code>, <code>51-100</code>, <code>101+</code></td><td>new successful manually requested summaries, including selections; excludes cached results, tests, and timeline TTS generations</td></tr>
+      <tr><td><code>manual_tts_messages_bucket</code></td><td>manual readings that start playback, including selections and summaries; excludes configuration tests</td></tr>
+      <tr><td><code>timeline_tts_messages_bucket</code></td><td>timeline messages that start playback; excludes technical recovery announcements</td></tr>
+      <tr><td><code>timeline_tts_activations_bucket</code></td><td>explicit user activations; excludes resume, reconnect, and recovery</td></tr>
+      <tr><td><code>devices_count</code>, <code>devices</code></td><td>distinct observed client keys and grouped descriptions with counts; see profile limitations below</td><td>browser family and mobile/desktop, or Android app version and <code>gecko</code>/<code>webview</code> engine; no browser version or device name</td></tr>
+      <tr><td><code>ui_locales</code></td><td>distinct supported UI locales used that day</td><td>language adoption, including resolved automatic language choices</td></tr>
       <tr><td>shares created</td><td>count</td><td>feature adoption</td></tr>
       <tr><td>artifact bookmarks created</td><td>count</td><td>feature adoption</td></tr>
       <tr><td>sessions spawned by other sessions</td><td>count</td><td>orchestration adoption</td></tr>
@@ -98,8 +110,26 @@
   </div>
 
   <p>
-    The feature block is deliberately small and limited to what can be derived from the database
-    and saved configuration without new activity tracking or content scans; it may grow or shrink across schema versions.
+    Most values come from the database and saved configuration. The four summary/TTS counters and
+    active client descriptions use limited instrumentation. These aggregates live in the local
+    <code>telemetry.json</code> file, with no event log or new database tables. New metrics start
+    with the next complete UTC day; older blocks omit them instead of reporting false zeros.
+    Collection stops before notice acknowledgement and while telemetry is disabled.
+    Local daily aggregates retain at most 30 complete UTC days plus today's partial entry.
+    Periodic cleanup removes older dates even while collection is disabled.
+  </p>
+  <p>
+    A device here means a browser profile or Android client installation, not a physical device.
+    Tabs and reloads share a random local profile key. Daily salted digests deduplicate profiles
+    locally; neither keys, digests, salts, nor raw User-Agent values reach this collector.
+    Two browsers on the same computer count separately. Clearing browser storage creates a new profile.
+    Identical descriptions are grouped with their exact counts.
+    Web Locks serializes first key creation between tabs on HTTPS or localhost when available.
+    Without that API, including HTTP on a LAN, simultaneous first tab openings can create
+    separate keys and overcount a profile. Without browser storage, identity lasts only for
+    the current page. Counts are exact for the observed keys, subject to these profile limitations.
+    Native activation counting requires an Android app that forwards the collection epoch;
+    older app versions omit this counter contribution.
   </p>
 
   <h2>What is never collected</h2>
@@ -111,6 +141,7 @@
     <li>No IP addresses &mdash; the client never sends one, and this collector does not log or store any</li>
     <li>No exact costs or token counts, only buckets</li>
     <li>No per-session identifiers of any kind &mdash; only aggregate counters</li>
+    <li>No client identifiers, hardware identifiers, raw User-Agent, or browser versions</li>
   </ul>
 
   <h2>The instance identifier</h2>
@@ -133,8 +164,8 @@
 
   <p>
     Source and full design: <a href="https://github.com/twidi/twicc">github.com/twidi/twicc</a> &mdash;
-    see <code>docs/plans/2026-07-18-telemetry-design.md</code> in the repository for the complete
-    design document.
+    see <code>docs/archives/plans/2026-07-18-telemetry-design.md</code> and
+    <code>docs/plans/2026-11-11-telemetry-usage-design.md</code> in the repository.
   </p>
   </main>
 </body>
