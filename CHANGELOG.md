@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Android app (experimental)** — Listen to your timeline while using other apps or with your screen off. Individual TTS readings also continue in the background, with playback controls in the Android notification. Build and install the APK yourself; the app is not available on the Play Store — [source and build instructions](https://github.com/twidi/twicc/tree/main/android).
 - **Faster titles** — A new “OpenRouter” option generates session titles in under a second instead of several. It needs your OpenRouter key; pick it in the Titles settings.
 - **Simple model picker** — A lighter way to choose the provider, model and effort, without the score matrix. The score matrix is one click away when you want the scores.
+- **Folder downloads** — Download a folder and its contents as a ZIP archive from the Files or Artifacts context menu.
 - **Session tree** — New option in the sidebar menu to show the sessions an agent started nested under their parent, instead of a flat list.
 - **Mobile session selection** — Long-press a session, then tap others to select or deselect them.
 - **5-hour usage** — Some plans have no 5-hour usage quota. A new setting in the Usage section hides it, on all your devices.
