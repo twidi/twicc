@@ -214,6 +214,111 @@ def capture_message_context(session, *, before, occurred_at, input_origins=(), v
              **({'line': entry['line']} if isinstance(entry['line'], int) else {})} for entry in selected]
 
 
+def capture_ending_context(session, *, refs, floor, occurred_at, input_origins=(), tool_refs=()):
+    """Capture indexed root evidence only through an exact frozen terminal."""
+    if not refs or refs[-1].kind not in ('claude_uuid', 'codex_item'):
+        return {}
+    terminal = refs[-1]
+    groups = _resolve_groups(session, [terminal], floor=floor)
+    if not any(_eligible_group(session, group, refs) for group in groups):
+        return {}
+    lines = [item.line_num for group in groups for item, _, aliases in group if terminal in aliases]
+    if not lines:
+        return {}
+    boundary = min(lines)
+    tool_lines = set()
+    for ref in tool_refs:
+        matching = [item.line_num for group in _resolve_groups(session, [ref], floor=floor)
+                    for item, _, aliases in group if ref in aliases]
+        if not matching:
+            return {}
+        tool_lines.add(min(matching))
+    previous = capture_message_context(session, before=boundary + 1, occurred_at=occurred_at,
+        input_origins=input_origins, verified=refs)
+    source_boundary = max(boundary, *tool_lines) if tool_lines else boundary
+    return {'previous_messages': previous,
+            'tool_evidence': _capture_tool_observations(session, source_boundary,
+                conversation_boundary=boundary, captured_lines=tool_lines),
+            'source_boundary': source_boundary, 'source_ceiling': boundary}
+
+
+def _observation_text(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return '\n'.join(part.get('text', '') for part in value
+                         if isinstance(part, dict) and isinstance(part.get('text'), str))
+    return orjson.dumps(value).decode() if value is not None else ''
+
+
+def _capture_tool_observations(session, boundary, *, conversation_boundary, captured_lines):
+    """Read existing completed tools, excluding child conversations and later lines."""
+    from twicc.agent.semantic_types import ToolObservation
+    from twicc.core.content_storage.readers import iter_current_items
+    from twicc.providers.codex.canonical import completed_item
+
+    helpers = get_provider_helpers(session.provider)
+    commands = {}
+    observations = []
+    query = SessionItem.objects.filter(session_id=session.id, line_num__lte=boundary).order_by('line_num')
+    for row in iter_current_items(query, 128, 8 * 1024 * 1024):
+        parsed = helpers.parse_item_content(row)
+        if not parsed or parsed.get('isSidechain') or parsed.get('parent_tool_use_id'):
+            continue
+        if session.provider == 'claude_code':
+            blocks = (parsed.get('message') or {}).get('content')
+            if not isinstance(blocks, list):
+                continue
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get('type') == 'tool_use':
+                    arguments = block.get('input') or {}
+                    command = arguments.get('command') if isinstance(arguments, dict) else None
+                    commands[block.get('id')] = command if isinstance(command, str) else (
+                        f"{block.get('name', '')} {orjson.dumps(arguments).decode()}")
+                elif block.get('type') == 'tool_result' and block.get('tool_use_id') in commands:
+                    tool_id = block['tool_use_id']
+                    observations.append(ToolObservation(tool_id, row.line_num, commands[tool_id],
+                        _observation_text(block.get('content')))._asdict())
+            continue
+        payload = parsed.get('payload') or {}
+        if payload.get('thread_id') not in (None, session.id):
+            continue
+        kind = payload.get('type')
+        if parsed.get('type') == 'response_item':
+            tool_id = payload.get('call_id')
+            if kind in ('function_call', 'custom_tool_call'):
+                arguments = payload.get('arguments', payload.get('input', ''))
+                commands[tool_id] = f"{payload.get('name', '')} {_observation_text(arguments)}"
+            elif kind in ('function_call_output', 'custom_tool_call_output') and tool_id in commands:
+                observations.append(ToolObservation(tool_id, row.line_num, commands[tool_id],
+                    _observation_text(payload.get('output')))._asdict())
+        item = completed_item(parsed)
+        if item and item.get('type') == 'CommandExecution' and item.get('status') not in ('in_progress', 'inProgress'):
+            command = item.get('command')
+            if isinstance(command, list):
+                command = orjson.dumps(command).decode()
+            if isinstance(command, str):
+                output = item.get('aggregated_output', item.get('aggregatedOutput'))
+                if output is None:
+                    output = f"Process exited with code {item['exit_code']}" if item.get('exit_code') is not None else ''
+                observations.append(ToolObservation(item.get('id'), row.line_num, command,
+                    _observation_text(output))._asdict())
+        elif item and item.get('type') in ('McpToolCall', 'DynamicToolCall', 'FileChange'):
+            if item.get('status') in ('in_progress', 'inProgress'):
+                continue
+            if item['type'] == 'FileChange':
+                command = f"apply_patch {orjson.dumps(item.get('changes', {})).decode()}"
+                output = '\n'.join(text for text in (item.get('stdout'), item.get('stderr')) if isinstance(text, str))
+            else:
+                command = f"{item.get('tool', item.get('name', ''))} {_observation_text(item.get('arguments', {}))}"
+                output = _observation_text(item.get('result', item.get('error')))
+            observations.append(ToolObservation(item.get('id'), row.line_num, command, output)._asdict())
+    return [entry for entry in observations
+            if entry['line'] <= conversation_boundary or entry['line'] in captured_lines]
+
+
 def _fulfill_pending(session_id):
     from twicc.core.services.timeline_decisions import fulfill_final_message_obligation
     for decision_id in TimelineDecision.objects.filter(session_id=session_id, kind='ending',

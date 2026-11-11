@@ -244,6 +244,14 @@ class BaseAgent(StopOriginMixin):
         self._completion_ending_results: dict[str, EndingResolution] = {}
         self._completion_cancel_callback: Callable | None = None
         self._completion_cancel_inference: Callable | None = None
+        self._completion_shell_serial = 0
+        self._completion_tool_refs: dict[NativeMessageRef, None] = {}
+        self._completion_tool_context_incomplete = False
+        self._completion_blocking_shells: tuple[dict, ...] = ()
+        self._completion_delivery_waits: dict[tuple[str, int], float] = {}
+        self._completion_delivery_seen: set[tuple[str, int]] = set()
+        self._completion_delivery_deadline: float | None = None
+        self._completion_delivery_timer: asyncio.TimerHandle | None = None
         # Exact identities only. Text remains in source storage and timeline snapshots.
         self._timeline_message_refs: dict[str, list[NativeMessageRef]] = {}
         self._timeline_start_refs: dict[str, NativeMessageRef | None] = {}
@@ -360,12 +368,14 @@ class BaseAgent(StopOriginMixin):
 
         if self.state == AgentState.DEAD or self._stop_requested:
             return
+        self._completion_clear_shell_delivery()
         self._completion_cancel_pending_ending("root_activity")
         self._completion_enabled = True
         previous = self.completion_controller.snapshot()
         self.completion_controller.activity(asyncio.get_running_loop().time(), first_ref=first_ref)
         snapshot = self.completion_controller.snapshot()
         if snapshot.turn_id != previous.turn_id:
+            self._completion_clear_tool_refs()
             # Capture only observations made before work. Never infer the floor
             # from indexing that may have advanced during an awaited DB write.
             self._completion_openings[snapshot.turn_id] = (
@@ -459,6 +469,8 @@ class BaseAgent(StopOriginMixin):
     def _completion_terminate(self, outcome: str) -> CompletionSnapshot | None:
         from django.utils import timezone
 
+        self._completion_clear_shell_delivery()
+        self._completion_clear_tool_refs()
         self._completion_cancel_pending_ending(outcome)
         snapshot = self.completion_controller.terminate(outcome, asyncio.get_running_loop().time())
         self._cancel_completion_timer()
@@ -491,6 +503,8 @@ class BaseAgent(StopOriginMixin):
         self._completion_ending_results[context.id] = EndingResolution("accepted", reason)
         self._completion_pending_publications[snapshot.turn_id] = snapshot
         self._completion_pending_ending = None
+        self._completion_clear_shell_delivery()
+        self._completion_clear_tool_refs()
         if self._completion_cancel_inference is not None:
             self._completion_cancel_inference(context.id)
         return snapshot
@@ -506,26 +520,146 @@ class BaseAgent(StopOriginMixin):
         if self._completion_cancel_callback is not None:
             self._completion_own_task(self._completion_cancel_callback(self, context, reason))
 
-    def _completion_capture_ending_evidence(self, snapshot, occurred_at, input_context) -> dict:
-        """Task 5 supplies bounded native context and complete shell evidence here."""
+    def _completion_next_shell_generation(self) -> int:
+        self._completion_shell_serial += 1
+        return self._completion_shell_serial
+
+    def _completion_clear_tool_refs(self) -> None:
+        self._completion_tool_refs.clear()
+        self._completion_tool_context_incomplete = False
+
+    def completion_shell_snapshot(self) -> tuple[dict, ...]:
+        """Return complete live shell facts without notice eligibility filters."""
         state = self.shell_notice_state()
         shells = state.shells if state is not None else []
+        return tuple(dict(key=shell.key, owner="root" if shell.owner == "main" else "subagent",
+            command=shell.command, description=shell.description,
+            started_at=datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), start_line=None,
+            owner_ref=shell.owner_ref, generation=shell.started_at, output_path=shell.output_path,
+            tool_id=shell.tool_use_id) for shell in shells)
+
+    def _completion_capture_ending_evidence(self, snapshot, occurred_at, input_context) -> dict:
+        shells = self.completion_shell_snapshot()
+        normative = ("key", "owner", "command", "description", "started_at", "start_line")
         return {
-            "target": {"shells": [dict(key=shell.key, owner="root" if shell.owner == "main" else "subagent",
-                command=shell.command, description=shell.description,
-                started_at=datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), start_line=None)
-                for shell in shells]},
-            "shell_refs": [dict(key=shell.key, owner_ref=None, started_at=shell.started_at) for shell in shells],
+            "target": {"shells": [{key: shell[key] for key in normative} for shell in shells]},
+            "shell_refs": [{key: shell[key] for key in ("key", "owner_ref", "started_at", "generation")}
+                           for shell in shells],
+            "shell_sources": list(shells),
+            "captured_tool_refs": [ref._asdict() for ref in self._completion_tool_refs],
+            "tool_context_incomplete": self._completion_tool_context_incomplete,
             "previous_messages": [], "tool_evidence": [],
         }
 
     def _completion_shells_are_current(self, context: EndingContext) -> bool:
-        """Task 5 overrides this with generation and delivery-settlement guards."""
+        if not self.completion_delivery_settled():
+            return False
         evidence = self._completion_capture_ending_evidence(context.snapshot, context.occurred_at, ())
-        return evidence.get("shell_refs", []) == context.payload["shell_refs"]
+        return (evidence.get("shell_refs", []) == context.payload["shell_refs"]
+                and evidence["target"] == context.payload["target"])
+
+    def _completion_enrich_ending_evidence_admitted(self, context: EndingContext) -> EndingContext:
+        """Enrich once on the admitted thread, using only frozen exact references."""
+        if context.payload.get("evidence_captured"):
+            return context
+        if context.payload.get("tool_context_incomplete"):
+            context.payload["evidence_captured"] = True
+            return context
+        from twicc.core.models import Session
+        from twicc.core.content_storage.codec import ContentIntegrityError
+        from twicc.core.services.timeline_messages import capture_ending_context
+
+        session = Session.objects.filter(pk=self.session_id, provider=context.scope.provider).first()
+        if (session is not None
+                and context.scope.storage_incarnation in (None, session.storage_incarnation)
+                and context.scope.history_epoch in (None, session.history_epoch)):
+            try:
+                evidence = capture_ending_context(session,
+                    refs=[NativeMessageRef(**ref) for ref in context.payload["message_refs"]],
+                    floor=context.payload["source_floor"], occurred_at=context.occurred_at,
+                    input_origins=context.payload["input_context"],
+                    tool_refs=[NativeMessageRef(**ref) for ref in context.payload.get("captured_tool_refs", [])])
+            except ContentIntegrityError:
+                self._logger.warning("Completion context unavailable for session %s", self.session_id, exc_info=True)
+            else:
+                context.payload.update(evidence)
+        context.payload["evidence_captured"] = True
+        return context
+
+    def _completion_delivery_now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    def _completion_root_delivery_idle(self) -> bool:
+        return True
+
+    def completion_delivery_settled(self) -> bool:
+        now = self._completion_delivery_now()
+        self._completion_delivery_waits = {key: deadline for key, deadline in self._completion_delivery_waits.items()
+                                           if deadline > now}
+        self._completion_delivery_deadline = min(self._completion_delivery_waits.values(), default=None)
+        return not self._completion_delivery_waits and self._completion_root_delivery_idle()
+
+    def _completion_clear_shell_delivery(self) -> None:
+        self._completion_blocking_shells = ()
+        self._completion_delivery_waits.clear()
+        self._completion_delivery_seen.clear()
+        self._completion_delivery_deadline = None
+        if self._completion_delivery_timer is not None:
+            self._completion_delivery_timer.cancel()
+            self._completion_delivery_timer = None
+
+    def _completion_ending_rejected(self, context: EndingContext) -> None:
+        """Retain only shell generations, never the rejected ending's boundary."""
+        self._completion_blocking_shells = tuple(dict(ref) for ref in context.payload["shell_refs"])
+        self.completion_controller.defer_due(context.candidate, self._completion_delivery_now())
+        if self._completion_pending_ending is context:
+            self._completion_pending_ending = None
+
+    def _completion_note_shell_delivery(self, key: str, phase: str) -> None:
+        """Consume provider delivery evidence before forgetting a shell identity."""
+        if not self.completion_controller.is_open:
+            return
+        context = self._completion_pending_ending
+        refs = context.payload["shell_refs"] if context is not None else self._completion_blocking_shells
+        ref = next((ref for ref in refs if ref["key"] == key), None)
+        if ref is None:
+            return
+        identity = (key, ref["generation"])
+        if phase == "terminal":
+            live = next((shell for shell in self.completion_shell_snapshot() if shell["key"] == key), None)
+            if live is not None and live["generation"] != ref["generation"]:
+                return
+            if identity in self._completion_delivery_seen:
+                return
+            self._completion_delivery_seen.add(identity)
+            self._completion_delivery_waits.setdefault(identity, self._completion_delivery_now() + 45)
+            if context is not None:
+                self._completion_blocking_shells = tuple(dict(ref) for ref in refs)
+                self._completion_cancel_pending_ending("shells_changed")
+                self.completion_controller.defer_due(context.candidate, self._completion_delivery_now())
+            self._completion_schedule_delivery_wait()
+        elif phase == "settled":
+            self._completion_delivery_waits.pop(identity, None)
+            self._completion_reconsider_if_settled()
+
+    def _completion_schedule_delivery_wait(self) -> None:
+        if self._completion_delivery_timer is not None:
+            self._completion_delivery_timer.cancel()
+        self._completion_delivery_deadline = min(self._completion_delivery_waits.values(), default=None)
+        if self._completion_delivery_deadline is not None:
+            self._completion_delivery_timer = asyncio.get_running_loop().call_later(
+                max(0, self._completion_delivery_deadline - self._completion_delivery_now()),
+                self._completion_reconsider_if_settled)
 
     def _completion_reconsider_if_settled(self) -> None:
-        """Task 5 rearms the controller here only after proving settled idle delivery."""
+        """Providers opt in after proving that root delivery is idle."""
+
+    def _completion_reconsider_after_delivery(self) -> None:
+        if self.completion_delivery_settled():
+            self.completion_controller.reconsider(asyncio.get_running_loop().time())
+            self._completion_refresh()
+        if self._completion_delivery_waits:
+            self._completion_schedule_delivery_wait()
 
     def _completion_capture_ending(self, candidate: CompletionCandidate, input_context) -> EndingContext | None:
         from django.utils import timezone
@@ -535,6 +669,9 @@ class BaseAgent(StopOriginMixin):
             return existing
         if (self.completion_controller.candidate() != candidate
                 or asyncio.get_running_loop().time() < candidate.deadline):
+            return None
+        if not self.completion_delivery_settled():
+            self.completion_controller.defer_due(candidate, asyncio.get_running_loop().time())
             return None
         snapshot = self.completion_controller.snapshot()
         occurred_at = timezone.now()

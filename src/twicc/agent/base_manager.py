@@ -1104,6 +1104,7 @@ class BaseAgentManager:
                 if result and result.status == "canceled":
                     cancel_decision(decision_id=context.id, reason=result.reason)
                 return TimelineDecision.objects.get(pk=context.id).status
+            agent._completion_enrich_ending_evidence_admitted(context)
             live = agent.completion_controller.snapshot()
             allow_missing = (
                 self._agents.get(agent.session_id) is agent
@@ -1198,8 +1199,7 @@ class BaseAgentManager:
                     await self._persist_completion_admitted(agent, snapshot,
                         state=AgentState.USER_TURN if agent.completion_controller.snapshot() == snapshot else agent.state)
                 elif classification is not None:
-                    agent.completion_controller.defer_due(context.candidate, asyncio.get_running_loop().time())
-                    agent._completion_pending_ending = None
+                    agent._completion_ending_rejected(context)
                     await asyncio.to_thread(resolve_decision, decision_id=decision_id, classification=classification,
                         effective_route=effective_route, now=now)
             try:

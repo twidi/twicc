@@ -27,6 +27,15 @@ class Classification(NamedTuple):
     reason: str
 
 
+class ToolObservation(NamedTuple):
+    """One completed root tool in the captured root source ordering."""
+
+    tool_id: str | None
+    line: int
+    command: str
+    result: str
+
+
 class EndingContext(NamedTuple):
     id: str
     candidate: CompletionCandidate

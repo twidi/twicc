@@ -147,6 +147,7 @@ class _ShellTask:
     command: str | None
     output_path: str | None
     started_at: float
+    generation: int = 0
 
 
 def build_sdk_flag_settings(fast_mode: bool) -> str:
@@ -1732,6 +1733,12 @@ class ClaudeCodeAgent(BaseAgent):
                 elif message_id:
                     ref = NativeMessageRef("claude_message", message_id)
             self._completion_activity(first_ref=ref)
+            if (isinstance(msg, UserMessage) and isinstance(msg.content, list)
+                    and any(isinstance(block, ToolResultBlock) for block in msg.content)):
+                if ref is not None:
+                    self._completion_tool_refs[ref] = None
+                else:
+                    self._completion_tool_context_incomplete = True
             if isinstance(msg, UserMessage) and ref is not None:
                 from twicc.core.enums import ItemKind
                 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
@@ -1763,6 +1770,7 @@ class ClaudeCodeAgent(BaseAgent):
                     self._completion_final_ref = None
                 elif any(isinstance(block, TextBlock) and block.text.strip() for block in msg.content):
                     self._completion_final_ref = ref or NativeMessageRef("unresolved", "")
+                    self._completion_clear_tool_refs()
                     if final is True and ref is not None:
                         self._timeline_observe_message(ref, role="assistant")
         if isinstance(msg, ResultMessage) and not msg.is_error:
@@ -1793,6 +1801,7 @@ class ClaudeCodeAgent(BaseAgent):
 
     def _forget_shell_task(self, task_id: str) -> _ShellTask | None:
         """The only way a record leaves ``_live_shell_tasks`` (spec §5.2)."""
+        self._completion_note_shell_delivery(task_id, "terminal")
         record = self._live_shell_tasks.pop(task_id, None)
         self._drop_shell_notice_key(task_id)
         return record
@@ -1821,7 +1830,24 @@ class ClaudeCodeAgent(BaseAgent):
             command=command,
             output_path=None,
             started_at=time.time(),
+            generation=self._completion_next_shell_generation(),
         )
+
+    def completion_shell_snapshot(self) -> tuple[dict, ...]:
+        from datetime import UTC, datetime
+
+        return tuple(dict(key=shell.key, owner="root" if shell.owner == ShellOwner.MAIN else "subagent",
+            command=shell.command, description=shell.description,
+            started_at=datetime.fromtimestamp(shell.started_at, tz=UTC).isoformat(), start_line=None,
+            owner_ref=shell.owner_ref, generation=self._live_shell_tasks[shell.key].generation,
+            output_path=shell.output_path, tool_id=shell.tool_use_id)
+            for shell in self._shell_notice_snapshot().shells)
+
+    def _completion_root_delivery_idle(self) -> bool:
+        return not self._main_turn_open
+
+    def _completion_reconsider_if_settled(self) -> None:
+        self._completion_reconsider_after_delivery()
 
     def _note_shell_notice_stream(self, msg: object) -> None:
         """Main turn openings, tool_use parents and output paths (spec §5.2)."""
@@ -1887,6 +1913,10 @@ class ClaudeCodeAgent(BaseAgent):
     def shell_notice_state(self) -> ShellNoticeState | None:
         if self.state == AgentState.DEAD or getattr(self, "ephemeral", False):
             return None
+        return self._shell_notice_snapshot()
+
+    def _shell_notice_snapshot(self) -> ShellNoticeState:
+        """Share owner facts without applying notice delivery eligibility."""
         now = time.time()
         live = ClaudeLiveOwners(
             labels=self._agent_labels,
@@ -1989,6 +2019,8 @@ class ClaudeCodeAgent(BaseAgent):
                 )
                 self._schedule_background_work_refresh()
             elif task_type == "local_bash" and task_id not in self._live_monitor_tasks:
+                if task_id in self._live_shell_tasks:
+                    return
                 backgrounded = data.get("is_backgrounded") is True
                 self._live_shell_tasks[task_id] = self._new_shell_task(task_id, data, backgrounded)
                 if backgrounded:

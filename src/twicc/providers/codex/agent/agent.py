@@ -143,6 +143,7 @@ class _TrackedShell(NamedTuple):
 
     started_at: float
     command: str | None
+    generation: int = 0
 
 
 _GUARDIAN_ACTION_TYPES_TO_CORE = {
@@ -1895,11 +1896,17 @@ class CodexAgent(BaseAgent):
             self._schedule_background_work_refresh()
 
     def _forget_shell(self, key: tuple[str, str]) -> bool:
+        self._completion_note_shell_delivery(f"{key[0]}:{key[1]}", "terminal")
         self._drop_shell_notice_key(f"{key[0]}:{key[1]}")
-        return self._live_shells.pop(key, None) is not None
+        removed = self._live_shells.pop(key, None) is not None
+        self._completion_note_shell_delivery(f"{key[0]}:{key[1]}", "settled")
+        return removed
 
     def _track_shell(self, key: tuple[str, str], started_at: float, command: str | None = None) -> None:
-        self._live_shells[key] = _TrackedShell(started_at, command)
+        current = self._live_shells.get(key)
+        if current is not None and current.started_at == started_at:
+            return
+        self._live_shells[key] = _TrackedShell(started_at, command, self._completion_next_shell_generation())
         if self._first_shell_started_at is None or started_at < self._first_shell_started_at:
             self._first_shell_started_at = started_at
 
@@ -2007,6 +2014,24 @@ class CodexAgent(BaseAgent):
     def _shell_notice_live_keys(self) -> set[str]:
         return {f"{thread_id}:{process_id}" for thread_id, process_id in self._live_shells}
 
+    def completion_shell_snapshot(self) -> tuple[dict, ...]:
+        from datetime import UTC, datetime
+
+        facts = {shell.key: shell for shell in self._shell_notice_snapshot().shells}
+        return tuple(dict(key=f"{thread_id}:{process_id}",
+            owner="root" if thread_id == self.session_id else "subagent", command=tracked.command,
+            description=facts[f"{thread_id}:{process_id}"].description,
+            started_at=datetime.fromtimestamp(tracked.started_at, tz=UTC).isoformat(),
+            start_line=None, owner_ref=None if thread_id == self.session_id else thread_id,
+            generation=tracked.generation, output_path=None, tool_id=None)
+            for (thread_id, process_id), tracked in self._live_shells.items() if f"{thread_id}:{process_id}" in facts)
+
+    def _completion_root_delivery_idle(self) -> bool:
+        return not self._has_actual_turn_work()
+
+    def _completion_reconsider_if_settled(self) -> None:
+        self._completion_reconsider_after_delivery()
+
     def _shell_notice_idle(self) -> bool:
         """Spec §3.1, Codex predicate."""
         return (
@@ -2019,6 +2044,10 @@ class CodexAgent(BaseAgent):
     def shell_notice_state(self) -> ShellNoticeState | None:
         if self.state == AgentState.DEAD or getattr(self, "ephemeral", False):
             return None
+        return self._shell_notice_snapshot()
+
+    def _shell_notice_snapshot(self) -> ShellNoticeState:
+        """Share owner facts without applying notice delivery eligibility."""
         now = time.time()
         shells: list[ShellInfo] = []
         for (thread_id, process_id), tracked in self._live_shells.items():
@@ -3466,6 +3495,12 @@ class CodexAgent(BaseAgent):
                 turn_id = getattr(payload, "turn_id", None) or getattr(self._current_turn, "id", None)
                 ref = NativeMessageRef("codex_item", identity, turn_id) if identity else None
                 self._completion_activity(first_ref=ref)
+                if (method == "item/completed"
+                        and getattr(inner, "type", None) in {"commandExecution", "mcpToolCall", "dynamicToolCall", "fileChange"}):
+                    if ref is not None:
+                        self._completion_tool_refs[ref] = None
+                    else:
+                        self._completion_tool_context_incomplete = True
                 if ref is not None and getattr(inner, "type", None) == "userMessage":
                     from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
                     from twicc.context_injection import strip_context_blocks
@@ -3488,6 +3523,7 @@ class CodexAgent(BaseAgent):
                         if ref is not None and _enum_value(getattr(inner, "phase", None)) == "final_answer":
                             self._timeline_observe_message(ref, role="assistant")
                         self._completion_finals[turn_id] = ref or NativeMessageRef("unresolved", "", turn_id)
+                        self._completion_clear_tool_refs()
 
         if method in {"item/started", "item/completed", "turn/completed"} and not getattr(self, "ephemeral", False):
             from ..async_questions import question_fact
