@@ -50,7 +50,7 @@ django.setup()
 # models on import. None of the variables we strip influence anything
 # Django reads at startup, so the move is benign.
 from twicc.providers.helpers import get_provider_helpers_registry  # noqa: E402
-from twicc.server_env import strip_django_settings_env  # noqa: E402
+from twicc.server_env import strip_django_settings_env, strip_own_python_env  # noqa: E402
 
 get_provider_helpers_registry().purge_env_vars(os.environ)
 
@@ -72,6 +72,15 @@ get_provider_helpers_registry().purge_env_vars(os.environ)
 # server runs them in this process) set the variable again, so every launch
 # point strips it too (see ``twicc.server_env``).
 strip_django_settings_env(os.environ)
+
+# Strip TwiCC's own Python environment (``VIRTUAL_ENV``, its venv ``bin/`` on
+# ``PATH``, ``UV_RUN_RECURSION_DEPTH``) for the same reason: an agent working on
+# another project must run that project's tools, not TwiCC's. The SDKs copy
+# ``os.environ`` and cannot unset an inherited key, so it goes here, once.
+# Safe for the server: its interpreter is already set up, and its Python
+# subprocesses use ``sys.executable``. After ``django.setup()``: the settings
+# read ``UV_RUN_RECURSION_DEPTH`` to build ``TWICC_BIN``.
+strip_own_python_env(os.environ)
 
 # Logger must be created AFTER django.setup() so LOGGING config is applied
 logger = logging.getLogger("twicc.run")

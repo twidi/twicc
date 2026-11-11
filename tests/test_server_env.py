@@ -1,4 +1,4 @@
-"""twicc's own DJANGO_SETTINGS_MODULE must not reach what the server launches.
+"""twicc's own DJANGO_SETTINGS_MODULE and Python environment must not reach what the server launches.
 
 Agents, terminals and subprocesses inherit the server's ``os.environ``; a
 leftover ``DJANGO_SETTINGS_MODULE=twicc.settings`` would hijack the settings
@@ -11,7 +11,13 @@ import os
 from twicc.providers.claude_code.agent.hybrid import tmux as hybrid_tmux
 from twicc.providers.helpers import get_provider_helpers_registry
 from twicc.rpc import invoker
-from twicc.server_env import DJANGO_SETTINGS_ENV, strip_django_settings_env
+from twicc.server_env import (
+    DJANGO_SETTINGS_ENV,
+    UV_RUN_RECURSION_DEPTH_ENV,
+    VIRTUAL_ENV_ENV,
+    strip_django_settings_env,
+    strip_own_python_env,
+)
 from twicc.terminal import sanitize_terminal_env
 
 
@@ -61,3 +67,65 @@ def test_invoke_restores_a_present_variable(monkeypatch):
     monkeypatch.setattr(invoker, "_command", _FakeCommand())
     invoker.invoke(["anything"])
     assert os.environ[DJANGO_SETTINGS_ENV] == "twicc.settings_test"
+
+
+# ── TwiCC's own Python environment ──────────────────────────────────────────
+
+VENV = "/opt/app/.venv"
+BASE = "/usr"
+
+
+def _strip(env, *, prefix=VENV, base_prefix=BASE):
+    strip_own_python_env(env, prefix=prefix, base_prefix=base_prefix)
+    return env
+
+
+def test_python_env_removes_own_venv_from_path_and_virtual_env():
+    env = _strip({
+        "PATH": f"{VENV}/bin:/usr/bin:{VENV}/bin:/home/u/.local/bin",
+        VIRTUAL_ENV_ENV: VENV,
+        UV_RUN_RECURSION_DEPTH_ENV: "2",
+        "HOME": "/home/u",
+    })
+    assert env == {"PATH": "/usr/bin:/home/u/.local/bin", "HOME": "/home/u"}
+
+
+def test_python_env_keeps_parent_sibling_and_other_venv_dirs():
+    path = f"{VENV}:{VENV}/bin/extra:/opt/app/bin:/other/.venv/bin:/usr/bin"
+    env = _strip({"PATH": path})
+    assert env["PATH"] == path
+
+
+def test_python_env_keeps_a_foreign_virtual_env():
+    env = _strip({VIRTUAL_ENV_ENV: "/other/.venv", "PATH": "/usr/bin"})
+    assert env[VIRTUAL_ENV_ENV] == "/other/.venv"
+
+
+def test_python_env_keeps_empty_path_entries():
+    env = _strip({"PATH": f":{VENV}/bin:/usr/bin"})
+    assert env["PATH"] == ":/usr/bin"
+
+
+def test_python_env_matches_through_symlinks(tmp_path):
+    real = tmp_path / "real-venv"
+    (real / "bin").mkdir(parents=True)
+    link = tmp_path / "link-venv"
+    link.symlink_to(real)
+    env = _strip(
+        {"PATH": f"{link}/bin:/usr/bin", VIRTUAL_ENV_ENV: str(link)},
+        prefix=str(real),
+    )
+    assert env == {"PATH": "/usr/bin"}
+
+
+def test_python_env_outside_a_venv_only_drops_the_uv_marker():
+    # Without a venv, sys.prefix is e.g. /usr: /usr/bin must never go.
+    env = _strip(
+        {"PATH": "/usr/bin:/bin", VIRTUAL_ENV_ENV: "/usr", UV_RUN_RECURSION_DEPTH_ENV: "1"},
+        prefix=BASE,
+    )
+    assert env == {"PATH": "/usr/bin:/bin", VIRTUAL_ENV_ENV: "/usr"}
+
+
+def test_python_env_without_path_is_fine():
+    assert _strip({VIRTUAL_ENV_ENV: VENV}) == {}

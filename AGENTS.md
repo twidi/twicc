@@ -40,6 +40,7 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels (in-memory laye
 
 ## Commands and tools
 
+- **Python:** always `uv run python …` or `uv run <tool>` (`uvx <tool>` for a tool absent from the project). Never a bare `python`, `pytest`, `mypy` or other Python tool: the backend removes its own venv from what it launches (`strip_own_python_env`, `src/twicc/server_env.py`), so a bare command finds the system one, not the project's.
 - **Lint:** `uvx ruff check .` (ruff is not installed; `uv run ruff` fails). Run any absent Python tool with `uvx <tool>`. Never `uv add` a tool to make a command work.
 - **Python tests:** `cd <checkout> && uv run pytest`. `twicc.settings_test` isolates data dir, provider homes and DB, and forbids the real data dirs. Never add `TWICC_DATA_DIR=` to a pytest command. Each test has a 120-second limit (`timeout` in `pyproject.toml`). Opt-in integration tests and benchmarks have none.
 - **Frontend tests:** `cd frontend && npm test`.
@@ -64,7 +65,7 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels (in-memory laye
 | `uvx <tool>` | nothing (ephemeral) | ✅ |
 | `uv pip …` · anything with `--active` | the ACTIVE environment | ❌ |
 
-An agent session inherits `VIRTUAL_ENV` from the TwiCC backend, which runs in the MAIN repo. The ❌ forms sync the project into that venv: from a worktree, they make the main repo import the worktree's sources. The `does not match the project environment path` warning is normal: never "fix" it with `--active`.
+The backend removes its own venv (`VIRTUAL_ENV` and its `bin/` on `PATH`) from what it launches. A process can still carry the MAIN repo's `VIRTUAL_ENV`: a tmux server started by an earlier backend, or a shell you set up yourself. There, the ❌ forms sync the project into the MAIN repo's venv: from a worktree, they make the main repo import the worktree's sources. The `does not match the project environment path` warning means such a foreign `VIRTUAL_ENV`: never "fix" it with `--active`.
 
 To check which sources you run: `uv run python -c "import twicc; print(twicc.__file__)"`. The path must be inside your checkout.
 
