@@ -54,6 +54,7 @@ import { createSwitchGate, provideFooterMotion } from '../../../composables/useF
 import { isInTurnState, shouldNoteViewChange } from '../../../utils/chatEntrance.js'
 import { getSessionUnavailableReason } from '../../../utils/sessionAvailability.js'
 import { getProviderLabel, getProviderHelpers } from '../../../providers'
+import { registerSessionLinkComposer, sessionLinkDrag } from '../../../composables/useSessionLinkDrag.js'
 
 // All states should animate for the bottom process indicator
 const BOTTOM_INDICATOR_ANIMATE_STATES = ['assistant_turn', 'user_turn', 'dead']
@@ -2292,7 +2293,11 @@ const {
  * synchronously in the original drop event handler.
  * @param {{ files: File[], text: string|null }} data
  */
-async function handleForwardedDrop({ files, text }) {
+async function handleForwardedDrop({ files, text, sessionLink = false, input = null }) {
+    if (sessionLink) {
+        if (text) await insertSessionLink(text, { input })
+        return
+    }
     if (files && files.length > 0) {
         for (const file of files) {
             await processDroppedFile(file)
@@ -2303,6 +2308,55 @@ async function handleForwardedDrop({ files, text }) {
         }
     }
 }
+
+// =============================================================================
+// Session links (a sidebar session dragged onto the chat, or the row menu entry)
+// =============================================================================
+
+const rootRef = ref(null)
+
+/**
+ * Insert a Markdown session link into the composer, padded with spaces where it
+ * would touch other text. Never displaces another footer panel: a minimized
+ * composer opens; with the terminal, a pending request or the goal panel open,
+ * the link is appended to the draft. The composer takes the focus after a mouse
+ * gesture only, so a touch drop does not pop the virtual keyboard.
+ * @returns {Promise<boolean>} whether the link was inserted
+ */
+async function insertSessionLink(markdown, { input = null } = {}) {
+    const composer = messageInputRef.value
+    if (!composer) return false
+    const focus = input === 'touch' ? false : input === 'mouse' ? true : !settingsStore.isTouchDevice
+    if (openBlock.value === 'none') {
+        openBlock.value = 'message-input'
+        composer.expand()
+        await nextTick()
+        composer.insertTextAtCursor(markdown, { focus, pad: true })
+    } else if (openBlock.value === 'message-input') {
+        composer.insertTextAtCursor(markdown, { focus, pad: true })
+    } else {
+        composer.insertTextAtCursor(markdown, { focus: false, pad: true })
+    }
+    return true
+}
+
+// The main chat registers itself while its composer is mounted: only then can a
+// session link be dropped on it or sent to it from the sidebar menu.
+let unregisterSessionLinkComposer = null
+watch([messageInputRef, () => props.sessionId], ([composer, sessionId]) => {
+    unregisterSessionLinkComposer?.()
+    unregisterSessionLinkComposer = null
+    if (!composer || props.parentSessionId) return
+    unregisterSessionLinkComposer = registerSessionLinkComposer(sessionId, {
+        el: () => rootRef.value,
+        insert: insertSessionLink,
+    })
+}, { immediate: true })
+onBeforeUnmount(() => unregisterSessionLinkComposer?.())
+
+// The sidebar session being dragged is over this chat: show the drop overlay.
+const sessionLinkOver = computed(() => sessionLinkDrag.overSessionId === props.sessionId)
+const sessionLinkTitle = computed(() => sessionLinkDrag.session?.title ?? '')
 
 // =============================================================================
 // Text selection comment (ephemeral annotation on selected session text)
@@ -2383,8 +2437,10 @@ defineExpose({
 
 <template>
     <div
+        ref="rootRef"
         class="session-items-list"
-        :class="{ 'drag-over': dragOverType }"
+        :data-session-link-drop="parentSessionId ? null : sessionId"
+        :class="{ 'drag-over': dragOverType || sessionLinkOver }"
         @dragenter="onDragEnter"
         @dragleave="onDragLeave"
         @dragover="onDragOver"
@@ -2811,7 +2867,13 @@ defineExpose({
         </div>
 
         <!-- Drop zone overlay -->
-        <div v-if="dragOverType" class="drop-overlay">
+        <div v-if="sessionLinkOver" class="drop-overlay" aria-hidden="true">
+            <div class="drop-overlay-content">
+                <wa-icon name="link" style="font-size: 3rem;"></wa-icon>
+                <span>{{ $t('session.drop.sessionLink', { title: sessionLinkTitle }) }}</span>
+            </div>
+        </div>
+        <div v-else-if="dragOverType" class="drop-overlay">
             <div class="drop-overlay-content">
                 <wa-icon :name="dragOverType === 'files' ? 'cloud-upload' : 'text-indent-left'" style="font-size: 3rem;"></wa-icon>
                 <span>{{ dragOverType === 'files' ? $t('session.drop.files') : $t('session.drop.text') }}</span>

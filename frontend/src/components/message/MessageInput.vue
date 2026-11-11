@@ -51,6 +51,7 @@ import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { mapGroupedEntries } from '../../utils/snippetGroups'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
+import { padInsertion } from '../../utils/sessionLink.js'
 
 const { t, locale } = useI18n()
 
@@ -1886,14 +1887,17 @@ async function handleReset() {
  * Insert text at the current cursor position in the textarea.
  * If no cursor position is available, appends to the end.
  * Focuses the textarea and positions the cursor after the inserted text.
+ * With `pad`, a space is added on each side where the text would touch other
+ * text (session links dropped into the composer).
  */
-function insertTextAtCursor(text, { focus = true } = {}) {
+function insertTextAtCursor(text, { focus = true, pad = false } = {}) {
     // Collapsed: the textarea is hidden, so there is no usable caret/focus and we
     // must NOT pop the composer open — the user may be reading the conversation
     // and adding comments. Append to the draft and stay collapsed; the text is
     // there (and the collapsed label reflects it) for when they expand.
     if (collapsed.value) {
-        updateTextareaContent(messageText.value + text)
+        const draft = messageText.value
+        updateTextareaContent(draft + (pad ? padInsertion(draft, text, '') : text))
         return
     }
 
@@ -1903,7 +1907,8 @@ function insertTextAtCursor(text, { focus = true } = {}) {
 
     const before = current.slice(0, pos)
     const after = current.slice(inner?.selectionEnd ?? pos)
-    const newText = before + text + after
+    const inserted = pad ? padInsertion(before, text, after) : text
+    const newText = before + inserted + after
 
     updateTextareaContent(newText)
 
@@ -1916,7 +1921,7 @@ function insertTextAtCursor(text, { focus = true } = {}) {
     if (!focus) return
 
     // Position cursor after the inserted text and focus
-    const newPos = pos + text.length
+    const newPos = pos + inserted.length
     nextTick(() => {
         const innerEl = textareaRef.value?.shadowRoot?.querySelector('textarea')
         if (innerEl) {
