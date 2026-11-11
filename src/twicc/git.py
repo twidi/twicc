@@ -7,8 +7,10 @@ and file diff retrieval for the Monaco diff editor.
 import base64
 import os
 import re
+import signal
 import subprocess
 import threading
+import time
 from contextlib import suppress
 from typing import NamedTuple
 
@@ -1302,10 +1304,13 @@ def is_valid_commit_ref(ref: str) -> bool:
 class GitProcessStream:
     """Own stdout, completion validation, and interrupted process shutdown."""
 
-    def __init__(self, proc: subprocess.Popen, *, accepted_returncodes=(0,)):
+    def __init__(self, proc: subprocess.Popen, *, accepted_returncodes=(0,), owned_process_group: int | None = None):
         self._proc = proc
         self.reader = proc.stdout
         self._accepted_returncodes = accepted_returncodes
+        # Only the spawn path that creates a dedicated session supplies this.
+        # Generic callers own their child, never its inherited process group.
+        self._owned_process_group = owned_process_group
         self._closing = threading.Event()
         self._close_lock = threading.Lock()
 
@@ -1325,7 +1330,9 @@ class GitProcessStream:
             if self._closing.is_set():
                 return
             self._closing.set()
-            if self._proc.poll() is None:
+            if self._owned_process_group is not None:
+                self._stop_process_group()
+            elif self._proc.poll() is None:
                 with suppress(ProcessLookupError):
                     self._proc.terminate()
                 try:
@@ -1336,9 +1343,31 @@ class GitProcessStream:
                     self._proc.wait()
             else:
                 self._proc.wait()
-            # BufferedReader.close waits for a read's lock. Stop the producer
-            # first so an outstanding read can receive EOF and release it.
+            # BufferedReader.close waits for a read's lock. Stop all owned
+            # stdout producers first, including helpers left after Git exits.
             self.reader.close()
+
+    def _stop_process_group(self) -> None:
+        """Stop the dedicated session's producers, even after its leader exits."""
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(self._owned_process_group, signal.SIGTERM)
+        deadline = time.monotonic() + _STREAM_TERMINATE_GRACE
+        while True:
+            # Reap the direct child while checking for surviving helpers.
+            # finish() may also wait, without acquiring the close lock.
+            self._proc.poll()
+            try:
+                os.killpg(self._owned_process_group, 0)
+            except (ProcessLookupError, PermissionError):
+                # macOS can report PermissionError for a group of zombies.
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                with suppress(ProcessLookupError, PermissionError):
+                    os.killpg(self._owned_process_group, signal.SIGKILL)
+                break
+            time.sleep(min(0.01, remaining))
+        self._proc.wait()
 
 
 def _spawn_git(git_directory: str, args: list[str], *, accepted_returncodes=(0,)) -> GitProcessStream:
@@ -1349,10 +1378,11 @@ def _spawn_git(git_directory: str, args: list[str], *, accepted_returncodes=(0,)
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             bufsize=_STREAM_CHUNK_SIZE,
+            start_new_session=True,
         )
     except FileNotFoundError:
         raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
-    return GitProcessStream(proc, accepted_returncodes=accepted_returncodes)
+    return GitProcessStream(proc, accepted_returncodes=accepted_returncodes, owned_process_group=proc.pid)
 
 
 def blob_exists_at_ref(git_directory: str, ref: str, file_path: str) -> bool:

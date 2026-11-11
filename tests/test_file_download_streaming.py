@@ -253,7 +253,10 @@ async def test_open_source_stays_fixed_and_length_limits_output(app, source, mut
         with pytest.raises(OSError, match="announced length"):
             await call.task
         assert call.body == b"x" * 65536
-        assert not any(message.get("more_body") is False for message in call.sent)
+        assert not any(
+            message["type"] == "http.response.body" and not message.get("more_body", False)
+            for message in call.sent
+        )
     else:
         await call.task
         assert call.body == b"x" * (65536 * 3 + 7)
@@ -384,7 +387,10 @@ async def test_disk_read_failure_aborts_transfer_and_closes_file(app, source):
         await call.task
     assert reader.closed
     assert not call.body
-    assert not any(message.get("more_body") is False for message in call.sent)
+    assert not any(
+        message["type"] == "http.response.body" and not message.get("more_body", False)
+        for message in call.sent
+    )
 
 
 @pytest.mark.asyncio
