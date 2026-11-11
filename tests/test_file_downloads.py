@@ -32,8 +32,24 @@ def _b64(path: str) -> str:
     return base64.urlsafe_b64encode(path.encode()).decode().rstrip("=")
 
 
+def _request(client, url, *, method="get", scope=None, **kwargs):
+    async def request_and_read():
+        response = await client.request(**scope) if scope else await getattr(client, method)(url, **kwargs)
+        if response.streaming:
+            try:
+                if response.is_async:
+                    response._download_body = b"".join([chunk async for chunk in response])
+                else:
+                    response._download_body = b"".join(response.streaming_content)
+            finally:
+                response.close()
+        return response
+
+    return _run(request_and_read())
+
+
 def _body(response) -> bytes:
-    return b"".join(response.streaming_content)
+    return response._download_body
 
 
 @pytest.fixture
@@ -57,21 +73,32 @@ def test_project_route_serves_an_attachment(client, project):
     target.write_bytes(b"hello")
 
     url = f"/api/projects/{project.id}/file-raw{target}?download=1"
-    resp = _run(client.get(url))
+    resp = _request(client, url)
 
     assert resp.status_code == 200
     assert resp["Content-Disposition"] == 'attachment; filename="notes.txt"'
     assert _body(resp) == b"hello"
+    assert resp.is_async
+    assert resp["Content-Length"] == "5"
+    assert resp["Content-Type"] == "text/plain"
+    assert resp["X-Content-Type-Options"] == "nosniff"
+    assert set(resp["Cache-Control"].split(", ")) == {
+        "max-age=0", "no-cache", "no-store", "must-revalidate", "private",
+    }
+    assert resp["CDN-Cache-Control"] == "no-store"
+    assert "Expires" in resp
 
 
 def test_project_route_stays_inline_without_the_flag(client, project):
     target = Path(project.directory) / "notes.txt"
     target.write_bytes(b"hello")
 
-    resp = _run(client.get(f"/api/projects/{project.id}/file-raw{target}"))
+    resp = _request(client, f"/api/projects/{project.id}/file-raw{target}")
 
     assert resp.status_code == 200
     assert "attachment" not in resp.get("Content-Disposition", "")
+    assert not resp.is_async
+    assert _body(resp) == b"hello"
 
 
 def test_download_bypasses_the_artifact_broker_wrap(client, project):
@@ -82,14 +109,14 @@ def test_download_bypasses_the_artifact_broker_wrap(client, project):
     target.write_bytes(b"<html><head></head></html>")
 
     url = f"/api/projects/{project.id}/file-raw{target}?download=1"
-    resp = _run(client.get(url, headers={"sec-fetch-dest": "document"}))
+    resp = _request(client, url, headers={"sec-fetch-dest": "document"})
 
     assert resp.status_code == 200
     assert _body(resp) == b"<html><head></head></html>"
     assert "Content-Security-Policy" not in resp
 
     # Same request without the flag goes through the broker.
-    wrapped = _run(client.get(url.removesuffix("?download=1"), headers={"sec-fetch-dest": "document"}))
+    wrapped = _request(client, url.removesuffix("?download=1"), headers={"sec-fetch-dest": "document"})
     assert b"<script" in wrapped.content
 
 
@@ -99,7 +126,7 @@ def test_standalone_route_serves_an_attachment(client, tmp_path):
     target = root / "report.md"
     target.write_bytes(b"# Report")
 
-    resp = _run(client.get(f"/api/file-raw/{_b64(str(root))}{target}?download=1"))
+    resp = _request(client, f"/api/file-raw/{_b64(str(root))}{target}?download=1")
 
     assert resp.status_code == 200
     assert resp["Content-Disposition"] == 'attachment; filename="report.md"'
@@ -112,7 +139,7 @@ def test_download_outside_the_confinement_root_is_refused(client, tmp_path):
     outside = tmp_path / "secret.txt"
     outside.write_bytes(b"nope")
 
-    resp = _run(client.get(f"/api/file-raw/{_b64(str(root))}{outside}?download=1"))
+    resp = _request(client, f"/api/file-raw/{_b64(str(root))}{outside}?download=1")
 
     assert resp.status_code in (403, 404)
 
@@ -186,7 +213,7 @@ def repo(tmp_path, transactional_db, repo_template):
 def _download(client, repo, endpoint, **params):
     query = "&".join(f"{k}={v}" for k, v in params.items())
     url = f"/api/projects/{repo['project'].id}/sessions/{repo['session'].id}/{endpoint}/?{query}"
-    return _run(client.get(url))
+    return _request(client, url)
 
 
 def test_index_download_serves_the_working_tree(client, repo):
@@ -288,3 +315,38 @@ def test_root_commit_patch_is_not_empty(client, repo):
 
     assert resp.status_code == 200
     assert "+v1" in _body(resp).decode()
+
+
+@pytest.mark.parametrize("download", ["1", "true"])
+def test_unicode_empty_session_download(client, repo, download):
+    target = repo["dir"] / "résumé.html"
+    target.write_bytes(b"")
+    url = f"/api/projects/{repo['project'].id}/sessions/{repo['session'].id}/file-raw{target}?download={download}"
+    # AsyncClient.generic uses WSGI's Latin-1 path conversion in Django 6.1.
+    # Supply the decoded ASGI scope to preserve the Unicode filename.
+    response = _request(client, url, scope={
+        "method": "GET", "path": url.partition("?")[0], "query_string": f"download={download}",
+    })
+    assert response.status_code == 200
+    assert response["Content-Disposition"] == "attachment; filename*=utf-8''r%C3%A9sum%C3%A9.html"
+    assert response["Content-Type"] == "text/html"
+    assert response["Content-Length"] == "0"
+    assert _body(response) == b""
+
+
+def test_raw_directory_download_is_404(client, project):
+    directory = Path(project.directory) / "sub"
+    directory.mkdir()
+    response = _request(client, f"/api/projects/{project.id}/file-raw{directory}?download=1")
+    assert response.status_code == 404
+
+
+def test_standalone_symlink_escape_is_404(client, tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_bytes(b"secret")
+    link = root / "link.txt"
+    link.symlink_to(outside)
+    response = _request(client, f"/api/file-raw/{_b64(str(root))}{link}?download=1")
+    assert response.status_code == 404

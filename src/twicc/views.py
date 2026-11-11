@@ -45,6 +45,7 @@ from twicc.core.text_filter import match_text_query
 from twicc.core.ui_messages import ui_error, ui_message
 from twicc.core.services.project_mutation import clean_project_agent_defaults
 from twicc.core.services import timeline_feed
+from twicc.http_streams import AsyncFileResponse, prepare_download_response
 from twicc.paths import path_to_project_id
 from twicc.projects import register_project
 from twicc.providers.db_writer import run_under_db_write_lock
@@ -2384,16 +2385,16 @@ def _guess_raw_content_type(path: str) -> str:
     return guessed or "application/octet-stream"
 
 
-def _raw_file_response(normalized_path: str, *, as_attachment: bool = False):
-    """Return a FileResponse for a regular file, or ``None``.
+def _raw_file_response(normalized_path: str, *, as_attachment: bool = False, head: bool = False):
+    """Return a file response for a regular file, or ``None``.
 
     ``os.stat`` follows symlinks, so a symlinked target is served only when it
     resolves to a regular file. Callers are responsible for confinement (the
     path has already been validated against the allowed root/dirs).
 
-    ``as_attachment`` turns the response into a download: Django adds a
-    ``Content-Disposition: attachment`` header carrying the file's basename
-    (RFC 5987-encoded when it is not ASCII).
+    Downloads use an async iterator. Inline responses retain FileResponse.
+    Call download preparation through ``prepare_download_response`` so a
+    cancelled await cannot discard an opened file.
     """
     import stat
 
@@ -2410,6 +2411,26 @@ def _raw_file_response(normalized_path: str, *, as_attachment: bool = False):
         fp = open(normalized_path, "rb")
     except OSError:
         return None
+    if as_attachment:
+        try:
+            try:
+                opened_stat = os.fstat(fp.fileno())
+            except OSError:
+                fp.close()
+                return None
+            if not stat.S_ISREG(opened_stat.st_mode):
+                fp.close()
+                return None
+            return AsyncFileResponse(
+                fp,
+                filename=os.path.basename(normalized_path),
+                content_type=_guess_raw_content_type(normalized_path),
+                size=opened_stat.st_size,
+                head=head,
+            )
+        except BaseException:
+            fp.close()
+            raise
     response = FileResponse(
         fp,
         content_type=_guess_raw_content_type(normalized_path),
@@ -2470,7 +2491,9 @@ async def _raw_serve_response(request, normalized_path: str):
     arrive shim-injected + CSP-gated instead of as written on disk.
     """
     if request.GET.get("download") in ("1", "true"):
-        return await asyncio.to_thread(_raw_file_response, normalized_path, as_attachment=True)
+        return await prepare_download_response(
+            lambda: _raw_file_response(normalized_path, as_attachment=True, head=request.method == "HEAD")
+        )
 
     from twicc.artifacts.broker_html import is_artifact_document_request
 
@@ -2629,10 +2652,16 @@ async def standalone_file_raw(request, root_b64, filepath):
     # Defense in depth: after symlink resolution the real path must still live
     # inside the confinement root.
     if root:
-        resolved_root = os.path.realpath(root)
-        resolved = os.path.realpath(normalized)
-        if resolved != resolved_root and not resolved.startswith(resolved_root + os.sep):
-            raise Http404("File not found")
+        def check_realpath():
+            resolved_root = os.path.realpath(root)
+            resolved = os.path.realpath(normalized)
+            if resolved != resolved_root and not resolved.startswith(resolved_root + os.sep):
+                raise Http404("File not found")
+
+        if request.GET.get("download") in ("1", "true"):
+            await asyncio.to_thread(check_realpath)
+        else:
+            check_realpath()
 
     doc_dir = _doc_dir_from_header(request, prefix=f"/api/file-raw/{root_b64}/")
     if request.method in ("PUT", "DELETE") and doc_dir is None:

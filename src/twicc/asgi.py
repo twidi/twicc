@@ -26,6 +26,7 @@ from django.utils import timezone
 from twicc.core.ui_messages import ui_message_text
 from twicc.sync_diagnostics import log_slow
 from twicc.frontend_static import FrontendStaticFiles
+from twicc.http_streams import DownloadCleanupMiddleware
 from twicc.agent import AgentInfo, AgentState, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.access import scope_allowed
@@ -2743,7 +2744,7 @@ websocket_urlpatterns = [
 ]
 
 # Django ASGI application for HTTP requests
-django_asgi_app = get_asgi_application()
+django_asgi_app = DownloadCleanupMiddleware(get_asgi_application())
 
 
 async def http_router(scope, receive, send):

@@ -173,6 +173,7 @@ async def test_headers_preserve_unicode_attachment_and_cache_policy():
     await body(response)
 
 
+@pytest.mark.django_db
 def test_synchronous_close_before_iteration_is_idempotent():
     reader = Reader(b"unused")
     response = response_for(reader)
