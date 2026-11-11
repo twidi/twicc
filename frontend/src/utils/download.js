@@ -76,3 +76,21 @@ export function buildFileDownloadUrl({ filePath, projectId, apiPrefix, root }) {
     }
     return `/api/file-raw/${base64UrlEncode(root || '')}/${trailing}?download=1`
 }
+
+/**
+ * URL that streams a directory as a ZIP attachment.
+ *
+ * @param {object} options
+ * @param {string} options.directoryPath - Absolute path of the directory.
+ * @param {string|null} options.projectId - Project id, or null for standalone scope.
+ * @param {string} options.apiPrefix - API prefix for the project/session scope.
+ * @param {string|null} options.root - Confinement root for standalone scope.
+ * @returns {string|null} The download URL, or null without a directory path.
+ */
+export function buildDirectoryDownloadUrl({ directoryPath, projectId, apiPrefix, root }) {
+    if (!directoryPath) return null
+    const query = new URLSearchParams({ path: directoryPath })
+    if (projectId) return `${apiPrefix}/directory-download/?${query}`
+    query.set('root', root || '')
+    return `/api/directory-download/?${query}`
+}

@@ -78,12 +78,15 @@ const hasGitActions = computed(() =>
 )
 
 // ─── Downloads ──────────────────────────────────────────────────────────────
-// Files only: a directory would need an archive, which is out of scope. In git
+// Files mode also downloads real directories as ZIP archives. In git
 // modes the file is always downloadable (a deleted one comes from the revision
 // that still had it), but a patch only exists for a modified file — an added,
 // deleted or untracked file has no meaningful diff to hand over.
 
-const canDownload = computed(() => props.nodeType === 'file')
+const canDownload = computed(() =>
+    props.nodeType === 'file'
+    || (isFilesMode.value && props.nodeType === 'directory' && !!props.fullPath)
+)
 
 const canDownloadDiff = computed(() => {
     if (props.nodeType !== 'file') return false
@@ -243,11 +246,11 @@ watch([() => props.x, () => props.y], () => {
                 <wa-divider></wa-divider>
             </template>
 
-            <!-- ═══ Downloads (files only — directories would need an archive) ═══ -->
+            <!-- ═══ Downloads ═══ -->
             <template v-if="canDownload && !createOnly">
                 <wa-dropdown-item value="download">
                     <wa-icon slot="icon" name="download"></wa-icon>
-                    {{ isFilesMode ? $t('files.actions.download') : $t('files.actions.downloadFile') }}
+                    {{ nodeType === 'directory' ? $t('files.actions.downloadFolderZip') : (isFilesMode ? $t('files.actions.download') : $t('files.actions.downloadFile')) }}
                 </wa-dropdown-item>
                 <wa-dropdown-item v-if="canDownloadDiff" value="download-diff">
                     <wa-icon slot="icon" name="code-compare"></wa-icon>

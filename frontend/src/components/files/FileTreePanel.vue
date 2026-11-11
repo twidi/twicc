@@ -36,7 +36,7 @@ const { t } = useI18n()
 
 import { ref, computed, watch, nextTick, shallowRef, useId } from 'vue'
 import { apiFetch } from '../../utils/api'
-import { buildFileDownloadUrl, triggerDownload } from '../../utils/download'
+import { buildDirectoryDownloadUrl, buildFileDownloadUrl, triggerDownload } from '../../utils/download'
 import FileTree from './FileTree.vue'
 import FileTreeContextMenu from './FileTreeContextMenu.vue'
 import FileRenameDialog from './FileRenameDialog.vue'
@@ -1159,9 +1159,9 @@ function computeFullPath(absolutePath) {
 }
 
 /**
- * Download the file the context menu points at.
+ * Download the file or directory the context menu points at.
  *
- * Files mode serves it straight from the raw endpoint, which the panel can
+ * Files mode serves it from the raw or ZIP endpoint, which the panel can
  * address on its own. Git modes go up to the owner instead: the bytes depend on
  * the revision being viewed, which only GitPanel knows.
  */
@@ -1170,7 +1170,9 @@ function handleDownload() {
         emit('download', { path: computeRelativePath(contextMenu.value.path) })
         return
     }
-    triggerDownload(buildFileDownloadUrl({
+    const buildUrl = contextMenu.value.type === 'directory' ? buildDirectoryDownloadUrl : buildFileDownloadUrl
+    triggerDownload(buildUrl({
+        directoryPath: contextMenu.value.path,
         filePath: contextMenu.value.path,
         projectId: props.projectId,
         apiPrefix: apiPrefix.value,

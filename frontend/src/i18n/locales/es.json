@@ -758,6 +758,7 @@
     "files.actions.copyRelativePath": "Copiar ruta relativa",
     "files.actions.download": "Descargar",
     "files.actions.downloadFile": "Descargar archivo",
+    "files.actions.downloadFolderZip": "Descargar carpeta (.zip)",
     "files.actions.move": "Mover",
     "files.actions.newFile": "Nuevo archivo",
     "files.actions.newFolder": "Nueva carpeta",
