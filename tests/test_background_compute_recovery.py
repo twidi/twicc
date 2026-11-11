@@ -245,8 +245,8 @@ def test_retirement_drains_writer_abandonment_through_repeated_cancellation(monk
 @pytest.mark.django_db(transaction=True)
 def test_claude_startup_barrier_allows_indexing_during_permanent_recovery(recovery_runtime, monkeypatch):
     from types import SimpleNamespace
-    import importlib
-    cli_run = importlib.import_module('twicc.cli.run')
+    from tests.cli_run_helpers import import_cli_run
+    cli_run = import_cli_run()
     from twicc.core.content_storage import extraction
     path, progress = recovery_runtime
     original = extraction.initialize_compute_session

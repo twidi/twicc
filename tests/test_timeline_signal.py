@@ -1,6 +1,7 @@
 """The ``timeline_changed`` signal (display design 2026-10-15, sections 9.1 and 9.3)."""
 
 import asyncio
+from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -422,7 +423,8 @@ def test_a_message_reaches_a_websocket_client_through_the_updates_group(short_th
 
 
 def test_the_server_source_starts_the_signal_before_the_orchestrators_and_stops_it_at_shutdown():
-    source = Path(__import__("twicc.cli.run", fromlist=["run"]).__file__).read_text()
+    # Read the source without importing it: the import cleans the pytest process environment.
+    source = Path(find_spec("twicc.cli.run").origin).read_text()
     start = source.index("start_timeline_signal(asyncio.get_running_loop())")
     orchestrators = source.index("await orchestrators.start_all(")
     cancel = source.index('await _cancel_task(title_auto_task, "Automatic title task")')

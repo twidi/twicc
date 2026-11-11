@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.cli_run_helpers import import_cli_run
 from tests.test_title_automation import OLD, env, session  # noqa: F401
 from twicc.core.models import Session
 from twicc.providers.compute_work import ComputeWorkState
@@ -505,7 +506,7 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
     runner, monkeypatch, settings, startup_phase,
 ):
     """Execute run_server, while replacing socket, filesystem, and provider work."""
-    run = import_module("twicc.cli.run")
+    run = import_cli_run()
     settings.CLAUDE_HYBRID_ENABLED = startup_phase == "adoption-cancel"
     effects = []
 

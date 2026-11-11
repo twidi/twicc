@@ -125,9 +125,9 @@ def test_passwordless_startup_preserves_unreadable_settings(startup_state):
 
 @pytest.mark.parametrize("kill_switch", ["0", "1"])
 def test_server_disables_external_access_before_network_startup(startup_state, monkeypatch, kill_switch):
-    from importlib import import_module
+    from tests.cli_run_helpers import import_cli_run
 
-    run = import_module("twicc.cli.run")
+    run = import_cli_run()
 
     path, connection = startup_state
     monkeypatch.setenv("TWICC_NO_MCP", kill_switch)

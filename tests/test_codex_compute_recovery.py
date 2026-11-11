@@ -465,8 +465,8 @@ def test_other_provider_and_foreground_write_finish_while_codex_cools(recovery_r
             with closing(sqlite3.connect(path)) as db:
                 assert db.execute("SELECT title FROM core_session WHERE id='healthy'").fetchone() == ('foreground',)
             assert not codex_task.done() and owner.initial_done.is_set()
-            import importlib
-            cli_run = importlib.import_module('twicc.cli.run')
+            from tests.cli_run_helpers import import_cli_run
+            cli_run = import_cli_run()
             indexed = asyncio.Event()
             async def kick_off():
                 indexed.set()
