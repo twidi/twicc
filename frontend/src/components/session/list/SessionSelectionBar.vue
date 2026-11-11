@@ -262,7 +262,7 @@ function handleActionSelect(event) {
 </script>
 
 <template>
-    <div class="session-selection-bar">
+    <div class="session-selection-bar panel-card">
         <div class="selection-controls">
             <span class="selection-count">{{ $t('session.selection.count', { count }, count) }}</span>
 
@@ -362,16 +362,17 @@ function handleActionSelect(event) {
    presence is the visual cue that the multi-select mode is on. */
 .session-selection-bar {
     flex-shrink: 0;
-    margin: var(--wa-space-2xs) var(--wa-space-2xs) 0;
+    /* Same edges as the sidebar header above (ProjectView .sidebar-header): its gap
+       between its rows on top, the gutter on the left, none on the right. */
+    margin: var(--wa-space-s) 0 0 var(--sidebar-gutter, var(--wa-space-2xs));
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
     /* Same space above the hint as below it (the bar's block padding). */
     gap: var(--wa-space-xs);
     padding: var(--wa-space-xs) var(--wa-space-s);
-    background-color: var(--wa-color-surface-raised);
-    border: 1px solid var(--wa-color-surface-border);
-    border-radius: var(--wa-border-radius-m);
+    /* Background, border, radius and shadow: the panel card (styles/surfaces.css), the same
+       floating card as the usage block at the bottom of the sidebar. */
 }
 
 /* Only the count and actions wrap. The exit button keeps its top-right position. */
@@ -410,7 +411,7 @@ function handleActionSelect(event) {
     flex: 1 0 auto;
     max-width: 100%;
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
+    color: var(--wa-color-text-normal);
     overflow-wrap: anywhere;
 }
 
