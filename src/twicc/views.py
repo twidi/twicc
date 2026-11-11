@@ -2624,7 +2624,8 @@ def _directory_download_response(directory: str, *, head: bool, root: str | None
     if root:
         resolved_root = os.path.realpath(root)
         resolved = os.path.realpath(directory)
-        if resolved != resolved_root and not resolved.startswith(resolved_root + os.sep):
+        root_prefix = resolved_root if resolved_root == os.sep else resolved_root + os.sep
+        if resolved != resolved_root and not resolved.startswith(root_prefix):
             raise NotADirectoryError(directory)
     reader = DirectoryZipReader(directory)
     try:
@@ -2679,9 +2680,11 @@ async def standalone_directory_download(request):
         return JsonResponse(ui_error("Directory not found", 'backend.file_tree.directory_missing'), status=404)
     directory = os.path.normpath(directory)
     root = request.GET.get("root", "")
-    error = validate_standalone_root(directory, root)
-    if error:
-        return error
+    # A filesystem root permits every absolute directory checked above.
+    if os.path.normpath(root) != os.sep:
+        error = validate_standalone_root(directory, root)
+        if error:
+            return error
     try:
         return await prepare_download_response(
             lambda: _directory_download_response(directory, head=request.method == "HEAD", root=root)

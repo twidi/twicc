@@ -238,3 +238,71 @@ def test_directory_download_preserves_trailing_space_in_root(client, tmp_path):
     assert response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(_body(response))) as archive:
         assert archive.read("reports/notes.txt") == b"report inside spaced root"
+
+
+@pytest.mark.parametrize("method", ["get", "head"])
+def test_directory_download_accepts_descendant_of_filesystem_root(client, tmp_path, method):
+    directory = tmp_path / "reports"
+    directory.mkdir()
+    (directory / "notes.txt").write_bytes(b"report below filesystem root")
+    url = "/api/directory-download/?" + urlencode({"path": directory, "root": "/"})
+
+    async def request_download():
+        response = await getattr(client, method)(url)
+        try:
+            if not response.streaming:
+                body = response.content
+            elif response.is_async:
+                body = b"".join([chunk async for chunk in response])
+            else:
+                # AsyncClient replaces HEAD content with an empty sync iterator.
+                body = b"".join(response.streaming_content)
+        finally:
+            if response.streaming:
+                response.close()
+                await response._release()
+        return response, body
+
+    response, body = asyncio.run(request_download())
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/zip"
+    assert response["Content-Disposition"] == 'attachment; filename="reports.zip"'
+    assert "Content-Length" not in response
+    if method == "head":
+        assert body == b""
+    else:
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            assert archive.namelist() == ["reports/", "reports/notes.txt"]
+            assert archive.read("reports/notes.txt") == b"report below filesystem root"
+
+
+@pytest.mark.parametrize("method", ["get", "head"])
+def test_directory_download_factory_accepts_descendant_of_filesystem_root(tmp_path, method):
+    directory = tmp_path / "reports"
+    directory.mkdir()
+    (directory / "notes.txt").write_bytes(b"report below filesystem root")
+
+    async def prepare_and_read():
+        response = await views.prepare_download_response(
+            lambda: views._directory_download_response(str(directory), head=method == "head", root="/")
+        )
+        try:
+            body = b"".join([chunk async for chunk in response])
+        finally:
+            response.close()
+            await response._release()
+        return response, body
+
+    response, body = asyncio.run(prepare_and_read())
+
+    assert response.status_code == 200
+    assert response.is_async
+    assert response["Content-Type"] == "application/zip"
+    assert "Content-Length" not in response
+    if method == "head":
+        assert body == b""
+    else:
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            assert archive.namelist() == ["reports/", "reports/notes.txt"]
+            assert archive.read("reports/notes.txt") == b"report below filesystem root"
