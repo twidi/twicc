@@ -54,6 +54,7 @@ dependencies = [
     "websockets~=17.2",
     "xmltodict~=1.0.4",
     "zstandard~=0.25.0",
+    "aiofiles~=25.1.0",
 ]
 
 [project.urls]
