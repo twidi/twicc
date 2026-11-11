@@ -9,6 +9,7 @@ from django.db import models
 import logging
 
 from django.db.models import Q
+from django.db.models.functions import Coalesce
 
 from twicc.agent.states import AgentState
 from twicc.core.enums import ItemKind, Provider, ShareKind
@@ -1585,6 +1586,50 @@ class MessageSummary(models.Model):
         constraints = [models.UniqueConstraint(
             fields=["session", "source_key", "source_hash", "policy_key"], name="uniq_message_summary_source_policy",
         )]
+
+
+class TimelineDecision(models.Model):
+    """A frozen live candidate and its durable publication obligation."""
+
+    id = models.UUIDField(primary_key=True)
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="timeline_decisions")
+    provider = models.CharField(max_length=50)
+    storage_incarnation = models.CharField(max_length=36, null=True)
+    history_epoch = models.PositiveIntegerField(null=True)
+    run_id = models.UUIDField(null=True)
+    turn_id = models.UUIDField(null=True)
+    kind = models.CharField(max_length=10, choices=[("message", "Message"), ("ending", "Ending")])
+    identity_key = models.CharField(max_length=255)
+    occurred_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    not_before = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    payload = models.JSONField(default=dict)
+    status = models.CharField(max_length=12, default="pending", choices=[
+        ("pending", "Pending"), ("running", "Running"), ("accepted", "Accepted"),
+        ("rejected", "Rejected"), ("canceled", "Canceled"), ("invalidated", "Invalidated"),
+    ])
+    reason = models.CharField(max_length=500, default="", blank=True)
+    requested_route = models.CharField(max_length=20, default="provider")
+    effective_route = models.CharField(max_length=20, null=True)
+    resolved_at = models.DateTimeField(null=True)
+    forced = models.BooleanField(default=False)
+    published_event_id = models.BigIntegerField(null=True)
+    applied_at = models.DateTimeField(null=True)
+    force_pending = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            models.F("session"), models.F("provider"),
+            Coalesce("storage_incarnation", models.Value("")),
+            Coalesce("history_epoch", models.Value(-1)),
+            models.F("kind"), models.F("identity_key"), name="uniq_timeline_decision_scope",
+        )]
+        indexes = [
+            models.Index(fields=["status", "not_before"], name="idx_decision_ready"),
+            models.Index(fields=["status", "expires_at"], name="idx_decision_expiry"),
+            models.Index(fields=["session", "turn_id"], name="idx_decision_session_turn"),
+        ]
 
 
 class LogicalTurn(models.Model):
