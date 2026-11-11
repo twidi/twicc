@@ -2,6 +2,12 @@
 
 Date: 2026-11-11. Status: spec, not implemented.
 
+> **Superseded (2026-11-11).** The owner chose a simpler implementation, modelled on the layout tab drag:
+> pointer events for mouse and touch, a long press then a sideways move on touch (rows wear
+> `touch-action: pan-y`, so a vertical move stays a native scroll), the existing chat drop overlay, and
+> the row menu entry. No HTML5 drag, no cross-window support, no feasibility spike. The code
+> (`frontend/src/composables/useSessionLinkDrag.js`, `frontend/src/utils/sessionLink.js`) is the reference.
+
 This document describes the behaviour and the technical constraints that decide its feasibility.
 It does not prescribe the code structure. The implementation plan comes after.
 

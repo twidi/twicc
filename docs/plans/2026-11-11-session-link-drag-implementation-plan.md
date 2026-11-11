@@ -1,5 +1,11 @@
 # Session link drag and drop — Implementation Plan
 
+> **Superseded (2026-11-11).** The owner chose a simpler implementation, modelled on the layout tab drag:
+> pointer events for mouse and touch, a long press then a sideways move on touch (rows wear
+> `touch-action: pan-y`, so a vertical move stays a native scroll), the existing chat drop overlay, and
+> the row menu entry. No HTML5 drag, no cross-window support, no feasibility spike. The code
+> (`frontend/src/composables/useSessionLinkDrag.js`, `frontend/src/utils/sessionLink.js`) is the reference.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Drag a sidebar session (desktop: native drag; touch: long-press then move) or use a row menu entry to insert a canonical Markdown link to that session into the composer of the open session.
