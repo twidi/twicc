@@ -2137,10 +2137,11 @@ class ClaudeCodeAgent(BaseAgent):
     async def _update_live_monitor_tasks(self, msg: UserMessage) -> None:
         """Track Monitor starts and explicit stops from the SDK.
 
-        A Monitor acknowledgement carries ``tool_use_result.taskId`` and the
-        literal ``Monitor started`` text. A successful ``TaskStop`` releases it
-        right away: its result has ``task_id`` either in the structured tool
-        result or in its JSON text payload.
+        A Monitor acknowledgement carries the literal ``Monitor started`` text.
+        Prefer ``tool_use_result.taskId`` when present. Otherwise match the
+        text's task ID and the tool result's tool-use ID to a live shell task.
+        A successful ``TaskStop`` releases it right away: its result has
+        ``task_id`` either in the structured tool result or its JSON text.
 
         Every other ending — stream over, timeout reached, failure — only
         reaches us as a ``task_notification`` *system* event, handled by
@@ -2151,19 +2152,29 @@ class ClaudeCodeAgent(BaseAgent):
         """
         text = self._message_content_text(msg.content)
         tool_use_result = msg.tool_use_result
-        if isinstance(tool_use_result, dict):
-            task_id = tool_use_result.get("taskId")
-            if isinstance(task_id, str) and _MONITOR_STARTED_RE.search(text):
-                self._live_monitor_tasks.add(task_id)
-                # Its ``local_bash`` task_started came first: a Monitor is not
-                # a shell, it has its own count.
-                self._forget_shell_task(task_id)
-                self._logger.debug(
-                    "Session %s: Monitor %s started (%d live)",
-                    self.session_id, task_id, len(self._live_monitor_tasks),
-                )
-                self._schedule_background_work_refresh()
-                return
+        task_id = tool_use_result.get("taskId") if isinstance(tool_use_result, dict) else None
+        if not isinstance(task_id, str) and isinstance(msg.content, list):
+            for block in msg.content:
+                if not isinstance(block, ToolResultBlock) or block.is_error:
+                    continue
+                match = _MONITOR_STARTED_RE.match(self._message_content_text([block]))
+                if match is None:
+                    continue
+                record = self._live_shell_tasks.get(match.group(1))
+                if record is not None and record.tool_use_id == block.tool_use_id:
+                    task_id = match.group(1)
+                    break
+        if isinstance(task_id, str) and _MONITOR_STARTED_RE.search(text):
+            self._live_monitor_tasks.add(task_id)
+            # Its ``local_bash`` task_started came first: a Monitor is not
+            # a shell, it has its own count.
+            self._forget_shell_task(task_id)
+            self._logger.debug(
+                "Session %s: Monitor %s started (%d live)",
+                self.session_id, task_id, len(self._live_monitor_tasks),
+            )
+            self._schedule_background_work_refresh()
+            return
 
         stopped_task_id = tool_use_result.get("task_id") if isinstance(tool_use_result, dict) else None
         if not isinstance(stopped_task_id, str):

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, SystemMessage, TextBlock, UserMessage
+from claude_agent_sdk.types import ToolResultBlock, ToolUseBlock
 
 from twicc.agent.completion_types import NativeMessageRef
 from twicc.agent.states import AgentState
@@ -206,6 +207,77 @@ def test_monitor_release_and_wakeup_expiry_restart_confirmation(monkeypatch):
         agent._cancel_completion_timer()
         if agent._wakeup_refresh_handle:
             agent._wakeup_refresh_handle.cancel()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('parent', [None, 'tool-child'])
+@pytest.mark.parametrize('structured_result', [None, {}, {'taskId': 'monitor'}])
+def test_monitor_acknowledgement_keeps_two_shells_and_holds_completion(parent, structured_result):
+    async def scenario():
+        agent = make_agent()
+        try:
+            await feed(agent, [
+                AssistantMessage(content=[
+                    ToolUseBlock(id='tests-tool', name='Bash', input={'command': 'uv run pytest'}),
+                    ToolUseBlock(id='wait-tool', name='Bash', input={'command': 'wait-for-tests'}),
+                    ToolUseBlock(id='monitor-tool', name='Monitor', input={'command': 'watch-test-log'}),
+                ], model='claude-opus-5', parent_tool_use_id=parent),
+                *[SystemMessage(subtype='task_started', data={
+                    'task_id': task_id, 'task_type': 'local_bash', 'tool_use_id': tool_id,
+                    'is_backgrounded': True, 'owned_by_subagent': parent is not None,
+                }) for task_id, tool_id in [('tests', 'tests-tool'), ('wait', 'wait-tool'), ('monitor', 'monitor-tool')]],
+                UserMessage(content=[ToolResultBlock(tool_use_id='monitor-tool', content=(
+                    'Monitor started (task monitor, expires in 30m unless the source ends first; '
+                    'you get one notice at expiry). You will be notified on each event.'
+                ))], parent_tool_use_id=parent, tool_use_result=structured_result),
+                answer(), result(),
+            ])
+            assert agent._live_monitor_tasks == {'monitor'}
+            assert {item['key']: item['command'] for item in agent.completion_shell_snapshot()} == {
+                'tests': 'uv run pytest', 'wait': 'wait-for-tests'}
+            work = agent.current_background_work()
+            assert (work['shells'], work['monitors']) == (2, 1)
+            notice = agent._shell_notice_snapshot()
+            assert {shell.key for shell in notice.shells} == {'tests', 'wait'}
+            assert not notice.idle
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.candidate() is None
+
+            await feed(agent, [SystemMessage(subtype='task_notification', data={
+                'task_id': 'monitor', 'status': 'completed'})])
+            assert agent._live_monitor_tasks == set()
+            assert agent.completion_controller.candidate() is not None
+            assert agent.current_background_work()['shells'] == 2
+            assert agent._shell_notice_snapshot().idle
+        finally:
+            agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('case', ['user-text', 'other-tool', 'other-task', 'error', 'quoted-output'])
+def test_monitor_text_without_matching_successful_tool_result_keeps_shell(case):
+    async def scenario():
+        agent = make_agent()
+        content = 'Monitor started (task shell, expires in 30m unless the source ends first).'
+        tool_id = 'other-tool' if case == 'other-tool' else 'bash-tool'
+        if case == 'other-task':
+            content = content.replace('task shell,', 'task other,')
+        elif case == 'quoted-output':
+            content = 'Saved log:\n' + content
+        acknowledgement = UserMessage(content=content if case == 'user-text' else [
+            ToolResultBlock(tool_use_id=tool_id, content=content, is_error=case == 'error')])
+        try:
+            await feed(agent, [AssistantMessage(content=[
+                ToolUseBlock(id='bash-tool', name='Bash', input={'command': 'uv run pytest'})
+            ], model='claude-opus-5'), SystemMessage(subtype='task_started', data={
+                'task_id': 'shell', 'task_type': 'local_bash', 'tool_use_id': 'bash-tool',
+                'is_backgrounded': True,
+            }), acknowledgement])
+            assert agent._live_monitor_tasks == set()
+            assert {item['key']: item['command'] for item in agent.completion_shell_snapshot()} == {
+                'shell': 'uv run pytest'}
+        finally:
+            agent._cancel_completion_timer()
     asyncio.run(scenario())
 
 
