@@ -234,6 +234,28 @@ def bind_indexed_turn_sources(session_id: str) -> None:
         return
     if not any(turn.first_ref or turn.final_refs for turn in turns):
         return
+    from twicc.core.services.timeline_source_reads import current_source_reads
+    from twicc.providers.db_writer import _holds_db_write_lease
+
+    prepared = current_source_reads(session_id)
+    if prepared is not None:
+        session = Session.objects.filter(pk=session_id).first()
+        if session is None or not session.storage_incarnation:
+            return
+        for turn in turns:
+            refs = [NativeMessageRef(**ref) for ref in
+                    ([turn.first_ref] if turn.first_ref else []) + turn.final_refs]
+            groups = prepared.resolve(refs, floor=turn.source_floor)
+            proof = next((ref for group in groups for _, _, aliases in group for ref in aliases if ref in refs), None)
+            if proof is not None:
+                bind_turn_source(turn_id=str(turn.pk), session_id=session_id, provider=session.provider,
+                    storage_incarnation=session.storage_incarnation, history_epoch=session.history_epoch,
+                    observed_ref=proof)
+        return
+    if _holds_db_write_lease():
+        # The next prepared manager/decision write binds exact native proof.
+        # Ingestion must not initialize a whole-transcript cache under writer.
+        return
     previous = _BINDING_CACHES.get(session_id)
     cache = previous.fork() if previous is not None else NativeAnswerCache(session_id)
     session = cache.refresh()

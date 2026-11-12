@@ -26,7 +26,7 @@ from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
 from .exceptions import AgentStartError, SendDeliveryError
-from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, VerifiedMessageRef
+from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, NativeMessageRef, VerifiedMessageRef
 from .semantic_types import EndingContext, EndingResolution, Classification
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
@@ -851,6 +851,76 @@ class BaseAgentManager:
             and self._completion_lifecycle_guard(agent) == guard
         )
 
+    async def _completion_write(self, agent: BaseAgent, callback):
+        """Read exact current-turn sources before taking writer admission."""
+        from twicc.core.services.timeline_source_reads import prepare_source_reads, prepared_source_reads
+
+        snapshots = [agent.completion_controller.snapshot(), *agent._completion_pending_publications.values()]
+        openings = dict(agent._completion_openings)
+        endings = [dict(context.payload) for context in agent._completion_endings.values()]
+        requests = []
+        for snapshot in snapshots:
+            opening = openings.get(snapshot.turn_id)
+            floor = opening[1] if opening else agent._completion_source_floor
+            refs = list(dict.fromkeys((*snapshot.final_refs,
+                *(NativeMessageRef(**ref) for ref in agent._timeline_refs_for_turn(snapshot)))))
+            if refs:
+                requests.append((refs, floor, None))
+        for payload in endings:
+            refs = [NativeMessageRef(**ref) for ref in payload.get('message_refs', [])]
+            if refs:
+                requests.append((refs, payload['source_floor'], payload.get('source_ceiling')))
+        if not requests:
+            # Ordinary fact/input persistence has no source text to prepare.
+            return await run_under_db_write_lock(callback)
+        def prepare():
+            from twicc.core.models import Session, TimelineEvent
+            from twicc.core.services.timeline_messages import _captured_message_refs, _eligible_group
+
+            session = Session.objects.filter(pk=agent.session_id).first()
+            handled = _captured_message_refs(session) if session is not None else set()
+            handled.update(NativeMessageRef(**ref) for refs in TimelineEvent.objects.filter(
+                session_id=agent.session_id, kind__in=('user_message.sent', 'assistant_message.sent'),
+            ).values_list('data__source_refs', flat=True) for ref in refs or [])
+            needed = [([ref for ref in refs if ref not in handled], floor, ceiling)
+                      for refs, floor, ceiling in requests]
+            for snapshot in snapshots:
+                opening = openings.get(snapshot.turn_id)
+                if opening is not None and (opening[2] is None or opening[3] is None):
+                    proof = snapshot.first_ref or (snapshot.final_refs[-1] if snapshot.final_refs else None)
+                    if proof is not None:
+                        needed.append(([proof], opening[1], None))
+            # A final obligation can override a prior NO. Prepare backwards
+            # only until the exact last eligible message is proven.
+            for payload in endings:
+                for raw in reversed(payload.get('snapshot', {}).get('final_refs', [])):
+                    ref = NativeMessageRef(**raw)
+                    request = ([ref], payload['source_floor'], payload.get('source_ceiling'))
+                    needed.append(request)
+                    partial = prepare_source_reads(agent.session_id, [request])
+                    groups = partial.resolve(*request[:1], floor=request[1], ceiling=request[2])
+                    if not groups or any(_eligible_group(session, group, [ref]) for group in groups):
+                        break
+            return prepare_source_reads(agent.session_id, needed)
+
+        while True:
+            prepared = await asyncio.to_thread(prepare)
+            stale = False
+
+            async def admitted(prepared=prepared):
+                nonlocal stale
+                if not await asyncio.to_thread(prepared.is_current):
+                    stale = True
+                    return False
+                with prepared_source_reads(prepared):
+                    return await callback()
+
+            result = await run_under_db_write_lock(admitted)
+            if not stale:
+                return result
+            # Keep the original model result/receipt time while rebuilding a
+            # proof invalidated by concurrent indexing. Never turn it into YES.
+
     async def _persist_completion(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
         """Store a fact snapshot through writer admission, without public completion."""
         if snapshot.turn_id in agent._completion_pending_publications:
@@ -863,7 +933,7 @@ class BaseAgentManager:
         async def admitted():
             return await self._persist_completion_admitted(agent, snapshot, input_context=input_context)
         try:
-            return await run_under_db_write_lock(admitted)
+            return await self._completion_write(agent, admitted)
         except Exception:
             logger.exception("Error persisting logical completion for %s", agent.session_id)
             return False
@@ -1057,10 +1127,6 @@ class BaseAgentManager:
                 }
                 if stored and self._completion_process_is_current(agent, snapshot):
                     self._persist_process_run_transition_admitted(agent, state)
-            if stored and state is not None:
-                from twicc.core.services.timeline_messages import recover_referenced_messages
-
-                recover_referenced_messages(agent.session_id, input_origins=input_context)
         agent._completion_opened_ids.add(snapshot.turn_id)
         agent._completion_durable_inputs.update(
             (token, CompletionInput(snapshot.turn_id, cursor, status)) for token, cursor, status in inputs
@@ -1115,7 +1181,8 @@ class BaseAgentManager:
                 task = asyncio.current_task()
                 agent._completion_publication_task = task
                 try:
-                    status = await run_under_db_write_lock(lambda: asyncio.to_thread(self._admit_ending_admitted, agent, context))
+                    status = await self._completion_write(agent,
+                        lambda: asyncio.to_thread(self._admit_ending_admitted, agent, context))
                     pending = agent._completion_pending_ending
                     if status == "canceled" and pending is not None and pending.id == context.id:
                         agent._completion_cancel_pending_ending("stale_snapshot")
@@ -1148,10 +1215,8 @@ class BaseAgentManager:
                 if result and result.status == "canceled":
                     cancel_decision(decision_id=context.id, reason=result.reason)
                 return TimelineDecision.objects.get(pk=context.id).status
-            # Pending classification reads the exact source after indexing, on
-            # the decision worker. Explicit local endings need no inference.
-            if context.id in agent._completion_ending_results:
-                agent._completion_enrich_ending_evidence_admitted(context)
+            # Context belongs to the read phase. Explicit local endings need
+            # no classifier evidence and retain their exact final obligation.
             live = agent.completion_controller.snapshot()
             allow_missing = (
                 self._agents.get(agent.session_id) is agent
@@ -1294,7 +1359,13 @@ class BaseAgentManager:
                     await asyncio.to_thread(resolve_decision, decision_id=decision_id, classification=classification,
                         effective_route=effective_route, now=now)
             try:
-                await run_under_db_write_lock(admitted)
+                if classification is not None and classification.verdict == "NO":
+                    # A claimed classifier request already binds its source.
+                    # NO publishes no text. Queue its guarded resolution now,
+                    # before an independent deadline can accept a timeout.
+                    await run_under_db_write_lock(admitted)
+                else:
+                    await self._completion_write(agent, admitted)
             finally:
                 if snapshot is not None:
                     agent._completion_schedule_retry()
@@ -1374,7 +1445,7 @@ class BaseAgentManager:
                 return await self._persist_completion_admitted(agent, snapshot, state=state)
 
             try:
-                committed = await admitted() if agent.ephemeral else await run_under_db_write_lock(admitted)
+                committed = await admitted() if agent.ephemeral else await self._completion_write(agent, admitted)
             except asyncio.CancelledError:
                 # The writer has drained, but its result can be hidden by outer
                 # cancellation. Retain the claim and reconcile it idempotently.

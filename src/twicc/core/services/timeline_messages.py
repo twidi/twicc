@@ -108,9 +108,16 @@ def _capture(session, records, *, timeline_since, verified=(), eligible=False, i
             now = timezone.now()
             payload = {'target': {'text': text}, 'message_refs': data['source_refs'],
                        'dedupe_key': dedupe_key, 'event_data': data,
-                       'source_floor': first.line_num - 1, 'source_boundary': max(item.line_num for item, _, _ in records),
-                       'previous_messages': capture_message_context(session, before=first.line_num,
-                            occurred_at=first.timestamp, input_origins=input_origins, verified=verified)}
+                       'source_floor': first.line_num - 1, 'source_boundary': max(item.line_num for item, _, _ in records)}
+            from twicc.providers.db_writer import _holds_db_write_lease
+            if _holds_db_write_lease():
+                # Ingestion captures the candidate only. The decision worker
+                # reads its preceding context after releasing writer admission.
+                payload.update(context_pending=True, input_context=list(input_origins),
+                               verified_refs=[ref._asdict() for ref in verified])
+            else:
+                payload['previous_messages'] = capture_message_context(session, before=first.line_num,
+                    occurred_at=first.timestamp, input_origins=input_origins, verified=verified)
             decision_id = admit_decision(DecisionRequest(str(uuid4()), 'message', session.id, scope,
                 payload, now + timedelta(seconds=45), 'provider'), identity_key=dedupe_key,
                 occurred_at=first.timestamp, not_before=now + timedelta(seconds=1))
@@ -159,13 +166,22 @@ def capture_message_context(session, *, before, occurred_at, input_origins=(), v
     entries = []
     cursor = before
     seen = set()
+    from twicc.core.services.timeline_source_reads import current_source_reads
+    prepared = current_source_reads(session.id)
+
+    def read(query):
+        records = list(_read(session, query))
+        if prepared is not None:
+            prepared.observe([item for item, _, _ in records], floor=0, ceiling=before - 1)
+        return records
     # Pages bound decompression and never include an item after the cutoff.
     while True:
-        lines = list(SessionItem.objects.filter(session_id=session.id, line_num__lt=cursor)
+        lines = list(SessionItem.objects.filter(session_id=session.id, line_num__lt=cursor,
+                     kind__in=(ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS))
                      .order_by('-line_num').values_list('line_num', flat=True)[:128])
         if not lines:
             break
-        records = list(_read(session, SessionItem.objects.filter(session_id=session.id, line_num__in=lines)))
+        records = read(SessionItem.objects.filter(session_id=session.id, line_num__in=lines))
         for item, parsed, refs in reversed(records):
             if parsed.get('isSidechain') or parsed.get('isCompactSummary'):
                 continue
@@ -173,7 +189,7 @@ def capture_message_context(session, *, before, occurred_at, input_origins=(), v
             if identity in seen:
                 continue
             if item.kind == ItemKind.ASSISTANT_MESSAGE:
-                group = (_dedupe_claude_records(_read(session, SessionItem.objects.filter(session_id=session.id,
+                group = (_dedupe_claude_records(read(SessionItem.objects.filter(session_id=session.id,
                     line_num__lt=before, message_id=item.message_id)))
                     if session.provider == 'claude_code' else [(item, parsed, refs)])
                 data = _eligible_group(session, group, verified)
@@ -250,7 +266,7 @@ def capture_ending_context(session, *, refs, floor, occurred_at, input_origins=(
     source_boundary = max(boundary, *tool_lines) if tool_lines else boundary
     return {'previous_messages': previous,
             'tool_evidence': _capture_tool_observations(session, source_boundary,
-                conversation_boundary=boundary, captured_lines=tool_lines),
+                conversation_boundary=boundary, captured_lines=tool_lines, floor=floor),
             'source_boundary': source_boundary, 'source_ceiling': boundary}
 
 
@@ -263,7 +279,7 @@ def _observation_text(value):
     return orjson.dumps(value).decode() if value is not None else ''
 
 
-def _capture_tool_observations(session, boundary, *, conversation_boundary, captured_lines):
+def _capture_tool_observations(session, boundary, *, conversation_boundary, captured_lines, floor=0):
     """Read existing completed tools, excluding child conversations and later lines."""
     from twicc.agent.semantic_types import ToolObservation
     from twicc.core.content_storage.readers import iter_current_items
@@ -272,8 +288,13 @@ def _capture_tool_observations(session, boundary, *, conversation_boundary, capt
     helpers = get_provider_helpers(session.provider)
     commands = {}
     observations = []
-    query = SessionItem.objects.filter(session_id=session.id, line_num__lte=boundary).order_by('line_num')
+    from twicc.core.services.timeline_source_reads import current_source_reads
+    prepared = current_source_reads(session.id)
+    query = SessionItem.objects.filter(session_id=session.id, line_num__gt=floor,
+                                      line_num__lte=boundary).order_by('line_num')
     for row in iter_current_items(query, 128, 8 * 1024 * 1024):
+        if prepared is not None:
+            prepared.observe([row], floor=floor, ceiling=boundary)
         parsed = helpers.parse_item_content(row)
         if not parsed or parsed.get('isSidechain') or parsed.get('parent_tool_use_id'):
             continue
@@ -333,6 +354,13 @@ def _capture_tool_observations(session, boundary, *, conversation_boundary, capt
 
 def _fulfill_pending(session_id):
     from twicc.core.services.timeline_decisions import fulfill_final_message_obligation
+    from twicc.providers.db_writer import _holds_db_write_lease
+    if _holds_db_write_lease():
+        # The durable force_pending rows own retries. Never search old endings
+        # while the watcher is trying to commit a new source slice.
+        from twicc.core.services.timeline_decisions import _wake_after_commit
+        _wake_after_commit()
+        return
     for decision_id in TimelineDecision.objects.filter(session_id=session_id, kind='ending',
             status='accepted', force_pending=True).values_list('id', flat=True):
         fulfill_final_message_obligation(ending_id=str(decision_id))
@@ -384,14 +412,8 @@ def _record_refs(session, refs, *, timeline_since, floor=0, eligible=False, veri
     wanted = set(refs) - _captured_message_refs(session)
     if not wanted:
         return
-    # IDs live in current provider JSON, which can be compressed. Read bounded
-    # pages and match exact aliases; the source floor is only a read boundary.
-    query = SessionItem.objects.filter(session_id=session.id, line_num__gt=floor)
-    if all(ref.kind == 'claude_message' for ref in refs):
-        query = query.filter(message_id__in=[ref.native_id for ref in refs])
-    records = (record for record in _read(session, query) if wanted.intersection(record[2]))
     origins = [*input_origins, *_saved_input_origins(session)]
-    for group in _groups(session, records):
+    for group in _resolve_groups(session, list(wanted), floor=floor):
         if group[0][0].line_num <= floor:
             continue
         _capture(session, group, timeline_since=timeline_since,
@@ -455,11 +477,36 @@ def _captured_message_refs(session):
     return {NativeMessageRef(**ref) for refs in rows for ref in refs or []}
 
 
-def recover_referenced_messages(session_id: str, *, input_origins: Sequence[dict] = ()) -> None:
+def pending_referenced_sources(session_id, groups):
+    """Select unresolved explicit references using metadata, never source text."""
+    session = Session.objects.get(pk=session_id)
+    resolved = {NativeMessageRef(**ref) for refs in TimelineEvent.objects.filter(
+        session_id=session_id, kind__in=_MESSAGE_KINDS,
+    ).values_list('data__source_refs', flat=True) for ref in refs or []}
+    pending = {ref for group in groups for ref in group} - resolved - _captured_message_refs(session)
+    turns = list(LogicalTurn.objects.filter(session_id=session_id))
+    pending &= _current_saved_refs(session, groups, turns=turns)
+    requests = []
+    for turn in turns:
+        turn_refs = {NativeMessageRef(**ref) for ref in
+                     ([turn.first_ref] if turn.first_ref else []) + turn.final_refs}
+        refs = pending & turn_refs
+        pending -= refs
+        if refs and _same_scope(turn, session):
+            requests.append((list(refs), turn.source_floor, None))
+        if (turn.storage_incarnation is None or turn.history_epoch is None) and _same_scope(turn, session):
+            if turn_refs:
+                requests.append((list(turn_refs), turn.source_floor, None))
+    if pending:
+        requests.append((list(pending), 0, None))
+    return session, requests
+
+
+def recover_referenced_messages(session_id: str, *, input_origins: Sequence[dict] = (), groups=None) -> None:
     """Resolve only saved live-turn aliases, including after journal retention ends."""
     try:
         _fulfill_pending(session_id)
-        groups = _saved_ref_groups(session_id)
+        groups = _saved_ref_groups(session_id) if groups is None else groups
         pending = {ref for group in groups for ref in group}
         if not pending:
             return
@@ -511,26 +558,17 @@ def _eligible_group(session, group, verified=()):
 
 
 def _resolve_groups(session, refs, *, floor=0, ceiling=None):
-    wanted = set(refs)
-    query = SessionItem.objects.filter(session_id=session.id, line_num__gt=floor)
-    if ceiling is not None:
-        query = query.filter(line_num__lte=ceiling)
-    if all(ref.kind == 'claude_message' for ref in refs):
-        query = query.filter(message_id__in=[ref.native_id for ref in refs])
-    records = [record for record in _read(session, query) if wanted.intersection(record[2])]
-    bounded = []
-    for group in _groups(session, records):
-        # An exact frozen terminal also bounds hydration of its split group.
-        # A later block sharing that group ID cannot enrich an old ending.
-        terminals = [item.line_num for item, _, aliases in group
-                     if any(ref in wanted and ref.kind == 'claude_uuid' for ref in aliases)]
-        upper = min(ceiling, max(terminals)) if ceiling is not None and terminals else (
-            max(terminals) if terminals else ceiling)
-        if upper is not None:
-            group = [record for record in group if record[0].line_num <= upper]
-        if group and group[0][0].line_num > floor:
-            bounded.append(group)
-    return bounded
+    from twicc.core.services.timeline_source_reads import current_source_reads, resolve_source_groups
+    from twicc.providers.db_writer import _holds_db_write_lease
+
+    prepared = current_source_reads(session.id)
+    if prepared is not None:
+        return prepared.resolve(refs, floor=floor, ceiling=ceiling)
+    if _holds_db_write_lease():
+        # Missing preparation is a retry, never permission to decompress the
+        # transcript while preventing the watcher from indexing that transcript.
+        return []
+    return resolve_source_groups(session, refs, floor=floor, ceiling=ceiling)
 
 
 def _matching_event(session, *, dedupe_key, data, occurred_at):

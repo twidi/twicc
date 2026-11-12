@@ -98,14 +98,14 @@ def test_shell_decision_waits_for_indexing_before_starting_inference_deadline(
 
         # Indexing and scheduling can both lag longer than an inference budget.
         current[0] += timedelta(seconds=60)
-        row, _ = await runtime._admitted(runtime._claim, current[0], set(), ())
+        row, _ = await runtime._claim_ready(current[0], set(), ())
         assert row is None  # An earlier indexed answer cannot replace this final.
         assert await runtime._admitted(runtime._due, current[0]) == []
         await asyncio.to_thread(f.append,
             f.message('last', 'The fix is ready. Waiting for the full test suite.'),
             f.message('future', 'Unrelated later message.'), capture=False)
         current[0] += timedelta(seconds=60)
-        row, _ = await runtime._admitted(runtime._claim, current[0], set(), ())
+        row, _ = await runtime._claim_ready(current[0], set(), ())
         assert row is not None
         worker = runtime.DecisionRuntime()
         try:
@@ -159,7 +159,7 @@ def test_runtime_applies_without_new_ingress(decision_fixture, monkeypatch):
         return Classification('NO', 'routine'), 'provider'
     monkeypatch.setattr(runtime, 'classify', classify)
     monkeypatch.setattr(runtime, 'build_decision_context', lambda request: asyncio.sleep(0, result=request))
-    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+    monkeypatch.setattr(runtime, '_source_ready', lambda row, prepared=None: True)
     async def scenario():
         stop = asyncio.Event()
         task = asyncio.create_task(runtime.start_timeline_decision_task(stop))
@@ -189,7 +189,7 @@ def test_expiry_runs_with_saturated_inference(decision_fixture, monkeypatch):
         admit(candidate, now, identity=f'message:{index}')
     TimelineDecision.objects.update(not_before=now)
     monkeypatch.setattr(runtime, 'build_decision_context', lambda request: asyncio.sleep(0, result=request))
-    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+    monkeypatch.setattr(runtime, '_source_ready', lambda row, prepared=None: True)
     async def scenario():
         entered = []
         saturated = asyncio.Event()
@@ -225,7 +225,7 @@ def test_claimed_ending_arms_an_idle_deadline_scheduler(decision_fixture, monkey
     request.payload['awaiting_inference'] = True
     key = admit(request, now)
     TimelineDecision.objects.filter(pk=key).update(not_before=now)
-    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+    monkeypatch.setattr(runtime, '_source_ready', lambda row, prepared=None: True)
 
     async def scenario():
         worker = runtime.DecisionRuntime()
@@ -298,7 +298,7 @@ def test_force_before_inference_skips_model(decision_fixture, monkeypatch):
     assert TimelineDecision.objects.get(pk=key).forced
 
 
-def test_delayed_writer_result_uses_original_expiry(decision_fixture, monkeypatch):
+def test_timely_no_survives_delayed_writer_admission(decision_fixture, monkeypatch):
     from twicc import timeline_decision_task as runtime
     _, now, request = decision_fixture
     key = admit(request, now)
@@ -323,7 +323,7 @@ def test_delayed_writer_result_uses_original_expiry(decision_fixture, monkeypatc
         await worker.stop()
     asyncio.run(scenario())
     row.refresh_from_db()
-    assert (row.status, row.reason) == ('accepted', 'timeout')
+    assert (row.status, row.reason) == ('rejected', 'late')
     assert row.occurred_at == now
 
 
@@ -390,7 +390,7 @@ def test_runtime_releases_agent_callbacks_after_owned_work(bridge, monkeypatch, 
     agent = Agent(original.session_id, original.project_id, '/tmp', AgentSettings())
     agent.process_run = original.process_run
     manager._agents[agent.session_id] = agent
-    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+    monkeypatch.setattr(runtime, '_source_ready', lambda row, prepared=None: True)
     monkeypatch.setattr(runtime, '_live_ending', lambda row: (manager, manager._agents[row.session_id])
         if row.session_id in manager._agents and manager._agents[row.session_id]._completion_pending_ending else None)
 
@@ -473,7 +473,7 @@ def test_four_workers_and_per_session_fairness(decision_fixture, monkeypatch):
             running.remove(request.session_id)
     monkeypatch.setattr(runtime, 'classify', classify)
     monkeypatch.setattr(runtime, 'build_decision_context', lambda request: asyncio.sleep(0, result=request))
-    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+    monkeypatch.setattr(runtime, '_source_ready', lambda row, prepared=None: True)
     async def scenario():
         stop = asyncio.Event()
         task = asyncio.create_task(runtime.start_timeline_decision_task(stop))
@@ -627,7 +627,7 @@ def test_forcing_running_message_releases_its_inference_slot(decision_fixture, m
     _, now, request = decision_fixture
     key = admit(request, now)
     TimelineDecision.objects.filter(pk=key).update(not_before=now)
-    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+    monkeypatch.setattr(runtime, '_source_ready', lambda row, prepared=None: True)
     monkeypatch.setattr(runtime, 'build_decision_context', lambda request: asyncio.sleep(0, result=request))
     async def scenario():
         entered, canceled = asyncio.Event(), asyncio.Event()

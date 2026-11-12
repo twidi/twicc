@@ -9,6 +9,7 @@ import logging
 from collections import OrderedDict
 from contextlib import suppress
 from datetime import timedelta
+from typing import NamedTuple
 
 from django.db import transaction
 from django.db.models import Min, Q
@@ -16,7 +17,7 @@ from django.utils import timezone
 
 from twicc.agent.semantic_types import DecisionRequest, SourceScope
 from twicc.core.enums import Provider
-from twicc.core.models import Session, TimelineDecision
+from twicc.core.models import LogicalTurn, Session, TimelineDecision, TimelineEvent
 from twicc.core.services import timeline_decisions as decisions
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.timeline_classification import (
@@ -29,10 +30,81 @@ BATCH_SIZE = 100
 RETRY_SECONDS = 5
 RESULT_CACHE_LIMIT = 256
 _AWAITING_INFERENCE = Q(kind='ending', payload__has_key='awaiting_inference', payload__awaiting_inference=True)
+_SOURCE_CHANGED = object()
 
 
 async def _admitted(function, *args, **kwargs):
     return await run_under_db_write_lock(lambda: asyncio.to_thread(function, *args, **kwargs))
+
+
+class PreparedDecisionReads(NamedTuple):
+    sources: object
+    original_payload: dict
+    evidence: dict | None
+
+
+def _prepare_decision_reads(row):
+    """Resolve only this decision's identities, outside writer admission."""
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.core.services.timeline_messages import _eligible_group, capture_ending_context, capture_message_context
+    from twicc.core.services.timeline_source_reads import prepare_source_reads, prepared_source_reads
+
+    payload = row.payload
+    floor = payload.get('source_floor', 0)
+    refs = [NativeMessageRef(**ref) for ref in payload.get('message_refs', [])]
+    finals = [NativeMessageRef(**ref) for ref in payload.get('snapshot', {}).get('final_refs', [])]
+    tools = [NativeMessageRef(**ref) for ref in payload.get('captured_tool_refs', [])]
+    session = Session.objects.filter(pk=row.session_id).first()
+    # An ending concerns the latest exact terminal. Earlier physical finals
+    # matter only when final forcing proves that a later final has no text.
+    selected = refs[-1:] if row.kind == 'ending' else refs
+    requests = [(selected, floor, payload.get('source_boundary', payload.get('source_ceiling')))]
+    if row.kind == 'ending' and row.status == 'accepted' and row.force_pending:
+        for final in reversed(finals):
+            request = ([final], floor, payload.get('source_ceiling'))
+            requests.append(request)
+            partial = prepare_source_reads(row.session_id, [request])
+            groups = partial.resolve(request[0], floor=floor, ceiling=request[2])
+            if not groups or any(_eligible_group(session, group, [final]) for group in groups):
+                break
+    if row.kind == 'ending' and not payload.get('evidence_captured'):
+        requests.extend(([ref], floor, None) for ref in tools)
+    sources = prepare_source_reads(row.session_id, requests)
+    evidence = {}
+    if session is not None:
+        with prepared_source_reads(sources):
+            if row.kind == 'ending' and payload.get('awaiting_inference') and not payload.get('evidence_captured'):
+                from twicc.core.content_storage.codec import ContentIntegrityError
+                try:
+                    evidence = {} if payload.get('tool_context_incomplete') else capture_ending_context(
+                        session, refs=refs, floor=floor, occurred_at=row.occurred_at,
+                        input_origins=payload.get('input_context', []), tool_refs=tools)
+                except ContentIntegrityError:
+                    logger.warning('Completion context unavailable for session %s', row.session_id, exc_info=True)
+                    evidence = {}
+            elif row.kind == 'message' and payload.get('context_pending'):
+                evidence = {'previous_messages': capture_message_context(session,
+                    before=payload['event_data']['source_line'], occurred_at=row.occurred_at,
+                    input_origins=payload.get('input_context', []),
+                    verified=[NativeMessageRef(**ref) for ref in payload.get('verified_refs', [])])}
+    return PreparedDecisionReads(sources, payload, evidence)
+
+
+def _apply_prepared(function, prepared, *args):
+    from twicc.core.services.timeline_source_reads import prepared_source_reads
+
+    if not prepared.sources.is_current():
+        return _SOURCE_CHANGED
+    with prepared_source_reads(prepared.sources):
+        return function(*args)
+
+
+async def _prepared_admitted(function, row, *args):
+    while True:
+        prepared = await asyncio.to_thread(_prepare_decision_reads, row)
+        result = await _admitted(_apply_prepared, function, prepared, row, *args)
+        if result is not _SOURCE_CHANGED:
+            return result
 
 
 def _live_ending(row):
@@ -44,7 +116,7 @@ def _live_ending(row):
     return (manager, agent) if context is not None and context.id == str(row.pk) else None
 
 
-def _source_ready(row) -> bool:
+def _source_ready(row, prepared=None) -> bool:
     """Check exact frozen references; never build context from a current tail."""
     from twicc.core.services.timeline_messages import _message_application_candidate, _ensure_decision_source, _resolve_groups
     from twicc.agent.completion_types import NativeMessageRef
@@ -54,6 +126,10 @@ def _source_ready(row) -> bool:
     if row.status not in ('pending', 'running', 'accepted') or row.forced:
         return False
     if row.kind == 'message':
+        if row.payload.get('context_pending'):
+            if prepared is None:
+                prepared = _prepare_decision_reads(row)
+            row.payload = {**row.payload, **(prepared.evidence or {}), 'context_pending': False}
         return _message_application_candidate(row) is not None
     if not _ensure_decision_source(row):
         return False
@@ -63,16 +139,19 @@ def _source_ready(row) -> bool:
 
         payload = row.payload
         if not payload.get('evidence_captured'):
-            session = Session.objects.get(pk=row.session_id)
-            try:
-                evidence = {} if payload.get('tool_context_incomplete') else capture_ending_context(
-                    session, refs=[NativeMessageRef(**ref) for ref in payload.get('message_refs', [])],
-                    floor=payload.get('source_floor', 0), occurred_at=row.occurred_at,
-                    input_origins=payload.get('input_context', []),
-                    tool_refs=[NativeMessageRef(**ref) for ref in payload.get('captured_tool_refs', [])])
-            except ContentIntegrityError:
-                logger.warning('Completion context unavailable for session %s', row.session_id, exc_info=True)
-                evidence = {}
+            if prepared is not None:
+                evidence = prepared.evidence
+            else:
+                session = Session.objects.get(pk=row.session_id)
+                try:
+                    evidence = {} if payload.get('tool_context_incomplete') else capture_ending_context(
+                        session, refs=[NativeMessageRef(**ref) for ref in payload.get('message_refs', [])],
+                        floor=payload.get('source_floor', 0), occurred_at=row.occurred_at,
+                        input_origins=payload.get('input_context', []),
+                        tool_refs=[NativeMessageRef(**ref) for ref in payload.get('captured_tool_refs', [])])
+                except ContentIntegrityError:
+                    logger.warning('Completion context unavailable for session %s', row.session_id, exc_info=True)
+                    evidence = {}
             if evidence is None:
                 return False
             payload.update(evidence)
@@ -85,29 +164,44 @@ def _source_ready(row) -> bool:
     return any(ref in refs for group in groups for _, _, aliases in group for ref in aliases)
 
 
-def _claim(now, occupied, active, deferred=()):
+def _candidates(now, occupied, active, deferred=()):
     query = TimelineDecision.objects.filter(status='pending', forced=False, not_before__lte=now).filter(
         Q(expires_at__gt=now) | _AWAITING_INFERENCE
     ).exclude(pk__in=(*active, *deferred)).order_by('not_before', 'created_at', 'pk')
     for session_id, kind in occupied:
         query = query.exclude(session_id=session_id, kind=kind)
-    # Check at most 100 rows before yielding writer admission.
+    return list(query[:BATCH_SIZE])
+
+
+def _claim_prepared(row, prepared):
+    with transaction.atomic():
+        current = TimelineDecision.objects.filter(pk=row.pk, status='pending', forced=False).first()
+        if (current is None or current.payload != prepared.original_payload
+                or not prepared.sources.is_current()):
+            return None
+        from twicc.core.services.timeline_source_reads import prepared_source_reads
+        with prepared_source_reads(prepared.sources):
+            if not _source_ready(current, prepared):
+                return None
+        if current.kind == 'ending' and current.payload.get('awaiting_inference'):
+            current.payload['awaiting_inference'] = False
+            current.expires_at = timezone.now() + timedelta(seconds=45)
+        elif current.expires_at <= timezone.now():
+            return None
+        current.status = 'running'
+        current.save(update_fields=['payload', 'expires_at', 'status'])
+        return current
+
+
+async def _claim_ready(now, occupied, active, deferred=()):
+    rows = await asyncio.to_thread(_candidates, now, occupied, active, deferred)
     skipped = []
-    for row in query[:BATCH_SIZE]:
-        with transaction.atomic():
-            if not _source_ready(row):
-                skipped.append(str(row.pk))
-                continue
-            if row.kind == 'ending' and row.payload.get('awaiting_inference'):
-                # The inference budget starts with a ready source and a free
-                # worker. DB admission and watcher lag consume no model time.
-                row.payload['awaiting_inference'] = False
-                row.expires_at = timezone.now() + timedelta(seconds=45)
-                row.save(update_fields=['payload', 'expires_at'])
-            elif row.expires_at <= timezone.now():
-                continue
-            if TimelineDecision.objects.filter(pk=row.pk, status='pending', forced=False).update(status='running'):
-                return row, skipped
+    for row in rows:
+        prepared = await asyncio.to_thread(_prepare_decision_reads, row)
+        claimed = await _admitted(_claim_prepared, row, prepared)
+        if claimed is not None:
+            return claimed, skipped
+        skipped.append(str(row.pk))
     return None, skipped
 
 
@@ -150,7 +244,7 @@ def _retry_effect(row, now):
         return decisions.apply_accepted_ending(decision_id=str(row.pk), now=now)
 
 
-def _message_result(row, classification, route, fallback):
+def _message_result(row, classification, route, fallback, received_at=None):
     with transaction.atomic():
         decisions.invalidate_semantic_decisions(session_id=row.session_id)
         if fallback is not None:
@@ -160,7 +254,7 @@ def _message_result(row, classification, route, fallback):
                 reason='timeout' if now >= expires else fallback, now=now)
         else:
             changed = decisions.resolve_decision(decision_id=str(row.pk), classification=classification,
-                effective_route=route, now=timezone.now())
+                effective_route=route, now=received_at or timezone.now())
         decisions.publish_message_if_ready(decision_id=str(row.pk))
         return changed
 
@@ -171,6 +265,41 @@ def _ignored(row, verdict, route):
     row.status = None  # A guarded result has no newly applied durable outcome.
     row.effective_route = route
     decisions._record_after_commit(row, event='ignored', verdict=verdict)
+
+
+def _source_events(after):
+    query = TimelineEvent.objects.filter(pk__gt=after, kind__in=('turn.started', 'turn.ended'))
+    # Settled decisions expire after 48h. Their old event references must not
+    # resurrect deliberately hidden messages on any page of the recovery scan.
+    query = query.filter(occurred_at__gte=timezone.now() - timedelta(hours=48))
+    return list(query.order_by('pk').values('pk', 'session_id', 'data')[:BATCH_SIZE])
+
+
+def _prepare_referenced_sources(session_id, groups):
+    from twicc.core.services.timeline_messages import pending_referenced_sources
+    from twicc.core.services.timeline_source_reads import prepare_source_reads
+
+    _, requests = pending_referenced_sources(session_id, groups)
+    prepared = prepare_source_reads(session_id, requests)
+    wanted = {ref for refs, _, _ in requests for ref in refs}
+    found = {ref for refs, floor, ceiling in requests
+             for group in prepared.resolve(refs, floor=floor, ceiling=ceiling)
+             for _, _, aliases in group for ref in aliases}
+    remaining = [group & (wanted - found) for group in groups]
+    return prepared, [group for group in remaining if group], bool(found)
+
+
+def _apply_referenced_sources(session_id, groups, prepared):
+    from twicc.core.services.logical_turn_answers import bind_indexed_turn_sources
+    from twicc.core.services.timeline_messages import recover_referenced_messages
+    from twicc.core.services.timeline_source_reads import prepared_source_reads
+
+    if not prepared.is_current():
+        return False
+    with transaction.atomic(), prepared_source_reads(prepared):
+        bind_indexed_turn_sources(session_id)
+        recover_referenced_messages(session_id, groups=groups)
+    return True
 
 
 class DecisionRuntime:
@@ -189,6 +318,44 @@ class DecisionRuntime:
         self.effects_pending = False
         self.deadline_retries = {}
         self.source_retries = {}
+        self.source_event_cursor = 0
+        self.pending_sources = {}
+        self.source_events_pending = False
+        self.unbound_source_cursor = None
+
+    async def recover_sources(self):
+        """Read each boundary once; retry only exact identities still missing."""
+        from twicc.agent.completion_types import NativeMessageRef
+
+        events = await asyncio.to_thread(_source_events, self.source_event_cursor)
+        self.source_events_pending = len(events) == BATCH_SIZE
+        for event in events:
+            self.source_event_cursor = event['pk']
+            refs = {NativeMessageRef(**ref) for ref in (event['data'] or {}).get('message_refs', [])}
+            if refs:
+                self.pending_sources.setdefault(event['session_id'], []).append(refs)
+        def unbound_page():
+            query = LogicalTurn.objects.filter(
+                Q(storage_incarnation__isnull=True) | Q(history_epoch__isnull=True))
+            if self.unbound_source_cursor is not None:
+                query = query.filter(session_id__gt=self.unbound_source_cursor)
+            return list(query.order_by('session_id').values_list('session_id', flat=True).distinct()[:BATCH_SIZE])
+        unbound = await asyncio.to_thread(unbound_page)
+        self.unbound_source_cursor = unbound[-1] if len(unbound) == BATCH_SIZE else None
+        self.source_events_pending |= self.unbound_source_cursor is not None
+        for session_id in unbound:
+            self.pending_sources.setdefault(session_id, [])
+        for session_id, groups in tuple(self.pending_sources.items()):
+            try:
+                prepared, remaining, ready = await asyncio.to_thread(_prepare_referenced_sources, session_id, groups)
+                if ready and not await _admitted(_apply_referenced_sources, session_id, groups, prepared):
+                    continue
+                if remaining:
+                    self.pending_sources[session_id] = remaining
+                else:
+                    self.pending_sources.pop(session_id, None)
+            except Session.DoesNotExist:
+                self.pending_sources.pop(session_id, None)
 
     def signal(self):
         self.loop.call_soon_threadsafe(self.wake.set)
@@ -244,7 +411,13 @@ class DecisionRuntime:
                 changed = False
                 ignored = True
         else:
-            changed = await _admitted(_message_result, row, classification, route, fallback)
+            received_at = timezone.now() if classification is not None else None
+            if classification is not None and classification.verdict == 'NO':
+                # Rejection writes no message. Source-scope guards suffice;
+                # there is no text publication to prepare or hydrate.
+                changed = await _admitted(_message_result, row, classification, route, fallback, received_at)
+            else:
+                changed = await _prepared_admitted(_message_result, row, classification, route, fallback, received_at)
             ignored = not changed
         if classification is not None and str(row.pk) not in self.seen_results:
             self.seen_results[str(row.pk)] = None
@@ -276,10 +449,7 @@ class DecisionRuntime:
                 # Local activity can win before callback registration or insert.
                 if _live_ending(row) is None:
                     return
-            # Ending claims already freeze their indexed context. Do not queue
-            # a second writer admission between the budget start and inference.
-            if row.kind == 'message' and not await _admitted(_source_ready, row):
-                return
+            # Claims already freeze and validate source before starting a budget.
             if row.kind == 'ending' and _live_ending(row) is None:
                 return
             if timezone.now() >= row.expires_at:
@@ -347,6 +517,7 @@ class DecisionRuntime:
 
     async def schedule_cycle(self):
         self.wake.clear()
+        await self.recover_sources()
         if self.calls:
             unresolved = await _admitted(_unresolved_calls, tuple(self.calls))
             for key in tuple(self.calls):
@@ -358,12 +529,12 @@ class DecisionRuntime:
         self.effect_cursor = effects[-1].pk if len(effects) == BATCH_SIZE else None
         for row in effects:
             try:
-                await _admitted(_retry_effect, row, timezone.now())
+                await _prepared_admitted(_retry_effect, row, timezone.now())
             except Exception:
                 logger.exception('Semantic decision effect retry failed for %s', row.pk)
         self.source_retries = {key: due for key, due in self.source_retries.items() if due > self.loop.time()}
         while len(self.workers) < WORKERS:
-            row, skipped = await _admitted(_claim, timezone.now(), self.occupied,
+            row, skipped = await _claim_ready(timezone.now(), self.occupied,
                 tuple(self.workers), tuple(self.source_retries))
             self.source_retries.update((key, self.loop.time() + RETRY_SECONDS) for key in skipped)
             if row is None:
@@ -376,12 +547,12 @@ class DecisionRuntime:
             self.workers[key] = asyncio.create_task(self.worker(row))
         next_ready = await _admitted(_next_ready, self.occupied, tuple(self.source_retries)) if len(self.workers) < WORKERS else None
         delay = max(0, (next_ready - timezone.now()).total_seconds()) if next_ready else None
-        if self.effects_pending or delay == 0:
+        if self.effects_pending or self.pending_sources or delay == 0:
             delay = RETRY_SECONDS if delay is None else min(RETRY_SECONDS, delay or RETRY_SECONDS)
         if self.source_retries and len(self.workers) < WORKERS:
             retry = max(0, min(self.source_retries.values()) - self.loop.time())
             delay = retry if delay is None else min(delay, retry)
-        if self.effect_cursor is not None:
+        if self.effect_cursor is not None or self.source_events_pending:
             delay = 0  # Continue to the next bounded page, once per sweep.
         await _wait(self.wake, delay)
 

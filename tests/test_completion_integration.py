@@ -265,11 +265,18 @@ def test_real_writer_admission_stall_rechecks_root_ingress(integrated, monkeypat
         ticket = f.agent.completion_controller.candidate()
         clock[0] = ticket.deadline
         async with db_writer._db_write_lock:
+            # Preparation now precedes writer admission. Observe actual queue
+            # entry rather than assuming one ready-queue tick completes reads.
+            queued = asyncio.Event()
+            acquire = f.coordinator.acquire
+
+            async def observe_admission(*args, **kwargs):
+                queued.set()
+                return await acquire(*args, **kwargs)
+
+            monkeypatch.setattr(f.coordinator, 'acquire', observe_admission)
             task = asyncio.create_task(f.manager._confirm_completion(f.agent, ticket))
-            # A ready-queue barrier runs after confirmation reaches lock admission.
-            ready = asyncio.Event()
-            loop.call_soon(ready.set)
-            await ready.wait()
+            await queued.wait()
             assert not task.done()
             assert len(f.coordinator.requests) == 1
             f.agent._completion_activity()

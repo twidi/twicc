@@ -91,6 +91,8 @@ def record_logical_turn_boundary(*, agent, snapshot: CompletionSnapshot, kind: s
     event = record_event_sync(kind, session_id=agent.session_id, project_id=agent.project_id,
         occurred_at=occurred_at, actor=TimelineActor.AGENT, origin=origin, provider=_provider_of(agent),
         data=data, reason=reason, dedupe_key=key)
+    from twicc.core.services.timeline_decisions import _wake_after_commit
+    _wake_after_commit()
     return event.pk if event is not None else TimelineEvent.objects.filter(
         session_id=agent.session_id, dedupe_key=key, kind=kind, occurred_at=occurred_at).values_list("id", flat=True).first()
 

@@ -527,9 +527,13 @@ def test_markerless_live_group_uses_open_journal_final_proof(live_session):
     assert not TimelineEvent.objects.filter(kind='turn.ended').exists()
 
 
-def test_startup_metadata_publication_recovers_only_saved_refs(live_session):
+@pytest.mark.django_db(transaction=True)
+def test_startup_metadata_publication_recovers_only_saved_refs(live_session, monkeypatch):
+    import asyncio
     from queue import Queue
+    from twicc import timeline_decision_task
     from twicc.core.services.session_timeline import record_event_sync
+    from twicc.providers import db_writer
     f = live_session
     f.append(f.message('history', 'unreferenced'), f.message('late', 'delayed', final=None), capture=False)
     kind = 'claude_uuid' if f.provider == 'claude_code' else 'codex_item'
@@ -542,6 +546,19 @@ def test_startup_metadata_publication_recovers_only_saved_refs(live_session):
     messages = [orjson.loads(queue.get()) for _ in range(queue.qsize())]
     complete = next(message for message in messages if message['type'] == 'session_complete')
     assert f.compute.apply_session_complete(complete).outcome == 'applied'
+    assert f.texts() == []  # Compute writes do not search source history.
+
+    async def recover():
+        monkeypatch.setattr(db_writer, '_db_write_lock', asyncio.Lock())
+        monkeypatch.setattr(db_writer, '_db_writer_stop_event', asyncio.Event())
+        runtime = timeline_decision_task.DecisionRuntime()
+        try:
+            await runtime.recover_sources()
+            assert runtime.pending_sources == {}
+        finally:
+            await runtime.stop()
+
+    asyncio.run(recover())
     assert f.texts() == ['delayed']
     f.compute.compute_session_metadata(f.session.id, queue, 2)
     messages = [orjson.loads(queue.get()) for _ in range(queue.qsize())]

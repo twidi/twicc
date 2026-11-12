@@ -64,8 +64,7 @@ class Playback:
 
     async def infer(self, response):
         self.responses.append(response)
-        row, skipped = await timeline_decision_task._admitted(
-            timeline_decision_task._claim, self.clock[0], set(), set())
+        row, skipped = await timeline_decision_task._claim_ready(self.clock[0], set(), set())
         assert row is not None and skipped == []
         await self.runtime.worker(row)
         assert not self.responses, "The production classifier must consume the fake response"
