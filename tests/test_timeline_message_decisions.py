@@ -83,6 +83,42 @@ def test_rejection_survives_recovery_and_final_force(live_session):
     assert len(f.events()) == 1
 
 
+@pytest.mark.parametrize('ingress', ['verified', 'recovery'])
+@pytest.mark.parametrize('status', ['pending', 'rejected', 'accepted'])
+def test_captured_messages_do_not_reload_transcript_on_completion_updates(live_session, monkeypatch, ingress, status):
+    from twicc.core.content_storage import readers
+    from twicc.core.services.session_timeline import record_event_sync
+
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude classification')
+    f.append(f.message('progress', 'The tests are still running.'))
+    row = TimelineDecision.objects.get(kind='message')
+    if status != 'pending':
+        timeline_decisions.resolve_decision(decision_id=str(row.pk),
+            classification=Classification('NO' if status == 'rejected' else 'YES', 'test decision'),
+            effective_route='haiku', now=timezone.now())
+    record_event_sync('turn.started', session_id=f.session.id, actor='agent', data={
+        'message_refs': [ref(f, 'progress')._asdict()]})
+    decoded = []
+    original = readers.decode_content
+
+    def decode(content):
+        decoded.append(content.pk)
+        return original(content)
+
+    monkeypatch.setattr(readers, 'decode_content', decode)
+    if ingress == 'verified':
+        timeline_messages.record_verified_messages(f.session.id, refs=verified(f, ref(f, 'progress')),
+                                                  timeline_since=f.boundary)
+    else:
+        timeline_messages.recover_referenced_messages(f.session.id)
+    # The durable decision already owns this text. Repeated journal updates
+    # must not decompress it again while holding the shared DB writer.
+    assert decoded == []
+    assert TimelineDecision.objects.filter(kind='message').count() == 1
+
+
 def test_final_forcing_waits_for_exact_late_group(live_session):
     f = live_session
     f.append(f.message('progress', 'progress'))

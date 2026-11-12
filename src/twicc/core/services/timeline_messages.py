@@ -225,11 +225,13 @@ def capture_message_context(session, *, before, occurred_at, input_origins=(), v
 
 
 def capture_ending_context(session, *, refs, floor, occurred_at, input_origins=(), tool_refs=()):
-    """Capture indexed root evidence only through an exact frozen terminal."""
+    """Capture exact terminal evidence; None means native indexing is pending."""
     if not refs or refs[-1].kind not in ('claude_uuid', 'codex_item'):
         return {}
     terminal = refs[-1]
     groups = _resolve_groups(session, [terminal], floor=floor)
+    if not groups:
+        return None
     if not any(_eligible_group(session, group, refs) for group in groups):
         return {}
     lines = [item.line_num for group in groups for item, _, aliases in group if terminal in aliases]
@@ -241,7 +243,7 @@ def capture_ending_context(session, *, refs, floor, occurred_at, input_origins=(
         matching = [item.line_num for group in _resolve_groups(session, [ref], floor=floor)
                     for item, _, aliases in group if ref in aliases]
         if not matching:
-            return {}
+            return None
         tool_lines.add(min(matching))
     previous = capture_message_context(session, before=boundary + 1, occurred_at=occurred_at,
         input_origins=input_origins, verified=refs)
@@ -379,7 +381,7 @@ def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
 
 
 def _record_refs(session, refs, *, timeline_since, floor=0, eligible=False, verified=None, saved=(), input_origins=()):
-    wanted = set(refs)
+    wanted = set(refs) - _captured_message_refs(session)
     if not wanted:
         return
     # IDs live in current provider JSON, which can be compressed. Read bounded
@@ -441,6 +443,18 @@ def _current_saved_refs(session, groups, *, turns=None):
     return {ref for group in groups if not group.intersection(invalid) for ref in group}
 
 
+def _captured_message_refs(session):
+    """Existing current-source decisions already own their message text."""
+    if session.storage_incarnation is None or session.history_epoch is None:
+        return set()
+    rows = TimelineDecision.objects.filter(
+        session_id=session.id, provider=session.provider, kind='message',
+        storage_incarnation=session.storage_incarnation, history_epoch=session.history_epoch,
+        status__in=('pending', 'running', 'accepted', 'rejected'),
+    ).values_list('payload__message_refs', flat=True)
+    return {NativeMessageRef(**ref) for refs in rows for ref in refs or []}
+
+
 def recover_referenced_messages(session_id: str, *, input_origins: Sequence[dict] = ()) -> None:
     """Resolve only saved live-turn aliases, including after journal retention ends."""
     try:
@@ -456,6 +470,9 @@ def recover_referenced_messages(session_id: str, *, input_origins: Sequence[dict
         if not pending:
             return
         session = Session.objects.get(pk=session_id)
+        pending -= _captured_message_refs(session)
+        if not pending:
+            return
         turns = list(LogicalTurn.objects.filter(session_id=session_id))
         pending &= _current_saved_refs(session, groups, turns=turns)
         for turn in turns:

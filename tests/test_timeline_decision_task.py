@@ -18,6 +18,131 @@ __all__ = ['bridge', 'content_row_factory', 'decision_fixture', 'live_session']
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
+@pytest.mark.parametrize('admission_delay', [0, 60])
+@pytest.mark.parametrize('model_timeout', [False, True])
+def test_shell_decision_waits_for_indexing_before_starting_inference_deadline(
+    bridge, live_session, monkeypatch, admission_delay, model_timeout,
+):
+    from twicc import timeline_decision_task as runtime
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.agent.states import AgentState
+    from twicc.core.enums import Provider
+    from twicc.core.models import LogicalTurn, TimelineEvent
+    from twicc.core.services.logical_turn_answers import resolve_logical_answer
+    from twicc.providers import db_writer
+    from twicc.timeline_classification import build_classifier_payload
+    from datetime import timedelta
+
+    manager, agent = bridge
+    f = live_session
+    f.append(f.message('user', 'Implement the fix and run all tests.', user=True),
+             f.message('older', 'Starting the work.'), capture=False)
+    f.session.refresh_from_db()
+    agent.session_id, agent.project_id = f.session.pk, f.session.project_id
+    agent.provider = manager.provider = Provider(f.provider)
+    agent.process_run.session_id, agent.process_run.provider = f.session.pk, f.provider
+    agent.process_run.save(update_fields=['session_id', 'provider'])
+    manager._agents = {f.session.pk: agent}
+    agent._completion_storage_incarnation = f.session.storage_incarnation
+    agent._completion_history_epoch = f.session.history_epoch
+    agent.completion_shell_snapshot = lambda: ({
+        'key': 'tests', 'owner': 'subagent', 'command': 'uv run pytest',
+        'description': 'Run the whole test suite.', 'started_at': None, 'start_line': None,
+        'owner_ref': 'implementer', 'generation': 1, 'output_path': None, 'tool_id': 'test-tool',
+    },)
+    current = [timezone.now()]
+    monkeypatch.setattr(runtime.timezone, 'now', lambda: current[0])
+
+    def live(row):
+        context = agent._completion_pending_ending
+        return (manager, agent) if context is not None and context.id == str(row.pk) else None
+
+    monkeypatch.setattr(runtime, '_live_ending', live)
+    model_started = asyncio.Event()
+
+    async def classify(request, **kwargs):
+        payload = build_classifier_payload(request)
+        assert payload['latest_user_request']['text'] == 'Implement the fix and run all tests.'
+        assert payload['latest_assistant_response'] == 'The fix is ready. Waiting for the full test suite.'
+        assert payload['candidate']['shells'][0]['description'] == 'Run the whole test suite.'
+        assert request.expires_at > current[0]
+        model_started.set()
+        if model_timeout:
+            await asyncio.Event().wait()
+        return Classification('NO', 'The test result is still required.'), 'provider'
+
+    monkeypatch.setattr(runtime, 'classify', classify)
+
+    async def scenario():
+        open_candidate(manager, agent)
+        native = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item',
+                                 'last', None if f.provider == 'claude_code' else 'native-turn')
+        agent.completion_controller.provider_ended(0, final_ref=native)
+        ticket = agent.completion_controller.candidate()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def block():
+            entered.set()
+            await release.wait()
+
+        blocker = asyncio.create_task(db_writer.run_under_db_write_lock(block))
+        await entered.wait()
+        confirming = asyncio.create_task(manager._confirm_completion(agent, ticket))
+        await asyncio.sleep(0)
+        original_time = agent._completion_pending_ending.occurred_at
+        current[0] += timedelta(seconds=admission_delay)
+        release.set()
+        await blocker
+        await confirming
+        context = agent._completion_pending_ending
+
+        # Indexing and scheduling can both lag longer than an inference budget.
+        current[0] += timedelta(seconds=60)
+        row, _ = await runtime._admitted(runtime._claim, current[0], set(), ())
+        assert row is None  # An earlier indexed answer cannot replace this final.
+        assert await runtime._admitted(runtime._due, current[0]) == []
+        await asyncio.to_thread(f.append,
+            f.message('last', 'The fix is ready. Waiting for the full test suite.'),
+            f.message('future', 'Unrelated later message.'), capture=False)
+        current[0] += timedelta(seconds=60)
+        row, _ = await runtime._admitted(runtime._claim, current[0], set(), ())
+        assert row is not None
+        worker = runtime.DecisionRuntime()
+        try:
+            running = asyncio.create_task(worker.worker(row))
+            await asyncio.wait_for(model_started.wait(), 1)
+            if model_timeout:
+                current[0] = row.expires_at
+                due = await runtime._admitted(runtime._due, current[0])
+                assert [item.pk for item in due] == [row.pk]
+                assert await worker.apply(row, fallback='timeout')
+            await running
+        finally:
+            await worker.stop()
+            agent._cancel_completion_timer()
+        stored = await runtime._admitted(lambda: TimelineDecision.objects.get(pk=context.id))
+        turn = await runtime._admitted(lambda: LogicalTurn.objects.get(pk=ticket.turn_id))
+        assert stored.occurred_at == original_time
+        answer = await runtime._admitted(resolve_logical_answer, turn, cursor=0)
+        events = await runtime._admitted(lambda: list(TimelineEvent.objects.filter(
+            session_id=f.session.pk, kind='turn.ended')))
+        if model_timeout:
+            assert (stored.status, stored.reason) == ('accepted', 'timeout')
+            assert turn.outcome == 'normal' and turn.closed_at == original_time
+            assert answer.status == 'replied'
+            assert answer.message.text == 'The fix is ready. Waiting for the full test suite.'
+            assert agent.state == AgentState.USER_TURN
+            assert len(events) == 1 and events[0].occurred_at == original_time
+        else:
+            assert (stored.status, stored.reason) == ('rejected', 'The test result is still required.')
+            assert turn.outcome is None
+            assert answer.status == 'pending'
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert events == []
+
+    asyncio.run(scenario())
+
+
 @pytest.fixture(autouse=True)
 def writer(monkeypatch):
     from twicc.providers import db_writer
@@ -89,6 +214,71 @@ def test_expiry_runs_with_saturated_inference(decision_fixture, monkeypatch):
         assert all(row.status == 'accepted' and row.reason == 'timeout' for row in rows)
         assert len(entered) == 4  # The queued fifth row expires without inference.
     asyncio.run(scenario())
+
+
+def test_claimed_ending_arms_an_idle_deadline_scheduler(decision_fixture, monkeypatch):
+    from tests.test_timeline_decisions import ending_request
+    from twicc import timeline_decision_task as runtime
+
+    _, now, _ = decision_fixture
+    request, _ = ending_request(decision_fixture)
+    request.payload['awaiting_inference'] = True
+    key = admit(request, now)
+    TimelineDecision.objects.filter(pk=key).update(not_before=now)
+    monkeypatch.setattr(runtime, '_source_ready', lambda row: True)
+
+    async def scenario():
+        worker = runtime.DecisionRuntime()
+        idle, armed = asyncio.Event(), asyncio.Event()
+        original_wait = runtime._wait
+        delays = []
+
+        async def wait(event, seconds):
+            if event is worker.deadline_wake:
+                delays.append(seconds)
+                (idle if seconds is None else armed).set()
+            await original_wait(event, seconds)
+
+        async def infer(row):
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(runtime, '_wait', wait)
+        monkeypatch.setattr(worker, 'worker', infer)
+        deadline_task = asyncio.create_task(worker.deadlines())
+        schedule_task = None
+        try:
+            await asyncio.wait_for(idle.wait(), 1)
+            schedule_task = asyncio.create_task(worker.schedule_cycle())
+            await asyncio.wait_for(armed.wait(), 1)
+            assert delays[0] is None
+            assert 0 < delays[-1] <= 45
+        finally:
+            tasks = [task for task in (deadline_task, schedule_task) if task is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await worker.stop()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('awaiting_inference', [None, False, True])
+def test_expiry_skips_only_explicitly_unstarted_endings(decision_fixture, awaiting_inference):
+    from tests.test_timeline_decisions import ending_request
+    from twicc import timeline_decision_task as runtime
+
+    _, now, _ = decision_fixture
+    request, _ = ending_request(decision_fixture)
+    if awaiting_inference is not None:
+        request.payload['awaiting_inference'] = awaiting_inference
+    key = admit(request, now)
+    due = runtime._due(request.expires_at)
+    if awaiting_inference is True:
+        assert due == []
+        assert runtime._next_deadline() is None
+    else:
+        assert [str(row.pk) for row in due] == [key]
+        assert runtime._next_deadline() == request.expires_at
 
 
 def test_force_before_inference_skips_model(decision_fixture, monkeypatch):

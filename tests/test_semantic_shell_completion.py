@@ -38,6 +38,33 @@ def capture(agent, monkeypatch):
     return agent._completion_capture_ending(agent.completion_controller.candidate(), [])
 
 
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+def test_delayed_ending_capture_keeps_original_candidate_time(provider, monkeypatch):
+    async def scenario():
+        agent = claude_agent() if provider == 'claude_code' else codex_agent(ephemeral=False)
+        if provider == 'claude_code':
+            agent._main_turn_open = False
+        current = [timezone.now()]
+        original_time = current[0]
+        monkeypatch.setattr(timezone, 'now', lambda: current[0])
+        agent.completion_controller.delay_seconds = 0
+        agent._completion_activity()
+        # A previous publication can delay the callback for a later ending.
+        previous = agent.completion_controller.snapshot()._replace(turn_id='previous', outcome='normal')
+        agent._completion_pending_publications['previous'] = previous
+        agent._completion_provider_ended()
+        ticket = agent.completion_controller.candidate()
+        agent._cancel_completion_timer()
+        current[0] += timedelta(minutes=4)
+        context = agent._completion_capture_ending(ticket, [])
+        assert context is not None
+        assert context.occurred_at == original_time
+        agent._completion_pending_publications.clear()
+        agent._cancel_completion_timer()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("command", ["uv run pytest", "npm run dev"])
 def test_snapshot_keeps_complete_required_work_and_persistent_server(command):
     async def scenario():
@@ -364,7 +391,8 @@ def test_group_only_reference_does_not_capture_future_complete_assistant(live_se
 
 
 @pytest.mark.django_db
-def test_captured_tool_after_final_is_included_without_uncaptured_future_tools(live_session):
+@pytest.mark.parametrize('late_tool', [False, True])
+def test_captured_tool_after_final_is_included_without_uncaptured_future_tools(live_session, late_tool):
     f = live_session
     final_ref = NativeMessageRef("claude_uuid", "final") if f.provider == "claude_code" else (
         NativeMessageRef("codex_item", "final", "native-turn"))
@@ -381,7 +409,9 @@ def test_captured_tool_after_final_is_included_without_uncaptured_future_tools(l
             "turn_id": "native-turn", "item": {"id": "output", "type": "CommandExecution",
                 "command": "uv run pytest", "status": "completed", "aggregated_output": "10 passed"}}}
         observed = NativeMessageRef("codex_item", "output", "native-turn")
-    f.append(f.message("user", "Run tests", user=True), f.message("final", "Waiting"), use, output, capture=False)
+    f.append(f.message("user", "Run tests", user=True), f.message("final", "Waiting"), use, capture=False)
+    if not late_tool:
+        f.append(output, capture=False)
     f.session.refresh_from_db()
     agent = claude_agent() if f.provider == "claude_code" else codex_agent()
     agent.session_id = f.session.id
@@ -390,6 +420,11 @@ def test_captured_tool_after_final_is_included_without_uncaptured_future_tools(l
         SourceScope(f.provider, f.session.storage_incarnation, f.session.history_epoch), {
             "message_refs": [final_ref._asdict()], "captured_tool_refs": [observed._asdict()],
             "input_context": [], "source_floor": 0, "previous_messages": [], "tool_evidence": []})
+    if late_tool:
+        agent._completion_enrich_ending_evidence_admitted(context)
+        assert context.payload['previous_messages'] == []
+        assert not context.payload.get('evidence_captured')
+        f.append(output, capture=False)
     future = f.message("future", "Future output", user=True)
     f.append(future, capture=False)
     agent._completion_enrich_ending_evidence_admitted(context)

@@ -8,6 +8,7 @@ import asyncio
 import logging
 from collections import OrderedDict
 from contextlib import suppress
+from datetime import timedelta
 
 from django.db import transaction
 from django.db.models import Min, Q
@@ -27,6 +28,7 @@ WORKERS = 4
 BATCH_SIZE = 100
 RETRY_SECONDS = 5
 RESULT_CACHE_LIMIT = 256
+_AWAITING_INFERENCE = Q(kind='ending', payload__has_key='awaiting_inference', payload__awaiting_inference=True)
 
 
 async def _admitted(function, *args, **kwargs):
@@ -55,6 +57,27 @@ def _source_ready(row) -> bool:
         return _message_application_candidate(row) is not None
     if not _ensure_decision_source(row):
         return False
+    if row.payload.get('awaiting_inference'):
+        from twicc.core.content_storage.codec import ContentIntegrityError
+        from twicc.core.services.timeline_messages import capture_ending_context
+
+        payload = row.payload
+        if not payload.get('evidence_captured'):
+            session = Session.objects.get(pk=row.session_id)
+            try:
+                evidence = {} if payload.get('tool_context_incomplete') else capture_ending_context(
+                    session, refs=[NativeMessageRef(**ref) for ref in payload.get('message_refs', [])],
+                    floor=payload.get('source_floor', 0), occurred_at=row.occurred_at,
+                    input_origins=payload.get('input_context', []),
+                    tool_refs=[NativeMessageRef(**ref) for ref in payload.get('captured_tool_refs', [])])
+            except ContentIntegrityError:
+                logger.warning('Completion context unavailable for session %s', row.session_id, exc_info=True)
+                evidence = {}
+            if evidence is None:
+                return False
+            payload.update(evidence)
+            payload['evidence_captured'] = True
+        return True
     session = Session.objects.filter(pk=row.session_id).first()
     refs = [NativeMessageRef(**ref) for ref in row.payload.get('message_refs', [])]
     groups = _resolve_groups(session, refs, floor=row.payload.get('source_floor', 0),
@@ -63,8 +86,9 @@ def _source_ready(row) -> bool:
 
 
 def _claim(now, occupied, active, deferred=()):
-    query = TimelineDecision.objects.filter(status='pending', forced=False, not_before__lte=now,
-        expires_at__gt=now).exclude(pk__in=(*active, *deferred)).order_by('not_before', 'created_at', 'pk')
+    query = TimelineDecision.objects.filter(status='pending', forced=False, not_before__lte=now).filter(
+        Q(expires_at__gt=now) | _AWAITING_INFERENCE
+    ).exclude(pk__in=(*active, *deferred)).order_by('not_before', 'created_at', 'pk')
     for session_id, kind in occupied:
         query = query.exclude(session_id=session_id, kind=kind)
     # Check at most 100 rows before yielding writer admission.
@@ -74,7 +98,13 @@ def _claim(now, occupied, active, deferred=()):
             if not _source_ready(row):
                 skipped.append(str(row.pk))
                 continue
-            if row.expires_at <= timezone.now():
+            if row.kind == 'ending' and row.payload.get('awaiting_inference'):
+                # The inference budget starts with a ready source and a free
+                # worker. DB admission and watcher lag consume no model time.
+                row.payload['awaiting_inference'] = False
+                row.expires_at = timezone.now() + timedelta(seconds=45)
+                row.save(update_fields=['payload', 'expires_at'])
+            elif row.expires_at <= timezone.now():
                 continue
             if TimelineDecision.objects.filter(pk=row.pk, status='pending', forced=False).update(status='running'):
                 return row, skipped
@@ -82,12 +112,14 @@ def _claim(now, occupied, active, deferred=()):
 
 
 def _due(now, exclude=()):
-    return list(TimelineDecision.objects.filter(status__in=('pending', 'running'), expires_at__lte=now).exclude(pk__in=exclude)
+    return list(TimelineDecision.objects.filter(status__in=('pending', 'running'), expires_at__lte=now)
+        .exclude(_AWAITING_INFERENCE).exclude(pk__in=exclude)
         .order_by('expires_at', 'pk')[:BATCH_SIZE])
 
 
 def _next_deadline(exclude=()):
-    return TimelineDecision.objects.filter(status__in=('pending', 'running')).exclude(pk__in=exclude).aggregate(value=Min('expires_at'))['value']
+    return TimelineDecision.objects.filter(status__in=('pending', 'running')).exclude(
+        _AWAITING_INFERENCE).exclude(pk__in=exclude).aggregate(value=Min('expires_at'))['value']
 
 
 def _next_ready(occupied, deferred=()):
@@ -244,8 +276,9 @@ class DecisionRuntime:
                 # Local activity can win before callback registration or insert.
                 if _live_ending(row) is None:
                     return
-            ready = await _admitted(_source_ready, row)
-            if not ready:
+            # Ending claims already freeze their indexed context. Do not queue
+            # a second writer admission between the budget start and inference.
+            if row.kind == 'message' and not await _admitted(_source_ready, row):
                 return
             if row.kind == 'ending' and _live_ending(row) is None:
                 return
@@ -337,6 +370,7 @@ class DecisionRuntime:
                 if len(skipped) == BATCH_SIZE:
                     continue
                 break
+            self.deadline_wake.set()
             key = str(row.pk)
             self.occupied.add((row.session_id, row.kind))
             self.workers[key] = asyncio.create_task(self.worker(row))

@@ -1148,7 +1148,10 @@ class BaseAgentManager:
                 if result and result.status == "canceled":
                     cancel_decision(decision_id=context.id, reason=result.reason)
                 return TimelineDecision.objects.get(pk=context.id).status
-            agent._completion_enrich_ending_evidence_admitted(context)
+            # Pending classification reads the exact source after indexing, on
+            # the decision worker. Explicit local endings need no inference.
+            if context.id in agent._completion_ending_results:
+                agent._completion_enrich_ending_evidence_admitted(context)
             live = agent.completion_controller.snapshot()
             allow_missing = (
                 self._agents.get(agent.session_id) is agent
@@ -1236,6 +1239,10 @@ class BaseAgentManager:
         from django.utils import timezone
         from twicc.core.services.timeline_decisions import resolve_decision
 
+        # Judge model latency when its answer arrives, before writer admission.
+        # A timely NO must not become a timeout while its DB write is queued.
+        classified_at = timezone.now() if classification is not None else None
+
         def current():
             context = agent._completion_pending_ending
             if context is None or context.id != decision_id:
@@ -1272,7 +1279,7 @@ class BaseAgentManager:
                 context = current()
                 if context is None or row.status not in ("pending", "running", "accepted"):
                     return
-                now = timezone.now()
+                now = classified_at if classified_at is not None else timezone.now()
                 reason = "timeout" if now >= row.expires_at else fallback_reason
                 accepted = reason is not None or row.status == "accepted" or (
                     classification is not None and classification.verdict == "YES")

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import logging
 import orjson
 import time
@@ -241,6 +241,7 @@ class BaseAgent(StopOriginMixin):
         self._completion_history_epoch: int | None = None
         self._completion_committed_snapshot: CompletionSnapshot | None = None
         self._completion_pending_ending: EndingContext | None = None
+        self._completion_candidate_time: tuple[CompletionCandidate, datetime] | None = None
         self._completion_endings: dict[str, EndingContext] = {}
         self._completion_boundary_times: dict[str, datetime] = {}
         self._completion_ending_results: dict[str, EndingResolution] = {}
@@ -593,6 +594,8 @@ class BaseAgent(StopOriginMixin):
             except ContentIntegrityError:
                 self._logger.warning("Completion context unavailable for session %s", self.session_id, exc_info=True)
             else:
+                if evidence is None:
+                    return context
                 context.payload.update(evidence)
         context.payload["evidence_captured"] = True
         return context
@@ -685,12 +688,14 @@ class BaseAgent(StopOriginMixin):
             self.completion_controller.defer_due(candidate, asyncio.get_running_loop().time())
             return None
         snapshot = self.completion_controller.snapshot()
-        occurred_at = timezone.now()
+        observed = self._completion_candidate_time
+        occurred_at = observed[1] if observed is not None and observed[0] == candidate else timezone.now()
         opening = self._completion_openings.get(snapshot.turn_id)
         floor, incarnation, epoch = opening[1:] if opening else (
             self._completion_source_floor, self._completion_storage_incarnation, self._completion_history_epoch)
         evidence = self._completion_capture_ending_evidence(snapshot, occurred_at, input_context)
         payload = {**evidence, "background_work": self.background_work_snapshot(), "candidate": candidate._asdict(),
+            "awaiting_inference": True,
             "input_context": input_context, "boundary_refs": self._timeline_refs_for_turn(snapshot),
             "snapshot": {**snapshot._asdict(), "first_ref": snapshot.first_ref._asdict() if snapshot.first_ref else None,
                          "final_refs": [ref._asdict() for ref in snapshot.final_refs]},
@@ -729,7 +734,16 @@ class BaseAgent(StopOriginMixin):
             timer.cancel()
 
     def _completion_refresh(self) -> None:
+        from django.utils import timezone
+
         snapshot = self.completion_controller.snapshot()
+        candidate = self.completion_controller.candidate()
+        # Observe the ending before an older publication can delay its timer.
+        if candidate is None:
+            self._completion_candidate_time = None
+        elif self._completion_candidate_time is None or self._completion_candidate_time[0] != candidate:
+            remaining = max(0.0, candidate.deadline - asyncio.get_running_loop().time())
+            self._completion_candidate_time = (candidate, timezone.now() + timedelta(seconds=remaining))
         if (snapshot.ordinal and self._completion_persist_callback is not None
                 and snapshot.turn_id not in self._completion_pending_publications
                 and snapshot != self._completion_last_queued):
@@ -740,7 +754,6 @@ class BaseAgent(StopOriginMixin):
             return
         if self._completion_pending_snapshots and self._completion_persist_task is None:
             self._completion_persist_task = self._completion_own_task(self._completion_drain_snapshots())
-        candidate = self.completion_controller.candidate()
         if candidate == self._completion_timer_candidate:
             return
         self._cancel_completion_timer(preserve_admitted=True)

@@ -76,6 +76,47 @@ def test_shell_decision_gates_general_completion_without_timeline_clients(bridge
 
 
 @pytest.mark.parametrize('provider', ['codex', 'claude_code'], indirect=True)
+def test_timely_shell_rejection_survives_delayed_result_publication(bridge, provider, monkeypatch):
+    from datetime import timedelta
+    from django.utils import timezone
+    from twicc.providers import db_writer
+
+    async def scenario():
+        manager, agent = bridge
+        ticket, context = await pending(manager, agent)
+        row = await asyncio.to_thread(TimelineDecision.objects.get, pk=context.id)
+        current = [row.expires_at - timedelta(seconds=30)]
+        monkeypatch.setattr(timezone, 'now', lambda: current[0])
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def block():
+            entered.set()
+            await release.wait()
+
+        blocker = asyncio.create_task(db_writer.run_under_db_write_lock(block))
+        await entered.wait()
+        applying = asyncio.create_task(manager.apply_ending_decision(
+            agent, context.id, classification=Classification('NO', 'Tests are still running.'), effective_route='provider'))
+        await asyncio.sleep(0)
+        current[0] = row.expires_at + timedelta(seconds=60)
+        release.set()
+        await blocker
+        assert not await applying
+        agent._cancel_completion_timer()
+        if agent._completion_tasks:
+            await asyncio.gather(*tuple(agent._completion_tasks))
+        row = await asyncio.to_thread(TimelineDecision.objects.get, pk=context.id)
+        turn = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        assert (row.status, row.reason) == ('rejected', 'Tests are still running.')
+        assert row.resolved_at < row.expires_at
+        assert turn.outcome is None
+        assert agent.state == AgentState.ASSISTANT_TURN
+        assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind='turn.ended').exists())
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('provider', ['codex', 'claude_code'], indirect=True)
 def test_user_send_claims_before_staging_and_binding(bridge, provider):
     async def scenario():
         manager, agent = bridge
