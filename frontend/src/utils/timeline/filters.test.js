@@ -191,6 +191,7 @@ test('the turn rail needs both turn boundaries in the list', () => {
     assert.equal(showsTurnRail(filters({ view: 'waits_problems' })), false)
     assert.equal(showsTurnRail(filters({ families: ['messages'] })), false)
     assert.equal(showsTurnRail(filters({ families: ['messages', 'turns'] })), true)
+    assert.equal(showsTurnRail(filters({ families: ['turns'] })), false, 'turns alone: nothing for a rail to join')
     // A complete group filters nothing.
     assert.equal(showsTurnRail(filters({ families: familyKeys })), true)
     // The session and provider filters keep both boundaries of a turn; a Done by filter can keep only one.

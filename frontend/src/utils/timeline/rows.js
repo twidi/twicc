@@ -75,7 +75,8 @@ export function isEventRowKey(key) {
  * @param {(ms: number) => string} [options.dayKeyOf] - Local calendar day of an instant.
  * @param {(ms: number) => string} [options.dayLabelOf]
  * @param {boolean} [options.turnRail] - Draw the turns as rails (the filters keep both turn boundaries, see
- *   `showsTurnRail`). Off: every `rail` is null and the turn boundaries are plain event rows.
+ *   `showsTurnRail`). Off: every `rail` is null and the turn boundaries are plain event rows. On: the boundaries of
+ *   an empty turn are not rows at all.
  * @param {Object<string, (number|null)>} [options.turnsBelow] - By session: when the turn its oldest rows belong to
  *   started below the loaded rows (ms), else null (`state.turnsBelow` of the feed, from the server).
  * @returns {Array<DayRow|EventRow>}
@@ -84,7 +85,7 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
     const rows = []
     let currentDay = null
     let groupSession = null
-    for (const event of turnRail ? withRunningTurns(events, turnsBelow) : events) {
+    for (const event of turnRail ? withRunningTurns(withoutEmptyTurns(events), turnsBelow) : events) {
         const ms = parseOccurredAt(event.occurred_at)
         const dayKey = Number.isFinite(ms) ? dayKeyOf(ms) : null
         if (dayKey !== null && dayKey !== currentDay) {
@@ -133,6 +134,32 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
 
 const TURN_STARTED = 'turn.started'
 const TURN_ENDED = 'turn.ended'
+/**
+ * The events without the two boundaries of each EMPTY turn: a finished turn with no other event of its session
+ * between its start and its end (a tool-only turn, the turn that follows a compaction). It says nothing the rail
+ * could show, so it is left out, as if it never happened. A running turn, and a turn whose start is not on the
+ * page, stay. Pure: the input is not changed.
+ */
+function withoutEmptyTurns(events) {
+    const open = new Map() // session id -> the start of its turn and the number of events seen inside
+    const dropped = new Set()
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index]
+        const sessionId = event.session_id
+        if (!sessionId) continue
+        if (event.kind === TURN_STARTED) {
+            open.set(sessionId, { started: event, inside: 0 })
+        } else if (event.kind === TURN_ENDED) {
+            const turn = open.get(sessionId)
+            if (turn && turn.inside === 0) { dropped.add(turn.started); dropped.add(event) }
+            open.delete(sessionId)
+        } else if (open.has(sessionId)) {
+            open.get(sessionId).inside += 1
+        }
+    }
+    return dropped.size ? events.filter((event) => !dropped.has(event)) : events
+}
+
 /** The kind of the synthetic row that tops a running turn (it has no `turn.ended` row yet): never stored. */
 export const TURN_RUNNING = 'turn.running'
 

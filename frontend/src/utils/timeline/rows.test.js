@@ -263,10 +263,10 @@ test('a turn holds its two boundaries and every event of the session between the
 })
 
 test('the end row carries the duration from the start row', () => {
-    const rows = build([turnEv('turn.ended', 40), turnEv('turn.started', 10)], { turnRail: true })
+    const rows = build([turnEv('turn.ended', 40), turnEv('assistant_message.sent', 20), turnEv('turn.started', 10)], { turnRail: true })
     assert.equal(rows[1].rail.durationMs, 30000)
     assert.equal(rows[1].rail.open, false)
-    assert.equal(rows[2].rail.durationMs, 30000)
+    assert.equal(rows[3].rail.durationMs, 30000)
 })
 
 test('a running turn (a start with no end) gets a synthetic top row that carries its clock', () => {
@@ -284,10 +284,10 @@ test('a running turn (a start with no end) gets a synthetic top row that carries
 })
 
 test('a session whose last boundary is an end has no synthetic row, and the events are not changed', () => {
-    const events = [turnEv('turn.ended', 30), turnEv('turn.started', 10)]
+    const events = [turnEv('turn.ended', 30), turnEv('user_message.sent', 20), turnEv('turn.started', 10)]
     const copy = [...events]
     const rows = build(events, { turnRail: true })
-    assert.equal(rows.filter((row) => row.type === 'event').length, 2)
+    assert.equal(rows.filter((row) => row.type === 'event').length, 3)
     assert.deepEqual(events, copy)
     assert.equal(build([turnEv('turn.started', 10)], { turnRail: false }).filter((row) => row.type === 'event').length, 1)
 })
@@ -328,10 +328,10 @@ test('a day separator cuts a turn like another session does', () => {
 })
 
 test('an end row and a start row have their own height estimate', () => {
-    const rows = build([turnEv('turn.ended', 30), turnEv('turn.started', 10)], { turnRail: true })
+    const rows = build([turnEv('turn.ended', 30), turnEv('turn.started', 10)].flatMap((e, i) => (i ? [e] : [e, turnEv('user_message.sent', 20)])), { turnRail: true })
     assert.equal(estimateRowHeight(rows[1]), ROW_HEIGHT_ESTIMATES.head - ROW_HEIGHT_ESTIMATES.event + ROW_HEIGHT_ESTIMATES.turnEnd)
-    assert.equal(rows[1].rail.beforeStart, true)
-    assert.equal(estimateRowHeight(rows[2]), ROW_HEIGHT_ESTIMATES.turnStart + ROW_HEIGHT_ESTIMATES.blockEnd)
+    assert.equal(rows[2].rail.beforeStart, true)
+    assert.equal(estimateRowHeight(rows[3]), ROW_HEIGHT_ESTIMATES.turnStart + ROW_HEIGHT_ESTIMATES.blockEnd)
 })
 
 test('a session with no boundary on the page whose turn started below it is inside a running turn, started before the page', () => {
@@ -358,6 +358,24 @@ test('a turn whose end is on the page and whose start is below it has its durati
 })
 
 test('turnsBelow is not read for a session whose turn starts on the page', () => {
-    const rows = build([turnEv('turn.ended', 30), turnEv('turn.started', 10)], { turnRail: true, turnsBelow: { a: Date.parse('2026-10-14T11:00:00.000Z') } })
+    const rows = build([turnEv('turn.ended', 30), turnEv('user_message.sent', 20), turnEv('turn.started', 10)], { turnRail: true, turnsBelow: { a: Date.parse('2026-10-14T11:00:00.000Z') } })
     assert.equal(rows[1].rail.durationMs, 20000)
+})
+
+test('the two boundaries of an empty turn are not rows, but a turn with an event inside, a running one and a cut one stay', () => {
+    // Newest first: `a` has an empty turn, then a turn with a message; `b` has a running turn with nothing inside yet.
+    const events = [
+        turnEv('turn.started', 59, 'b'), turnEv('turn.ended', 50, 'a'), turnEv('turn.started', 49, 'a'),
+        turnEv('turn.ended', 40, 'a'), turnEv('assistant_message.sent', 30, 'a'), turnEv('turn.started', 20, 'a'),
+    ]
+    const rows = build(events, { turnRail: true })
+    const kinds = rows.filter((row) => row.type === 'event').map((row) => `${row.event.session_id}:${row.event.kind}`)
+    assert.deepEqual(kinds, ['b:turn.running', 'b:turn.started', 'a:turn.ended', 'a:assistant_message.sent', 'a:turn.started'])
+    // Not asked for: the rows are plain.
+    assert.equal(build(events).filter((row) => row.type === 'event').length, events.length)
+})
+
+test('a turn alone with its start not on the page is kept even with nothing inside', () => {
+    const rows = build([turnEv('turn.ended', 40)], { turnRail: true, turnsBelow: { a: Date.parse('2026-10-14T11:59:00.000Z') } })
+    assert.equal(rows.filter((row) => row.type === 'event').length, 1)
 })

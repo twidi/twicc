@@ -146,7 +146,8 @@ export function queryKey(query) {
 /**
  * Whether the list shows the turn boundaries (`turn.started` and `turn.ended`), so it can draw them as the turn
  * rail (see rows.js). The views `all` and `messages` hold them, `without_turns` and `waits_problems` do not.
- * With the Events group checked, Turns must be one of the values. A Done by filter can keep one boundary of a
+ * With the Events group checked, Turns must be one of the values, and not the only one: a list of turns alone has
+ * nothing for a rail to join (every turn looks empty), so the boundaries stay plain rows. A Done by filter can keep one boundary of a
  * turn and drop the other: the rail needs both, so it is off then.
  *
  * @param {TimelineFilters} filters
@@ -157,7 +158,7 @@ export function showsTurnRail(filters) {
     if (view !== 'all' && view !== 'messages') return false
     if (effectiveValues(filters.authors, AUTHOR_KEYS)) return false
     const families = effectiveValues(filters.families, FAMILY_KEYS)
-    return families === null || families.includes('turns')
+    return families === null || (families.includes('turns') && families.length > 1)
 }
 
 /**
