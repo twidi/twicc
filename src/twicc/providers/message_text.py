@@ -16,6 +16,7 @@ handled here: they are removed when a JSONL item is ingested, before any message
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 from twicc.providers.compute_base import INSERT_SCREENSHOT_TAG_RE
 
@@ -56,3 +57,24 @@ def clean_message_text(text: str) -> str:
 def without_artifact_labels(text: str) -> str:
     """``text`` without the lines that only describe a published artifact (what a summary must not read)."""
     return _ARTIFACT_LABEL_LINE.sub("", text) if "[artifact" in text else text
+
+
+class CompactionRequest(NamedTuple):
+    """A ``/compact`` command: its instructions (Claude Code only, Codex takes none), else None."""
+
+    prompt: str | None
+
+
+_COMPACT_COMMAND = re.compile(r"/compact(?:\s+(.*))?", re.DOTALL)
+
+
+def parse_compaction_request(text: str, provider: str | None) -> CompactionRequest | None:
+    """The compaction ``text`` asks for (a sent text, or a message text as above), else None.
+
+    The command must be the whole message, as the CLIs read it: ``/compact`` alone or followed by its instructions.
+    """
+    match = _COMPACT_COMMAND.fullmatch(text.strip()) if text else None
+    if match is None:
+        return None
+    prompt = (match.group(1) or "").strip() or None
+    return CompactionRequest(prompt if provider == "claude_code" else None)

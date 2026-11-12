@@ -90,3 +90,12 @@ def test_without_artifact_labels_drops_only_the_lines_that_are_a_label():
     prose = "Voir [artifact: x] ici et [image: y]"
     assert without_artifact_labels(prose) == prose
     assert without_artifact_labels("[artifact: x]") == ""
+
+
+def test_a_compaction_request_is_the_whole_compact_command_with_its_instructions_for_claude_only():
+    from twicc.providers.message_text import CompactionRequest, parse_compaction_request
+    assert parse_compaction_request("/compact", "claude_code") == CompactionRequest(None)
+    assert parse_compaction_request("  /compact  keep **X**\nand Y  ", "claude_code") == CompactionRequest("keep **X**\nand Y")
+    assert parse_compaction_request("/compact keep X", "codex") == CompactionRequest(None)
+    for text in ("", "/compactor", "please /compact", "/compact-now", "/clear"):
+        assert parse_compaction_request(text, "claude_code") is None

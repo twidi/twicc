@@ -23,7 +23,7 @@ const words = (vm) => vm.parts.map((part) => {
     return `<${part.mention.title}>`
 }).join('')
 
-test('the 21 kinds: wording, icon and severity (section 6.1)', () => {
+test('the 23 kinds: wording, icon and severity (section 6.1)', () => {
     const cases = [
         ['session.created', { data: { origin: 'twicc' } }, 'Session created', 'plus', 'neutral'],
         ['title.changed', { data: { source: 'user', new: 'B', old: 'A' } }, 'Renamed [A] → [B]', 'pencil', 'neutral'],
@@ -32,6 +32,8 @@ test('the 21 kinds: wording, icon and severity (section 6.1)', () => {
         ['process.ended', { reason: 'manual' }, 'Process stopped', 'power-off', 'neutral'],
         ['turn.started', {}, 'Turn started', 'robot', 'neutral'],
         ['turn.ended', { data: { background_work: null } }, 'Turn ended', 'circle-check', 'success'],
+        ['compaction.requested', { data: { text: 'Keep X', source: 'send' } }, 'Compaction requested', 'compress', 'neutral'],
+        ['compaction.completed', { data: { trigger: 'auto', text: null } }, 'Compaction completed', 'compress', 'neutral'],
         ['awaiting_input.started', { data: { request_type: 'tool_approval' } }, 'Waiting for approval', 'hand', 'warning'],
         ['awaiting_input.ended', { data: { request_type: 'tool_approval' } }, 'Approval handled', 'circle-check', 'neutral'],
         ['archived.started', {}, 'Archived', 'box-archive', 'neutral'],
@@ -47,7 +49,7 @@ test('the 21 kinds: wording, icon and severity (section 6.1)', () => {
         ['backend.started', { session_id: null, data: { version: '1.2.3' } }, 'TwiCC started', 'server', 'neutral'],
         ['backend.ended', { session_id: null, data: { clean: true } }, 'TwiCC stopped', 'power-off', 'neutral'],
     ]
-    assert.equal(cases.length, 21)
+    assert.equal(cases.length, 23)
     for (const [kind, fields, wording, icon, severity] of cases) {
         const vm = describe(kind, fields)
         assert.deepEqual([words(vm), vm.icon, vm.severity], [wording, icon, severity], kind)
@@ -62,7 +64,7 @@ test('an unknown kind shows its raw name with a generic icon and no detail', () 
 test('data missing or not an object is treated as empty and never throws', () => {
     for (const data of [undefined, null, 'text', 7, ['a']]) {
         for (const kind of ['session.created', 'title.changed', 'settings.changed', 'process.started', 'process.ended', 'turn.ended',
-            'awaiting_input.started', 'pinned.started', 'backend.started', 'backend.ended', 'archived.started']) {
+            'compaction.requested', 'compaction.completed', 'awaiting_input.started', 'pinned.started', 'backend.started', 'backend.ended', 'archived.started']) {
             assert.doesNotThrow(() => describe(kind, { data }), `${kind} / ${JSON.stringify(data)}`)
         }
     }
@@ -419,4 +421,11 @@ test('a long workflow name is cut, its full name and ids in the tooltip', () => 
     assert.match(vm.tooltip, new RegExp(`Workflow: ${name}`))
     assert.match(vm.tooltip, /Run id: wf_1/)
     assert.match(vm.tooltip, /Task id: t1/)
+})
+
+test('compaction.completed: its trigger is a tag, once, and an unknown trigger has none', () => {
+    assert.deepEqual(describe('compaction.completed', { actor: 'agent', data: { trigger: 'manual' } }).tags, ['manual'])
+    assert.deepEqual(describe('compaction.completed', { actor: 'agent', data: { trigger: 'auto' } }).tags, ['automatic'])
+    assert.deepEqual(describe('compaction.completed', { actor: 'system', data: { trigger: 'auto' } }).tags, ['automatic'])
+    assert.deepEqual(describe('compaction.completed', { actor: 'agent', data: { trigger: 'other' } }).tags, [])
 })

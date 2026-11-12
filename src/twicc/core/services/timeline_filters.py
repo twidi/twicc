@@ -47,6 +47,7 @@ FAMILIES: dict[str, tuple[str, ...]] = {
     "processes": (TimelineKind.PROCESS_STARTED, TimelineKind.PROCESS_ENDED),
     "turns": (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED),
     "messages": (TimelineKind.USER_MESSAGE_SENT, TimelineKind.ASSISTANT_MESSAGE_SENT),
+    "compactions": (TimelineKind.COMPACTION_REQUESTED, TimelineKind.COMPACTION_COMPLETED),
     "waits": (TimelineKind.AWAITING_INPUT_STARTED, TimelineKind.AWAITING_INPUT_ENDED),
     "settings": (TimelineKind.SETTINGS_CHANGED,),
     "organization": (

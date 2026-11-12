@@ -72,6 +72,23 @@ class TurnEndedData(NamedTuple):
     input_origins: list | None = None
 
 
+class CompactionRequestedData(NamedTuple):
+    # The instructions given with the command (``/compact <instructions>``, Claude Code only), shown like a message
+    # text, else None.
+    text: str | None = None
+    # Where the request was seen: ``send`` (TwiCC delivered it, recorded at once) or ``source`` (only its line in the
+    # session file showed it, typed outside TwiCC). A source line never doubles a send.
+    source: str = "send"
+
+
+class CompactionCompletedData(NamedTuple):
+    # ``manual`` (asked for) or ``auto`` (the CLI compacted on its own), None when unknown.
+    trigger: str | None = None
+    # The summary the compaction wrote, shown like a message text; None when the provider keeps it unreadable
+    # (Codex encrypts it).
+    text: str | None = None
+
+
 class AwaitingInputStartedData(NamedTuple):
     request_type: str | None = None
     tool_name: str | None = None
@@ -142,6 +159,8 @@ PAYLOAD_TYPES: dict[str, type | None] = {
     TimelineKind.ASSISTANT_MESSAGE_SENT: MessageSentData,
     TimelineKind.TURN_STARTED: TurnStartedData,
     TimelineKind.TURN_ENDED: TurnEndedData,
+    TimelineKind.COMPACTION_REQUESTED: CompactionRequestedData,
+    TimelineKind.COMPACTION_COMPLETED: CompactionCompletedData,
     TimelineKind.AWAITING_INPUT_STARTED: AwaitingInputStartedData,
     TimelineKind.AWAITING_INPUT_ENDED: AwaitingInputEndedData,
     TimelineKind.ARCHIVED_STARTED: None,

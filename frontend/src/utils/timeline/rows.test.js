@@ -379,3 +379,14 @@ test('a turn alone with its start not on the page is kept even with nothing insi
     const rows = build([turnEv('turn.ended', 40)], { turnRail: true, turnsBelow: { a: Date.parse('2026-10-14T11:59:00.000Z') } })
     assert.equal(rows.filter((row) => row.type === 'event').length, 1)
 })
+
+test('compaction events alone do not make a turn worth a rail (the turn Codex opens for a /compact)', () => {
+    const events = [
+        turnEv('turn.ended', 40), turnEv('compaction.completed', 30), turnEv('compaction.requested', 20), turnEv('turn.started', 10),
+    ]
+    const kinds = build(events, { turnRail: true }).filter((row) => row.type === 'event').map((row) => `${row.event.kind}:${row.rail ? row.rail.role : '-'}`)
+    assert.deepEqual(kinds, ['compaction.completed:-', 'compaction.requested:-'])
+    // With a real event in it, the turn stays, and the compaction is on its rail.
+    const withMessage = [events[0], turnEv('assistant_message.sent', 35), ...events.slice(1)]
+    assert.equal(build(withMessage, { turnRail: true }).filter((row) => row.type === 'event').length, 5)
+})

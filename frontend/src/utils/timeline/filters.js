@@ -23,6 +23,7 @@ export const FAMILIES = [
     { value: 'processes', get label() { return i18n.global.t('session.timeline.filters.processes') }, get hint() { return i18n.global.t('session.timeline.filters.startedStopped') } },
     { value: 'turns', get label() { return i18n.global.t('session.timeline.filters.turns') }, get hint() { return i18n.global.t('session.timeline.filters.startedEnded') } },
     { value: 'messages', get label() { return i18n.global.t('session.timeline.filters.messages') }, get hint() { return i18n.global.t('session.timeline.filters.messagesHint') } },
+    { value: 'compactions', get label() { return i18n.global.t('session.timeline.filters.compactions') }, get hint() { return i18n.global.t('session.timeline.filters.requestedCompleted') } },
     { value: 'waits', get label() { return i18n.global.t('session.timeline.filters.waitingYou') }, get hint() { return i18n.global.t('session.timeline.filters.approvalsQuestions') } },
     { value: 'settings', get label() { return i18n.global.t('session.timeline.filters.settings') }, get hint() { return i18n.global.t('session.timeline.filters.settingsHint') } },
     { value: 'organization', get label() { return i18n.global.t('session.timeline.filters.organization') }, get hint() { return i18n.global.t('session.timeline.filters.organizationHint') } },

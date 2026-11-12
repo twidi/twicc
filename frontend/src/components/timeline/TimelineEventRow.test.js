@@ -12,6 +12,7 @@ import { setPcmStreamPlayerFactory } from '../../utils/pcmStreamPlayer.js'
 import { declarationsOf } from '../../../tests/helpers/cssDeclarations.js'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
 import * as describeEventModule from '../../utils/timeline/describeEvent.js'
+import * as messageSnapshotModule from '../../utils/timeline/messageSnapshot.js'
 import * as filtersModule from '../../utils/timeline/filters.js'
 import * as partsModule from '../../utils/timeline/parts.js'
 import { buildTimelineRows } from '../../utils/timeline/rows.js'
@@ -69,6 +70,7 @@ const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url),
     '../../stores/textToSpeech': speechModule,
     '../../constants': { SUMMARY_MIN_CHARS: 500 }, '../../utils/summaryIcon': { SUMMARY_ICON_SRC: 'summary.svg' }, '../../stores/data': { useDataStore: () => dataStore },
     '../../utils/timeline/describeEvent': describeEventModule,
+    '../../utils/timeline/messageSnapshot': messageSnapshotModule,
     '../project/ProjectBadge.vue': ProjectBadge,
     './TimelineSessionMention.vue': Mention,
     './TimelineEventLine.vue': Line,
@@ -987,4 +989,18 @@ test('a recycled timeline row collapses the previous message before it shows the
     assert.equal(descendants(root, node => node.type === 'article').length, 0)
     assert.match(textOf(root), /Second final/)
     assert.doesNotMatch(textOf(root), /First final/)
+})
+
+test('a compaction shows its text like a message, keeps its tag, and offers no speech nor summary', async (t) => {
+    const completed = await render(t, [make('compaction.completed', { data: { trigger: 'manual', text: 'The **summary** so far.' } })])
+    const [label] = byClass(completed, 'timeline-message-label')
+    assert.match(textOf(label), /^Compaction completed/)
+    assert.deepEqual(byClass(completed, 'timeline-tag').map(textOf), ['manual'])
+    assert.equal(byClass(completed, 'timeline-row-message').length, 1)
+    assert.equal(byClass(completed, 'timeline-message-speech').length, 0)
+
+    const requested = await render(t, [make('compaction.requested', { data: { text: null, source: 'send' } })])
+    assert.equal(byClass(requested, 'timeline-message-label').length, 0, 'no instructions: a plain line')
+    assert.equal(byClass(requested, 'timeline-row-message').length, 0, 'and no room kept for a text')
+    assert.match(textOf(byClass(requested, 'timeline-wording')[0]), /Compaction requested/)
 })

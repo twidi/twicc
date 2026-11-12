@@ -15,7 +15,9 @@ from twicc.core.enums import ItemKind
 from twicc.core.models import LogicalTurn, Session, SessionItem, SessionType, TimelineDecision, TimelineEvent, TimelineKind
 from twicc.core.services.message_sources import _canonical, _dedupe_claude_records, _groups, _read
 from twicc.core.services.session_timeline import record_event_sync
+from twicc.core.services.timeline_compactions import capture_source_compaction_request
 from twicc.providers.helpers import get_provider_helpers
+from twicc.providers.message_text import parse_compaction_request
 from twicc.request_origin import RequestOrigin, SYSTEM_ORIGIN, origin_from_payload
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,12 @@ def _capture(session, records, *, timeline_since, verified=(), eligible=False, i
     if identity is None:
         return
     aliases = list(dict.fromkeys(ref for _, _, refs in records for ref in refs))
+    if user and parse_compaction_request(text, session.provider) is not None:
+        # A /compact command is a compaction request, never a message (timeline_compactions.py).
+        origin = _input_origin(session, first, aliases, input_origins) or origin_from_payload(selected[0][1].get('_origin'))
+        capture_source_compaction_request(session, text=text, occurred_at=first.timestamp, identity=identity,
+                                          origin=origin)
+        return
     kind = TimelineKind.USER_MESSAGE_SENT if user else TimelineKind.ASSISTANT_MESSAGE_SENT
     digest = hashlib.sha256(orjson.dumps([session.provider, kind, identity.kind, identity.native_id])).hexdigest()
     # A user role alone proves no sender. Match the exact outgoing identity to
@@ -176,6 +184,8 @@ def capture_message_context(session, *, before, occurred_at, input_origins=(), v
                 line = group[0][0].line_num if group else item.line_num
             elif item.kind == ItemKind.USER_MESSAGE:
                 text = helpers.extract_timeline_text_from_parsed(parsed)
+                if parse_compaction_request(text, session.provider) is not None:
+                    continue
                 origin = _input_origin(session, item, refs, input_origins) or origin_from_payload(parsed.get('_origin'))
                 notice = text and text.lstrip().startswith(SHELL_NOTICE_HEADER)
                 if origin is not None and origin.actor not in ('user', 'system'):

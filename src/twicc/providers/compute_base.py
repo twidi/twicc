@@ -4435,6 +4435,11 @@ class BaseSessionCompute:
                     record_indexed_messages(session.id, new_line_nums=updates.new_line_nums,
                                             timeline_since=timeline_since, verified_final_refs=verified_final_refs,
                                             get_input_origins=get_input_origins)
+                    if updates.found_compact_summary:
+                        # Only a slice with a compaction summary pays the lookup.
+                        from twicc.core.services.timeline_compactions import record_compactions_completed
+                        record_compactions_completed(session, new_line_nums=updates.new_line_nums,
+                                                     timeline_since=timeline_since)
                     if updates.workflow_signals:
                         from twicc.core.services.timeline_workflows import record_workflow_signals
                         record_workflow_signals(session, updates.workflow_signals, timeline_since=timeline_since)

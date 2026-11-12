@@ -67,6 +67,9 @@ const SESSION_CREATED_BASE = {
 /** The tag of an automatic row (author label `automatic`), and of an automatic title. */
 const automaticTag = () => i18n.global.t('session.timeline.automatic')
 
+/** The tag of a completed compaction: asked for, or done by the CLI on its own. */
+const COMPACTION_TRIGGERS = { get manual() { return i18n.global.t('session.timeline.manual') }, get auto() { return automaticTag() } }
+
 // `agent`: the provider wrote the title in its own files (a /rename in the CLI, Codex naming its thread); the tag
 // names the provider, see titleSourceTag.
 const TITLE_SOURCE_TAGS = { get auto() { return automaticTag() } }
@@ -304,6 +307,11 @@ function describeKind(event, data, context, author) {
         case 'turn.ended': {
             const badge = describeBackgroundWork(data.background_work)
             return { icon: 'circle-check', severity: 'success', parts: [text(i18n.global.t('session.timeline.turnEnded'))], badge }
+        }
+        case 'compaction.requested': return { icon: 'compress', severity: 'neutral', ...plain(i18n.global.t('session.timeline.compactionRequested')) }
+        case 'compaction.completed': {
+            const trigger = lookup(COMPACTION_TRIGGERS, data.trigger)
+            return { icon: 'compress', severity: 'neutral', parts: [text(i18n.global.t('session.timeline.compactionCompleted'))], tags: [trigger ?? null], saysAutomatic: true }
         }
         case 'awaiting_input.started': return describeAwaiting(event, data, 'started')
         case 'awaiting_input.ended': return describeAwaiting(event, data, 'ended')

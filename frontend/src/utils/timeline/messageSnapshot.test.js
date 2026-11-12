@@ -50,3 +50,10 @@ test('unknown kinds and malformed payloads have safe empty fallbacks', () => {
         assert.equal(typeof vm.text, 'string')
     }
 })
+
+test('a compaction shows its text like a message: the instructions as the user, the summary as the assistant', () => {
+    assert.equal(describeMessageSnapshot('compaction.requested', { text: 'Keep **X**' }).role, 'user')
+    assert.equal(describeMessageSnapshot('compaction.completed', { text: 'Summary' }).role, 'assistant')
+    assert.equal(describeMessageSnapshot('compaction.completed', { text: null }).expandable, false)
+    assert.equal(describeMessageSnapshot('turn.ended', { text: 'x' }).role, null)
+})

@@ -28,6 +28,7 @@ import { SUMMARY_ICON_SRC } from '../../utils/summaryIcon'
 import { RouterLink } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { describeEvent } from '../../utils/timeline/describeEvent'
+import { showsMessageText } from '../../utils/timeline/messageSnapshot'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import TimelineSessionMention from './TimelineSessionMention.vue'
 import TimelineEventLine from './TimelineEventLine.vue'
@@ -57,7 +58,8 @@ const identity = computed(() => props.row.identity)
 // A turn drawn as a rail (rows.js): its boundaries are curved ends of the line, the other events sit on it.
 const rail = computed(() => props.row.rail ?? null)
 const railEnd = computed(() => (rail.value?.role === 'end' || rail.value?.role === 'start' ? rail.value.role : null))
-const isMessage = computed(() => ['user_message.sent', 'assistant_message.sent'].includes(props.row.event.kind))
+// A message, or an event that shows a text like one (the instructions of a /compact, a compaction summary).
+const isMessage = computed(() => showsMessageText(props.row.event.kind))
 const hasMessageText = computed(() => isMessage.value && typeof props.row.event.data?.text === 'string' && !!props.row.event.data.text.trim())
 const messageExpanded = ref(false)
 const summary = useMessageSummary(() => props.row.event.kind === 'assistant_message.sent'
@@ -170,7 +172,7 @@ function toggleSession() {
                         class="timeline-message-chevron"
                         :name="messageExpanded ? 'chevron-up' : 'chevron-down'"
                         aria-hidden="true"
-                    ></wa-icon></button>
+                    ></wa-icon></button><template v-for="tag in vm.tags" :key="tag">{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ tag }}</wa-tag></template>
                     <TextToSpeechButton
                         v-if="row.event.kind === 'assistant_message.sent'"
                         class="timeline-message-speech"
@@ -200,7 +202,7 @@ function toggleSession() {
                 </template>
             </TimelineEventLine>
             <TimelineMessage
-                v-if="isMessage"
+                v-if="hasMessageText"
                 v-model:expanded="messageExpanded"
                 class="timeline-row-message"
                 :event-id="row.event.id"
@@ -374,6 +376,20 @@ function toggleSession() {
     margin-inline-start: var(--wa-space-2xs);
     font-size: 0.75em;
     color: var(--wa-color-text-quiet);
+}
+
+/* The tags of a text event (a compaction's "manual" / "automatic"), after its label: the look of TimelineEventLine's
+   tags, whose scoped rule does not reach this slot content. */
+.timeline-tag {
+    vertical-align: baseline;
+    font-weight: var(--wa-font-weight-normal);
+    height: auto;
+    line-height: 1.2;
+    padding-block: 0.1em;
+    padding-inline: 0.5em;
+    margin-inline-start: 0.25em;
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 .timeline-message-speech,

@@ -12,9 +12,23 @@ function plainText(tokens) {
     }).join('')
 }
 
+/** The events whose `data.text` is shown like a message, with the role of that text. */
+const TEXT_ROLES = {
+    'user_message.sent': 'user',
+    'assistant_message.sent': 'assistant',
+    // The instructions of a /compact, and the summary a compaction wrote.
+    'compaction.requested': 'user',
+    'compaction.completed': 'assistant',
+}
+
+/** Whether the events of this kind show their `data.text` like a message. */
+export function showsMessageText(kind) {
+    return Object.hasOwn(TEXT_ROLES, kind)
+}
+
 /** Describe only saved message events. The kind identifies the role; the event origin does not. */
 export function describeMessageSnapshot(kind, data) {
-    const role = kind === 'user_message.sent' ? 'user' : kind === 'assistant_message.sent' ? 'assistant' : null
+    const role = Object.hasOwn(TEXT_ROLES, kind) ? TEXT_ROLES[kind] : null
     const text = role && data && typeof data === 'object' && !Array.isArray(data) && typeof data.text === 'string' ? data.text : ''
     const expandable = text.trim().length > 0
     const lines = expandable ? plainText(markdown.parse(text, {})).split(/\n+/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean) : []

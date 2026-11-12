@@ -2408,6 +2408,8 @@ class TimelineKind(models.TextChoices):
     ASSISTANT_MESSAGE_SENT = "assistant_message.sent", "Assistant message sent"
     TURN_STARTED = "turn.started", "Turn started"
     TURN_ENDED = "turn.ended", "Turn ended"
+    COMPACTION_REQUESTED = "compaction.requested", "Compaction requested"
+    COMPACTION_COMPLETED = "compaction.completed", "Compaction completed"
     AWAITING_INPUT_STARTED = "awaiting_input.started", "Awaiting input started"
     AWAITING_INPUT_ENDED = "awaiting_input.ended", "Awaiting input ended"
     ARCHIVED_STARTED = "archived.started", "Archived started"

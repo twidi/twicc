@@ -66,7 +66,8 @@ def as_mapping(row):
 def test_the_keys_and_their_order():
     assert VIEWS == ("all", "messages", "without_turns", "waits_problems")
     assert tuple(FAMILIES) == (
-        "sessions", "processes", "turns", "messages", "waits", "settings", "organization", "workflows", "twicc",
+        "sessions", "processes", "turns", "messages", "compactions", "waits", "settings", "organization", "workflows",
+        "twicc",
     )
     assert AUTHORS == ("unknown", "automatic", "you", "agent_cli_mcp", "external_mcp", "session_agent")
 

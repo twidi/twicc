@@ -749,6 +749,18 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             return f"{command.name} {args}" if args else command.name
         return clean_message_text(text)
 
+    def compaction_summary_from_parsed(self, parsed: dict) -> str | None:
+        # The ``isCompactSummary`` user line: its message text is the summary.
+        return self.extract_timeline_text_from_parsed(parsed).strip() or None
+
+    def compaction_trigger_from_parsed(self, parsed: dict) -> str | None:
+        # The ``system`` / ``compact_boundary`` line written just before the summary.
+        if parsed.get("type") != "system" or parsed.get("subtype") != "compact_boundary":
+            return None
+        metadata = parsed.get("compactMetadata")
+        trigger = metadata.get("trigger") if isinstance(metadata, dict) else None
+        return trigger if trigger in ("manual", "auto") else None
+
     def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
         from twicc.agent.completion_types import NativeMessageRef
 

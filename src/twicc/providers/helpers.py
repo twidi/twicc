@@ -855,6 +855,7 @@ class BaseProviderHelpers:
         parse of the same string.
         """
         from twicc.core.content_storage.readers import load_current
+        from twicc.providers.message_text import parse_compaction_request
 
         out: list[IndexableMessage] = []
         for item in items:
@@ -866,6 +867,9 @@ class BaseProviderHelpers:
             if not text:
                 continue
             from_role = "user" if item.kind == ItemKind.USER_MESSAGE else "assistant"
+            # A compaction request is a command, not a message: never searched (the composer history keeps it).
+            if from_role == "user" and parse_compaction_request(text, self.provider) is not None:
+                continue
             out.append(IndexableMessage(
                 line_num=item.line_num,
                 text=text,
@@ -928,8 +932,19 @@ class BaseProviderHelpers:
         raise NotImplementedError
 
     def extract_timeline_text_from_parsed(self, parsed: dict) -> str:
-        """Return message text verbatim, without search or title normalization."""
+        """Return the message text for the timeline: its Markdown kept, the CLI and TwiCC tags out of it.
+
+        See ``providers/message_text.py``. Unlike the indexed text, no other normalization.
+        """
         raise NotImplementedError
+
+    def compaction_summary_from_parsed(self, parsed: dict) -> str | None:
+        """The summary text a compaction summary line carries in clear, else None (the default: no readable summary)."""
+        return None
+
+    def compaction_trigger_from_parsed(self, parsed: dict) -> str | None:
+        """``manual`` or ``auto`` when ``parsed`` is a line that says how a compaction was triggered, else None."""
+        return None
 
     def is_final_assistant_message(self, parsed: dict) -> bool | None:
         """Is this line the assistant's *final* message of its turn?

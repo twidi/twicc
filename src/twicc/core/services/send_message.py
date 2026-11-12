@@ -293,6 +293,11 @@ async def _send(payload: dict, *, retain_refs: Callable[[], None]) -> tuple[Send
             return _rejected("attachments", code, attachment_drop.message_with_names(e)), False
         return _rejected("session", code, str(e), reason=e.reason if isinstance(e, AgentStartError) else None), False
 
+    # A /compact is in the timeline as soon as it is delivered, not when the CLI writes its line (after the work).
+    from twicc.core.services.timeline_compactions import record_compaction_request_sent
+    await record_compaction_request_sent(session_id=session_id, project_id=session.project_id, provider=provider,
+                                         text=text)
+
     manager_owns_refs = delivered is False
     if manager_owns_refs:
         # Commit ownership before awaiting a receipt: caller cancellation must not

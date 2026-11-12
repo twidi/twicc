@@ -1441,6 +1441,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     **({"async_questions": content.get("async_questions"), "request_id": request_id,
                         "send_origin": "human"} if provider == Provider.CODEX else {}),
                 )
+                # A /compact is in the timeline as soon as it is delivered (see timeline_compactions.py).
+                from twicc.core.services.timeline_compactions import record_compaction_request_sent
+                await record_compaction_request_sent(session_id=session_id, project_id=project_id, provider=provider,
+                                                     text=text)
             else:
                 # New session: delegate to the shared service so the WS path
                 # and the CLI watcher path stay byte-for-byte aligned.

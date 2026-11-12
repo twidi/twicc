@@ -134,11 +134,14 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
 
 const TURN_STARTED = 'turn.started'
 const TURN_ENDED = 'turn.ended'
+/** Events that never make a turn non-empty: the turn Codex opens for a /compact holds only them. */
+const COMPACTION_KINDS = new Set(['compaction.requested', 'compaction.completed'])
+
 /**
  * The events without the two boundaries of each EMPTY turn: a finished turn with no other event of its session
- * between its start and its end (a tool-only turn, the turn that follows a compaction). It says nothing the rail
- * could show, so it is left out, as if it never happened. A running turn, and a turn whose start is not on the
- * page, stay. Pure: the input is not changed.
+ * between its start and its end, compactions aside (a tool-only turn, the turn that follows a Claude compaction, the
+ * turn Codex opens for a /compact). It says nothing the rail could show, so it is left out, as if it never happened.
+ * A running turn, and a turn whose start is not on the page, stay. Pure: the input is not changed.
  */
 function withoutEmptyTurns(events) {
     const open = new Map() // session id -> the start of its turn and the number of events seen inside
@@ -153,7 +156,7 @@ function withoutEmptyTurns(events) {
             const turn = open.get(sessionId)
             if (turn && turn.inside === 0) { dropped.add(turn.started); dropped.add(event) }
             open.delete(sessionId)
-        } else if (open.has(sessionId)) {
+        } else if (open.has(sessionId) && !COMPACTION_KINDS.has(event.kind)) {
             open.get(sessionId).inside += 1
         }
     }
