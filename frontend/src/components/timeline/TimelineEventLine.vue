@@ -51,7 +51,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
             <slot name="wording"><span class="timeline-wording">
                 <TimelineWordingPart v-for="(part, index) in wording.lead" :key="index" :part="part" />
                 <span v-if="vm.tags.length" class="timeline-tag-glue">
-                    <TimelineWordingPart v-if="wording.last" :part="wording.last" /><template v-for="tag in vm.tags" :key="tag">{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ tag }}</wa-tag></template>
+                    <TimelineWordingPart v-for="(part, index) in wording.last ?? []" :key="`last-${index}`" :part="part" /><template v-for="tag in vm.tags" :key="tag">{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ tag }}</wa-tag></template>
                 </span>
             </span></slot>
             <template v-if="vm.badge">{{ ' ' }}<wa-badge variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge></template>

@@ -38,20 +38,32 @@ export function mergeTextParts(parts) {
 
 /**
  * The last word of the wording, apart from the rest, so the row can keep a tag glued to it (they wrap together).
+ * A word can span several parts when no space separates them: in "(Bash)" the value and the parentheses are three
+ * parts, and the glued run must hold all of them, or the tag would drag the closing ")" alone to the next line.
  *
  * @param {Array<Object>} parts
- * @returns {{lead: Array<Object>, last: Object|null}} `last` is a part of the same type holding the last word (and its
- *   trailing spaces); null when the last part is not text nor a value, or holds no word: `lead` is then `parts`.
+ * @returns {{lead: Array<Object>, last: Array<Object>|null}} `last` is the run of parts holding the last word (and
+ *   its trailing spaces), in order; null when the last part is not text nor a value, or holds no word: `lead` is
+ *   then `parts`.
  */
 export function splitLastWord(parts) {
-    const last = parts[parts.length - 1]
-    if (!last || (last.type !== 'text' && last.type !== 'value')) return { lead: parts, last: null }
-    const match = /^([\s\S]*\s)?(\S+\s*)$/.exec(last.text)
-    if (!match) return { lead: parts, last: null }
-    const head = match[1] ?? ''
-    const lead = parts.slice(0, -1)
-    if (head) lead.push({ ...last, text: head })
-    return { lead, last: { ...last, text: match[2] } }
+    const lead = [...parts]
+    const last = []
+    while (lead.length) {
+        const part = lead[lead.length - 1]
+        if (part.type !== 'text' && part.type !== 'value') break
+        // Past the first part, a space at its end ends the word: the run is complete.
+        if (last.length && /\s$/.test(part.text)) break
+        const match = /^([\s\S]*\s)?(\S+\s*)$/.exec(part.text)
+        if (!match) break
+        lead.pop()
+        const head = match[1] ?? ''
+        if (head) lead.push({ ...part, text: head })
+        last.unshift({ ...part, text: match[2] })
+        // A part not taken whole holds the start of the word: the run is complete.
+        if (head) break
+    }
+    return { lead, last: last.length ? last : null }
 }
 
 /** Build localized prose around typed rich parts without exposing data as message syntax. */

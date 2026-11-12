@@ -18,14 +18,25 @@ test('adjacent text parts are glued; other parts stay where they are', () => {
 
 test('splitLastWord takes the last word off the last text or value part, so a tag can be glued to it', () => {
     assert.deepEqual(splitLastWord([textPart('Renamed '), valuePart('Old'), arrowPart(), valuePart('New long title')]), {
-        lead: [textPart('Renamed '), valuePart('Old'), arrowPart(), valuePart('New long ')], last: valuePart('title'),
+        lead: [textPart('Renamed '), valuePart('Old'), arrowPart(), valuePart('New long ')], last: [valuePart('title')],
     })
-    assert.deepEqual(splitLastWord([textPart('Titled '), valuePart('One')]), { lead: [textPart('Titled ')], last: valuePart('One') })
-    assert.deepEqual(splitLastWord([textPart('Title cleared')]), { lead: [textPart('Title ')], last: textPart('cleared') })
+    assert.deepEqual(splitLastWord([textPart('Titled '), valuePart('One')]), { lead: [textPart('Titled ')], last: [valuePart('One')] })
+    assert.deepEqual(splitLastWord([textPart('Title cleared')]), { lead: [textPart('Title ')], last: [textPart('cleared')] })
     // Trailing spaces stay with the word; a part that is not text (a mention, an arrow) or empty is left whole.
-    assert.deepEqual(splitLastWord([textPart('Done  ')]), { lead: [], last: textPart('Done  ') })
+    assert.deepEqual(splitLastWord([textPart('Done  ')]), { lead: [], last: [textPart('Done  ')] })
     const mention = { type: 'session', mention: { title: 'x' } }
     assert.deepEqual(splitLastWord([textPart('by '), mention]), { lead: [textPart('by '), mention], last: null })
     assert.deepEqual(splitLastWord([textPart('')]), { lead: [textPart('')], last: null })
     assert.deepEqual(splitLastWord([]), { lead: [], last: null })
+    // A word spread over parts with no space between them stays whole: "(Bash)" is one run.
+    assert.deepEqual(splitLastWord([textPart('Denied ('), valuePart('Bash'), textPart(')')]), {
+        lead: [textPart('Denied ')], last: [textPart('('), valuePart('Bash'), textPart(')')],
+    })
+    assert.deepEqual(splitLastWord([textPart('Denied '), valuePart('Bash'), textPart(' now')]), {
+        lead: [textPart('Denied '), valuePart('Bash'), textPart(' ')], last: [textPart('now')],
+    })
+    // The run stops at a part that is not text nor a value.
+    assert.deepEqual(splitLastWord([valuePart('Old'), arrowPart(), valuePart('New'), textPart(')')]), {
+        lead: [valuePart('Old'), arrowPart()], last: [valuePart('New'), textPart(')')],
+    })
 })

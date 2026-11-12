@@ -720,7 +720,7 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
         const rule = declarationsOf(style, selector)
         assert.deepEqual([rule.get('-webkit-user-select'), rule.get('user-select')], ['text', 'text'], selector)
     }
-    assert.match(row, /<TimelineWordingPart v-if="wording\.last" :part="wording\.last" \/><template v-for="tag in vm\.tags" :key="tag">\{\{ ' ' \}\}<wa-tag /)
+    assert.match(row, /<TimelineWordingPart v-for="\(part, index\) in wording\.last \?\? \[\]" :key="`last-\$\{index\}`" :part="part" \/><template v-for="tag in vm\.tags" :key="tag">\{\{ ' ' \}\}<wa-tag /)
     const tag = declarationsOf(style, '.timeline-tag')
     assert.equal(tag.get('vertical-align'), 'baseline')
     assert.equal(tag.get('font-weight'), 'var(--wa-font-weight-normal)', 'not the semibold of an instance wording')
