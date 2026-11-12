@@ -226,6 +226,9 @@ function toggleSession() {
        both): an event line of a session is indented by their sum, so its icon sits under the title start. */
     --timeline-provider-width: 1.25rem;
     --timeline-provider-gap: var(--wa-space-xs);
+    /* The indent of the event lines under the title: less than the title's own (provider icon + gap), so the icons of
+       the events sit closer to the card edge. */
+    --timeline-event-indent: 1rem;
     /* The block card: its distance to the panel edges, its inner padding, the gap between two blocks. */
     --timeline-card-inset: var(--wa-space-m);
     --timeline-card-padding: var(--wa-space-s);
@@ -280,7 +283,7 @@ function toggleSession() {
    another block (or page). The two ends of the turn are TimelineTurnLine.vue. */
 .timeline-row-body {
     /* The line: the middle of the icon column (the icon box is 1.25rem wide, under the session title start). */
-    --timeline-rail-x: calc(var(--timeline-provider-width) + var(--timeline-provider-gap) + 0.625rem - 1px);
+    --timeline-rail-x: calc(var(--timeline-event-indent) + 0.625rem - 1px);
     --timeline-rail-color: color-mix(in srgb, var(--wa-color-text-quiet) 55%, transparent);
     /* The middle of the icon of an event line, and the room the line leaves around it. */
     --timeline-rail-icon-y: 0.85rem;
@@ -344,7 +347,7 @@ function toggleSession() {
 
 /* Align the saved message with the event wording. The scroller measures its expanded height normally. */
 .timeline-row-message {
-    margin-inline-start: calc(var(--timeline-provider-width) + var(--timeline-provider-gap) + 1.25rem + var(--wa-space-s));
+    margin-inline-start: calc(var(--timeline-event-indent) + 1.25rem + var(--wa-space-s));
     padding-block-end: var(--wa-space-xs);
 }
 

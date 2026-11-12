@@ -50,7 +50,7 @@ const showsText = computed(() => sentence.value !== '')
 <style scoped>
 .timeline-turn-line {
     /* The icon box, its gap, the indent under the session title: the text lines up with the event wording. */
-    --timeline-turn-text-start: calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem) + 1.25rem + var(--wa-space-s));
+    --timeline-turn-text-start: calc(var(--timeline-event-indent, 0rem) + 1.25rem + var(--wa-space-s));
     position: relative;
     display: flex;
     align-items: flex-start;

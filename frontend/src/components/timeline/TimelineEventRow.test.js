@@ -546,7 +546,7 @@ test('the layout CSS: a fixed time column that never wraps, a wrapping text colu
     assert.deepEqual(['content', 'display', 'height', 'overflow', 'visibility', 'white-space'].map((name) => sizer.get(name)),
         ['var(--timeline-time-sizer, "")', 'block', '0', 'hidden', 'hidden', 'pre'])
     const indented = declarationsOf(row, '.timeline-event-line--indented')
-    assert.equal(indented.get('--timeline-line-indent'), 'calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem))')
+    assert.equal(indented.get('--timeline-line-indent'), 'var(--timeline-event-indent, calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem)))')
     assert.equal(indented.get('padding-inline-start'), 'var(--timeline-line-indent)')
     const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
     const title = declarationsOf(mention, '.timeline-session--truncate .timeline-session-title')

@@ -97,7 +97,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
 }
 
 .timeline-event-line--indented {
-    --timeline-line-indent: calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem));
+    --timeline-line-indent: var(--timeline-event-indent, calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem)));
     padding-inline-start: var(--timeline-line-indent);
 }
 
