@@ -151,8 +151,7 @@ class CodexAgentManager(BaseAgentManager):
         in-memory ``title_seen`` per process and carries no "custom title"
         flag, so a curated name set via ``thread/name/set`` is silently
         reverted on the first turn's append. TwiCC keeps its own
-        ``Session.title`` (the live sync never overwrites a non-null title and
-        the boot import skips Codex defaults), but the Codex side — and any
+        ``Session.title`` during live sync, but the Codex side — and any
         other client or future recovery — would lose the name. So once the
         first turn has run, we push our title back.
 
@@ -180,13 +179,13 @@ class CodexAgentManager(BaseAgentManager):
             return
 
         task = asyncio.create_task(
-            self._repush_codex_title_after_delay(session_id, title),
+            self._repush_codex_title_after_delay(session_id),
             name=f"codex-resume-title-reassert-{session_id}",
         )
         self._pending_title_verify_tasks[session_id] = task
 
-    async def _repush_codex_title_after_delay(self, session_id: str, title: str) -> None:
-        """Sleep, then unconditionally re-push ``title`` as the Codex thread name.
+    async def _repush_codex_title_after_delay(self, session_id: str) -> None:
+        """Sleep, then publish the current session title as the Codex thread name.
 
         The first turn after a cold resume re-derives ``threads.title``
         deterministically, so we skip the read-back verify and push our title
@@ -195,18 +194,30 @@ class CodexAgentManager(BaseAgentManager):
         pushing earlier would be overwritten (``title_seen`` only latches once
         the first append has been observed).
 
+        Read after the delay so an automatic or manual rename during the wait
+        wins. If a newer title arrives during the SDK write, publish it too.
+
         One-shot: self-cleans from ``_pending_title_verify_tasks`` and is
         cancelled if the agent dies before the delay elapses
         (:meth:`BaseAgentManager._cancel_pending_title_verify`).
         """
+        from twicc.core.models import Session
+
         with provider_log_context(self.provider):
             try:
                 await asyncio.sleep(_RESUME_TITLE_REPUSH_DELAY)
-                await get_provider_helpers(self.provider).rename_session(session_id, title)
-                logger.info(
-                    "Codex post-resume title re-push for session %s: %r",
-                    session_id, title,
-                )
+                titles = Session.objects.filter(id=session_id).values_list("title", flat=True)
+                title = await titles.afirst()
+                while title:
+                    await get_provider_helpers(self.provider).rename_session(session_id, title)
+                    logger.info(
+                        "Codex post-resume title re-push for session %s: %r",
+                        session_id, title,
+                    )
+                    current_title = await titles.afirst()
+                    if current_title == title:
+                        break
+                    title = current_title
             except asyncio.CancelledError:
                 raise
             except Exception as e:
