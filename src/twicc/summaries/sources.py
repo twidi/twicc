@@ -15,6 +15,7 @@ from twicc.inline_artifacts.publications import (
     _code_ranges, _colon_block, _comment_block, _comment_inline, _line_offsets, parse_inline_artifact_blocks,
 )
 from twicc.providers.helpers import get_provider_helpers
+from twicc.providers.message_text import without_artifact_labels
 from twicc.core.ui_messages import UiMessageError
 
 
@@ -58,6 +59,8 @@ class SummarySource(NamedTuple):
 
 
 def _input_text(text: str) -> str:
+    # A message saved by the timeline describes a publication (`[artifact: title]`) where an older one holds its tag.
+    text = without_artifact_labels(text)
     for block in reversed(parse_inline_artifact_blocks(text)):
         text = text[:block.start] + text[block.end:]
     # Match controls against a same-length view that hides literal code tags.

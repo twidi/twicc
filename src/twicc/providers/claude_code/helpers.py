@@ -33,6 +33,7 @@ from twicc.providers.helpers import (
 )
 
 from twicc.provider_homes import claude_plans_dir
+from twicc.providers.message_text import clean_message_text
 from .compute import extract_command, get_message_content, get_message_content_list, strip_markdown
 from .constants import (
     AGENT_SETTINGS_ALIASES as _AGENT_SETTINGS_ALIASES,
@@ -729,18 +730,24 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             if command.args:
                 return f"{command.name} {strip_markdown(command.args)}"
             return command.name
-        return text
+        return clean_message_text(text)
 
     def extract_timeline_text_from_parsed(self, parsed: dict) -> str:
         content = get_message_content(parsed)
         if isinstance(content, str):
-            return content
-        if not isinstance(content, list):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                block["text"] for block in content
+                if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+            )
+        else:
             return ""
-        return "\n".join(
-            block["text"] for block in content
-            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
-        )
+        # The same words as the search, but the Markdown of a command's arguments stays.
+        if command := extract_command(text.lstrip()):
+            args = (command.args or "").strip()
+            return f"{command.name} {args}" if args else command.name
+        return clean_message_text(text)
 
     def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
         from twicc.agent.completion_types import NativeMessageRef

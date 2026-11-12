@@ -194,7 +194,9 @@ def test_artifact_publications_are_removed_without_reading_files(live_session, m
     monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: pytest.fail('Artifact source file read'))
     assert content_length(tag) == 0
     result = resolve(f.session)
-    assert result.input_text.strip() == '' and result.canonical_text == tag
+    # The timeline text describes the publication; the summary input leaves that description out.
+    assert result.input_text.strip() == '' and result.canonical_text == '[artifact: Secret]'
+    assert content_length('[artifact: Secret]') == 0 and content_length('Texte\n[artifact: x]\nsuite') == len('Texte suite')
     assert result.content_chars == 0 and not result.eligible
     assert result.unavailable_reason == 'empty'
 

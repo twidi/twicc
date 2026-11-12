@@ -19,6 +19,7 @@ from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.enums import Provider
 from twicc.core.ui_messages import ui_message_text
 from twicc.pricing import FamilyPrices
+from twicc.providers.message_text import clean_message_text
 from twicc.providers.helpers import (
     AgentSettingCategory,
     AgentSettings,
@@ -749,10 +750,10 @@ class CodexHelpers(BaseProviderHelpers):
     # searchable text and as the title-suggest input.
 
     def extract_indexable_text_from_parsed(self, parsed: dict) -> str:
-        return user_message_text(parsed) or agent_message_text(parsed) or ""
+        return clean_message_text(user_message_text(parsed) or agent_message_text(parsed) or "")
 
     def extract_timeline_text_from_parsed(self, parsed: dict) -> str:
-        return user_message_text(parsed) or agent_message_text(parsed) or ""
+        return clean_message_text(user_message_text(parsed) or agent_message_text(parsed) or "")
 
     def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
         from twicc.agent.completion_types import NativeMessageRef

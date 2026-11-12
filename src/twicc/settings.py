@@ -405,7 +405,8 @@ CODEX_COMPUTE_VERSION = 58  # 58: timeline creation rows from the compute; 57: r
 # rebuild of the on-disk index at next startup.
 # v2 -> v3: added `hidden` and `spawned_by` fields (hidden-sessions feature).
 # v3 -> v4: added `spawn_root` field for full-tree filiation queries.
-CURRENT_SEARCH_VERSION = 4
+# v4 -> v5: the indexed text describes TwiCC's own tags (`[artifact: ...]`, `[image: ...]`) instead of holding them.
+CURRENT_SEARCH_VERSION = 5
 
 # Process auto-stop timeouts (in seconds)
 # Processes are automatically stopped if they remain in a state for too long

@@ -268,7 +268,8 @@ def test_claude_excluded_material_and_slash_arguments(live_session):
     local = {'type': 'system', 'subtype': 'local_command', 'timestamp': timezone.now().isoformat(),
              'content': '<local-command-stdout>local output</local-command-stdout>'}
     f.append(compaction, tool, thinking, pause, result, local, f.message('command', command, user=True))
-    assert f.texts() == [command]
+    # The command is written as the user typed it: its XML is unwrapped, the Markdown of its arguments stays.
+    assert f.texts() == ['/custom **bold**']
 
 
 def test_multiple_text_blocks_preserve_spaces(live_session):
