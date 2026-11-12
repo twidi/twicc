@@ -244,3 +244,120 @@ test('only the event rows have an event row key', () => {
     assert.equal(isEventRowKey('timeline-top'), false)
     assert.equal(isEventRowKey(undefined), false)
 })
+
+// ── Turn rails ─────────────────────────────────────────────────────────────────────────────────────────────
+// Events are newest first, like the list.
+const turnEv = (kind, time, session = 'a') => ev(`2026-10-14T12:00:${time}.000000Z`, session, { kind })
+const railOf = (rows) => rows.filter((row) => row.type === 'event').map((row) => (row.rail ? `${row.rail.role}:${row.rail.up ?? '-'}/${row.rail.down ?? '-'}` : 'none'))
+
+test('without the option, no row has a rail', () => {
+    const rows = build([turnEv('turn.ended', 30), turnEv('assistant_message.sent', 20), turnEv('turn.started', 10)])
+    assert.deepEqual(rows.filter((row) => row.type === 'event').map((row) => row.rail), [null, null, null])
+})
+
+test('a turn holds its two boundaries and every event of the session between them, joined by solid lines', () => {
+    const rows = build([
+        turnEv('process.ended', 40), turnEv('turn.ended', 30), turnEv('assistant_message.sent', 25), turnEv('user_message.sent', 20), turnEv('turn.started', 10),
+    ], { turnRail: true })
+    assert.deepEqual(railOf(rows), ['none', 'end:-/solid', 'inside:solid/solid', 'inside:solid/solid', 'start:solid/-'])
+})
+
+test('the end row carries the duration from the start row', () => {
+    const rows = build([turnEv('turn.ended', 40), turnEv('turn.started', 10)], { turnRail: true })
+    assert.equal(rows[1].rail.durationMs, 30000)
+    assert.equal(rows[1].rail.open, false)
+    assert.equal(rows[2].rail.durationMs, 30000)
+})
+
+test('a running turn (a start with no end) gets a synthetic top row that carries its clock', () => {
+    const rows = build([turnEv('assistant_message.sent', 30), turnEv('user_message.sent', 20), turnEv('turn.started', 10)], { turnRail: true })
+    assert.deepEqual(railOf(rows), ['end:-/solid', 'inside:solid/solid', 'inside:solid/solid', 'start:solid/-'])
+    const [top, , , start] = rows.filter((row) => row.type === 'event')
+    assert.equal(top.event.kind, 'turn.running')
+    assert.equal(top.key, "event-turn-running-a")
+    assert.equal(top.head, true, 'it opens the block, with the identity of the session')
+    assert.equal(top.event.session_id, 'a')
+    assert.equal(top.rail.open, true)
+    assert.equal(top.rail.durationMs, null)
+    assert.equal(top.rail.startedAtMs, Date.parse('2026-10-14T12:00:10.000Z'))
+    assert.equal(start.rail.open, true)
+})
+
+test('a session whose last boundary is an end has no synthetic row, and the events are not changed', () => {
+    const events = [turnEv('turn.ended', 30), turnEv('turn.started', 10)]
+    const copy = [...events]
+    const rows = build(events, { turnRail: true })
+    assert.equal(rows.filter((row) => row.type === 'event').length, 2)
+    assert.deepEqual(events, copy)
+    assert.equal(build([turnEv('turn.started', 10)], { turnRail: false }).filter((row) => row.type === 'event').length, 1)
+})
+
+test('the synthetic row comes only once per session, whatever the other sessions do', () => {
+    const rows = build([turnEv('assistant_message.sent', 40, 'b'), turnEv('assistant_message.sent', 30, 'a'), turnEv('turn.started', 20, 'a'), turnEv('turn.started', 10, 'b')], { turnRail: true })
+    assert.deepEqual(rows.filter((row) => row.type === 'event').filter((row) => row.event.kind === 'turn.running').map((row) => row.event.session_id), ['b', 'a'])
+})
+
+test('a turn cut by another session is dashed on both sides of the cut', () => {
+    const rows = build([
+        turnEv('assistant_message.sent', 40, 'a'), turnEv('assistant_message.sent', 35, 'b'), turnEv('user_message.sent', 30, 'a'), turnEv('turn.started', 20, 'a'),
+    ], { turnRail: true })
+    // The first block of `a` goes on below (dashed); the second one comes from above (dashed).
+    assert.deepEqual(railOf(rows), ['end:-/solid', 'inside:solid/dashed', 'none', 'inside:dashed/solid', 'start:solid/-'])
+})
+
+test('a turn whose start is not on the page continues below it, dashed, and has no duration', () => {
+    const rows = build([turnEv('turn.ended', 40), turnEv('assistant_message.sent', 30)], { turnRail: true })
+    assert.deepEqual(railOf(rows), ['end:-/solid', 'inside:solid/dashed'])
+    assert.equal(rows[1].rail.durationMs, null)
+})
+
+test('each session has its own turn: the events between its two boundaries are inside, whoever cuts the turn', () => {
+    const rows = build([
+        turnEv('turn.ended', 50, 'a'), turnEv('assistant_message.sent', 45, 'b'), turnEv('process.ended', 44, 'a'), turnEv('turn.started', 30, 'a'),
+        turnEv('user_message.sent', 20, 'b'), turnEv('turn.started', 10, 'b'),
+    ], { turnRail: true })
+    // `a`'s process.ended is between its two boundaries, so it is inside; `b`'s turn is running (synthetic top row) and cut by `a`.
+    assert.deepEqual(railOf(rows), ['end:-/dashed', 'end:-/solid', 'inside:solid/dashed', 'inside:dashed/solid', 'start:solid/-', 'inside:dashed/solid', 'start:solid/-'])
+})
+
+test('a day separator cuts a turn like another session does', () => {
+    const rows = build([
+        ev('2026-10-14T00:10:00.000000Z', 'a', { kind: 'assistant_message.sent' }), ev('2026-10-13T23:50:00.000000Z', 'a', { kind: 'turn.started' }),
+    ], { turnRail: true, dayKeyOf: (ms) => new Date(ms).toISOString().slice(0, 10) })
+    assert.deepEqual(railOf(rows), ['end:-/solid', 'inside:solid/dashed', 'start:dashed/-'])
+})
+
+test('an end row and a start row have their own height estimate', () => {
+    const rows = build([turnEv('turn.ended', 30), turnEv('turn.started', 10)], { turnRail: true })
+    assert.equal(estimateRowHeight(rows[1]), ROW_HEIGHT_ESTIMATES.head - ROW_HEIGHT_ESTIMATES.event + ROW_HEIGHT_ESTIMATES.turnEnd)
+    assert.equal(rows[1].rail.beforeStart, true)
+    assert.equal(estimateRowHeight(rows[2]), ROW_HEIGHT_ESTIMATES.turnStart + ROW_HEIGHT_ESTIMATES.blockEnd)
+})
+
+test('a session with no boundary on the page whose turn started below it is inside a running turn, started before the page', () => {
+    const below = Date.parse('2026-10-14T11:59:00.000Z')
+    const rows = build([turnEv('assistant_message.sent', 30), turnEv('user_message.sent', 20)], { turnRail: true, turnsBelow: { a: below } })
+    assert.deepEqual(railOf(rows), ['end:-/solid', 'inside:solid/solid', 'inside:solid/dashed'])
+    const top = rows.find((row) => row.type === 'event')
+    assert.equal(top.rail.open, true)
+    assert.equal(top.rail.startedAtMs, below)
+})
+
+test('a session with no boundary on the page and nothing below it is outside any turn', () => {
+    for (const turnsBelow of [null, {}, { a: null }, { b: Date.parse('2026-10-14T11:59:00.000Z') }]) {
+        const rows = build([turnEv('assistant_message.sent', 30), turnEv('user_message.sent', 20)], { turnRail: true, turnsBelow })
+        assert.deepEqual(railOf(rows), ['none', 'none'])
+    }
+})
+
+test('a turn whose end is on the page and whose start is below it has its duration from the server', () => {
+    const rows = build([turnEv('turn.ended', 40), turnEv('assistant_message.sent', 30)], { turnRail: true, turnsBelow: { a: Date.parse('2026-10-14T11:59:30.000Z') } })
+    assert.deepEqual(railOf(rows), ['end:-/solid', 'inside:solid/dashed'])
+    assert.equal(rows[1].rail.durationMs, 70000)
+    assert.equal(rows[1].rail.open, false)
+})
+
+test('turnsBelow is not read for a session whose turn starts on the page', () => {
+    const rows = build([turnEv('turn.ended', 30), turnEv('turn.started', 10)], { turnRail: true, turnsBelow: { a: Date.parse('2026-10-14T11:00:00.000Z') } })
+    assert.equal(rows[1].rail.durationMs, 20000)
+})

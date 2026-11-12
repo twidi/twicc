@@ -31,6 +31,7 @@ import { describeEvent } from '../../utils/timeline/describeEvent'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import TimelineSessionMention from './TimelineSessionMention.vue'
 import TimelineEventLine from './TimelineEventLine.vue'
+import TimelineTurnLine from './TimelineTurnLine.vue'
 import TimelineMessage from './TimelineMessage.vue'
 import TextToSpeechButton from '../ui/TextToSpeechButton.vue'
 
@@ -53,6 +54,9 @@ const speech = useTextToSpeechStore()
 
 const vm = computed(() => describeEvent(props.row.event, props.context))
 const identity = computed(() => props.row.identity)
+// A turn drawn as a rail (rows.js): its boundaries are curved ends of the line, the other events sit on it.
+const rail = computed(() => props.row.rail ?? null)
+const railEnd = computed(() => (rail.value?.role === 'end' || rail.value?.role === 'start' ? rail.value.role : null))
 const isMessage = computed(() => ['user_message.sent', 'assistant_message.sent'].includes(props.row.event.kind))
 const hasMessageText = computed(() => isMessage.value && typeof props.row.event.data?.text === 'string' && !!props.row.event.data.text.trim())
 const messageExpanded = ref(false)
@@ -107,6 +111,7 @@ function toggleSession() {
             'timeline-row--head': row.head,
             'timeline-row--last': row.last,
             'timeline-row--instance': row.instance,
+            'timeline-row--rail': !!rail,
         }]"
         :data-kind="vm.kind"
     >
@@ -136,69 +141,79 @@ function toggleSession() {
                 ><ProjectBadge :project-id="identity.projectId" /></RouterLink>
                 <span v-else class="timeline-project timeline-project--plain">{{ identity.projectId }}</span>
             </template>
-        </div><template v-if="identity">{{ ' ' }}</template><TimelineEventLine
-            :vm="vm"
-            :event-id="row.event.id"
-            :indented="!row.instance"
-            :instance="row.instance"
-            :author-run="row.authorRun ?? null"
+        </div><template v-if="identity">{{ ' ' }}</template><div
+            class="timeline-row-body"
+            :class="rail ? [`timeline-row-body--${rail.role}`, { 'timeline-row-body--before-start': rail.beforeStart }] : null"
+            :data-rail-up="rail?.up ?? null"
+            :data-rail-down="rail?.down ?? null"
         >
-            <template v-if="hasMessageText" #wording>
-                <button
-                    :id="messageLabelId"
-                    ref="messageToggleRef"
-                    type="button"
-                    class="timeline-wording timeline-message-label"
-                    :aria-expanded="messageExpanded ? 'true' : 'false'"
-                    :aria-controls="messageId"
-                    @click="messageExpanded = !messageExpanded"
-                >{{ messageLabel }}<wa-icon
-                    v-if="messageHasMore"
-                    class="timeline-message-chevron"
-                    :name="messageExpanded ? 'chevron-up' : 'chevron-down'"
-                    aria-hidden="true"
-                ></wa-icon></button>
-                <TextToSpeechButton
-                    v-if="row.event.kind === 'assistant_message.sent'"
-                    class="timeline-message-speech"
-                    appearance="plain"
-                    :text="summary.view === 'summary' ? (summary.entry?.text || '') : row.event.data.text"
-                    :original-text="row.event.data.text"
-                    :native-speech-request="summary.view === 'summary' ? summary.nativeSpeechRequest : null"
-                    :summary-ref="summary.view === 'summary' ? summary.playbackReference : null"
-                    :summary-identity="summary.identity"
-                    :disabled="summary.view === 'summary' && !summary.playbackReference && !reading"
-                    @summary-changed="summary.refreshSaved"
-                />
-                <wa-button
-                    v-if="showSummaryButton"
-                    class="timeline-message-summary"
-                    size="small"
-                    :variant="summary.view === 'summary' ? 'brand' : 'neutral'"
-                    appearance="plain"
-                    :disabled="summary.view !== 'summary' && !summary.canSummarize"
-                    :title="summary.toggleTitle"
-                    :aria-label="summary.toggleTitle"
-                    :aria-pressed="summary.view === 'summary'"
-                    @click="toggleSummary"
-                >
-                    <wa-icon :src="SUMMARY_ICON_SRC"></wa-icon>
-                </wa-button>
-            </template>
-        </TimelineEventLine>
-        <TimelineMessage
-            v-if="isMessage"
-            v-model:expanded="messageExpanded"
-            class="timeline-row-message"
-            :event-id="row.event.id"
-            :summary="summary"
-            :kind="row.event.kind"
-            :data="row.event.data"
-            :content-id="messageId"
-            :labelled-by="messageLabelId"
-            @toggle="focusMessageLabel"
-            @more-change="messageHasMore = $event"
-        />
+        <TimelineTurnLine v-if="railEnd" :role="railEnd" :rail="rail" :vm="vm" />
+        <template v-else>
+            <TimelineEventLine
+                :vm="vm"
+                :event-id="row.event.id"
+                :indented="!row.instance"
+                :instance="row.instance"
+                :author-run="row.authorRun ?? null"
+            >
+                <template v-if="hasMessageText" #wording>
+                    <button
+                        :id="messageLabelId"
+                        ref="messageToggleRef"
+                        type="button"
+                        class="timeline-wording timeline-message-label"
+                        :aria-expanded="messageExpanded ? 'true' : 'false'"
+                        :aria-controls="messageId"
+                        @click="messageExpanded = !messageExpanded"
+                    >{{ messageLabel }}<wa-icon
+                        v-if="messageHasMore"
+                        class="timeline-message-chevron"
+                        :name="messageExpanded ? 'chevron-up' : 'chevron-down'"
+                        aria-hidden="true"
+                    ></wa-icon></button>
+                    <TextToSpeechButton
+                        v-if="row.event.kind === 'assistant_message.sent'"
+                        class="timeline-message-speech"
+                        appearance="plain"
+                        :text="summary.view === 'summary' ? (summary.entry?.text || '') : row.event.data.text"
+                        :original-text="row.event.data.text"
+                        :native-speech-request="summary.view === 'summary' ? summary.nativeSpeechRequest : null"
+                        :summary-ref="summary.view === 'summary' ? summary.playbackReference : null"
+                        :summary-identity="summary.identity"
+                        :disabled="summary.view === 'summary' && !summary.playbackReference && !reading"
+                        @summary-changed="summary.refreshSaved"
+                    />
+                    <wa-button
+                        v-if="showSummaryButton"
+                        class="timeline-message-summary"
+                        size="small"
+                        :variant="summary.view === 'summary' ? 'brand' : 'neutral'"
+                        appearance="plain"
+                        :disabled="summary.view !== 'summary' && !summary.canSummarize"
+                        :title="summary.toggleTitle"
+                        :aria-label="summary.toggleTitle"
+                        :aria-pressed="summary.view === 'summary'"
+                        @click="toggleSummary"
+                    >
+                        <wa-icon :src="SUMMARY_ICON_SRC"></wa-icon>
+                    </wa-button>
+                </template>
+            </TimelineEventLine>
+            <TimelineMessage
+                v-if="isMessage"
+                v-model:expanded="messageExpanded"
+                class="timeline-row-message"
+                :event-id="row.event.id"
+                :summary="summary"
+                :kind="row.event.kind"
+                :data="row.event.data"
+                :content-id="messageId"
+                :labelled-by="messageLabelId"
+                @toggle="focusMessageLabel"
+                @more-change="messageHasMore = $event"
+            />
+        </template>
+        </div>
         </div>
     </div>
 </template>
@@ -255,6 +270,74 @@ function toggleSession() {
 /* No card, but the same content edges as the cards (padding and border): the time column stays one column. */
 .timeline-row--instance .timeline-row-card {
     padding-inline: calc(var(--timeline-card-padding) + 1px);
+}
+
+/* The turn rail (rows.js `rail`): a vertical line through the icons of the events of a turn. Each row draws its two
+   parts, above and below its icon, with a gap around the icon: a row is one scroller item, so the line is drawn in
+   parts across the rows and it joins at the row edges. Solid inside a block; dashed where the turn goes on in
+   another block (or page). The two ends of the turn are TimelineTurnLine.vue. */
+.timeline-row-body {
+    /* The line: the middle of the icon column (the icon box is 1.25rem wide, under the session title start). */
+    --timeline-rail-x: calc(var(--timeline-provider-width) + var(--timeline-provider-gap) + 0.625rem - 1px);
+    --timeline-rail-color: color-mix(in srgb, var(--wa-color-text-quiet) 55%, transparent);
+    /* The middle of the icon of an event line, and the room the line leaves around it. */
+    --timeline-rail-icon-y: 0.85rem;
+    --timeline-rail-icon-gap: 0.65rem;
+    /* The two ends of a turn: the curve (width and radius), where it turns in an end row (middle of the first text
+       line) and in a start row (the horizontal line). */
+    --timeline-turn-radius: 0.55rem;
+    --timeline-turn-end-y: 0.65rem;
+    --timeline-turn-corner-y: 0.65rem;
+    /* The room above the end of a turn: it sets the turns apart. */
+    --timeline-turn-gap: var(--wa-space-xs);
+    --timeline-rail-up-end: calc(var(--timeline-rail-icon-y) - var(--timeline-rail-icon-gap));
+    --timeline-rail-down-start: calc(var(--timeline-rail-icon-y) + var(--timeline-rail-icon-gap));
+    position: relative;
+}
+
+.timeline-row-body--end {
+    padding-block-start: var(--timeline-turn-gap);
+    --timeline-rail-down-start: calc(var(--timeline-turn-gap) + var(--timeline-turn-end-y) + var(--timeline-turn-radius));
+}
+
+/* The saved message ends right on the curve of the start of its turn: no room under its text. */
+.timeline-row-body--before-start .timeline-row-message {
+    padding-block-end: 0;
+}
+
+.timeline-row-body--start {
+    /* The same room under the start of a turn as above its end. */
+    padding-block-end: var(--timeline-turn-gap);
+    --timeline-rail-up-end: calc(var(--timeline-turn-corner-y) - var(--timeline-turn-radius));
+}
+
+.timeline-row-body[data-rail-up]::before,
+.timeline-row-body[data-rail-down]::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: var(--timeline-rail-x);
+    width: 2px;
+    pointer-events: none;
+}
+
+.timeline-row-body[data-rail-up]::before {
+    inset-block-start: 0;
+    height: var(--timeline-rail-up-end);
+}
+
+.timeline-row-body[data-rail-down]::after {
+    inset-block-start: var(--timeline-rail-down-start);
+    inset-block-end: 0;
+}
+
+.timeline-row-body[data-rail-up="solid"]::before,
+.timeline-row-body[data-rail-down="solid"]::after {
+    background: var(--timeline-rail-color);
+}
+
+.timeline-row-body[data-rail-up="dashed"]::before,
+.timeline-row-body[data-rail-down="dashed"]::after {
+    background: repeating-linear-gradient(to bottom, var(--timeline-rail-color) 0 4px, transparent 4px 8px);
 }
 
 /* Align the saved message with the event wording. The scroller measures its expanded height normally. */

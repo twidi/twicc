@@ -2650,6 +2650,8 @@
     "session.timeline.to": "vers",
     "session.timeline.turnEnded": "Tour terminé",
     "session.timeline.turnStarted": "Tour démarré",
+    "session.timeline.turnEndedIn": "Tour terminé en {duration}",
+    "session.timeline.turnRunningFor": "Tour en cours depuis {duration}",
     "session.timeline.unarchived": "Désarchivée",
     "session.timeline.unhidden": "Affichée",
     "session.timeline.unmuted": "Sourdine levée",

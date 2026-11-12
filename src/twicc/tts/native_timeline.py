@@ -317,7 +317,7 @@ class TimelineListener:
             now = format_occurred_at(self.clock())
             self.boundaries = {member: self.boundaries.get(member, now) for member in members}
             active['label'] = label
-            body = await sync_to_async(fetch_feed)(self._request())
+            body = await sync_to_async(fetch_feed)(self._request(), with_turns_below=False)
             if self.active is not active:
                 return
             if body['truncated']:

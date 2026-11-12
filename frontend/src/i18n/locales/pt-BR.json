@@ -2650,6 +2650,8 @@
     "session.timeline.to": "para",
     "session.timeline.turnEnded": "Turno concluído",
     "session.timeline.turnStarted": "Turno iniciado",
+    "session.timeline.turnEndedIn": "Turno concluído em {duration}",
+    "session.timeline.turnRunningFor": "Turno em andamento há {duration}",
     "session.timeline.unarchived": "Desarquivada",
     "session.timeline.unhidden": "Visível",
     "session.timeline.unmuted": "Silenciamento desativado",

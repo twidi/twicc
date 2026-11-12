@@ -68,7 +68,7 @@ const EventRow = {
 
 const isoAt = (n) => new Date(Date.UTC(2026, 9, 14, 10, 0, n)).toISOString().replace('.000Z', '.000000Z')
 const at = (n) => `2026-10-14T10:00:${String(n).padStart(2, '0')}.000000Z`
-const event = (id, fields = {}) => ({ id, kind: 'turn.started', occurred_at: at(id), session_id: 's1', project_id: 'p1', provider: 'codex', actor: 'agent', precision: 'exact', data: {}, ...fields })
+const event = (id, fields = {}) => ({ id, kind: 'user_message.sent', occurred_at: at(id), session_id: 's1', project_id: 'p1', provider: 'codex', actor: 'agent', precision: 'exact', data: {}, ...fields })
 
 /** A scroller double: renders every item and records what the panel asks of it. */
 function createFakeScroller() {
@@ -130,6 +130,7 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         fail: false,
         respond: (params) => ({
             events: params.before ? [] : events, has_more: params.before ? false : hasMore, truncated: false,
+            turns_below: server.turnsBelow ?? {},
             latest_id: events.length ? events[0].id : null, sessions: { s1: { title: 'My session', project_id: 'p1', provider: 'codex', hidden: false, archived: false } },
         }),
     }
@@ -414,6 +415,35 @@ test('every row gets a height estimate once the scroller exists, the top room an
     assert.equal(seeds['event-1'], H.event + H.blockEnd, 'the block end: bottom of the card and the gap')
     assert.equal(seeds[Object.keys(seeds).find((key) => key.startsWith('daysep-'))], H.day)
     assert.equal(seedsOf(f).length, 6, 'top room, loading state, day separator and three events, once each')
+})
+
+test('the turn boundaries are drawn as the ends of a rail when the filters keep them, and are plain rows when they do not', async (t) => {
+    const events = [event(3, { kind: 'turn.ended' }), event(2, { kind: 'assistant_message.sent' }), event(1, { kind: 'turn.started' })]
+    const { ROW_HEIGHT_ESTIMATES: H } = rowsModule
+    const rail = fixture({ events, fakeScroller: true })
+    await mount(t, rail)
+    const railSeeds = Object.fromEntries(seedsOf(rail).map(([, key, height]) => [key, height]))
+    assert.equal(railSeeds['event-3'], H.head - H.event + H.turnEnd, 'the end of the turn replaces the event line')
+    assert.equal(railSeeds['event-1'], H.turnStart + H.blockEnd, 'the start of the turn is a short stub')
+
+    const plain = fixture({ events, fakeScroller: true })
+    plain.filtersStore.toggle('__all__', 'families', 'messages')
+    await mount(t, plain)
+    const plainSeeds = Object.fromEntries(seedsOf(plain).map(([, key, height]) => [key, height]))
+    assert.equal(plainSeeds['event-3'], H.head, 'without the Turns family, the boundaries are plain event rows')
+    assert.equal(plainSeeds['event-1'], H.event + H.blockEnd)
+})
+
+test('a session with no turn boundary on the page whose turn started below it is drawn inside a running turn', async (t) => {
+    const f = fixture({ events: [event(3, { kind: 'assistant_message.sent' }), event(2, { kind: 'user_message.sent' })], fakeScroller: true })
+    f.server.turnsBelow = { s1: '2026-10-14T11:59:00.000000Z' }
+    await mount(t, f)
+    const seeds = Object.fromEntries(seedsOf(f).map(([, key, height]) => [key, height]))
+    assert.ok('event-turn-running-s1' in seeds, 'the synthetic top row of the running turn')
+
+    const idle = fixture({ events: [event(3, { kind: 'assistant_message.sent' }), event(2, { kind: 'user_message.sent' })], fakeScroller: true })
+    await mount(t, idle)
+    assert.ok(!seedsOf(idle).some(([, key]) => key.startsWith('event-turn-running')), 'with nothing below, no turn runs')
 })
 
 test('a row the scroller already measured keeps its measure', async (t) => {

@@ -75,6 +75,7 @@ from twicc.core.services.timeline_filters import (
     VIEWS,
     TimelineFilter,
     can_match,
+    kind_in,
     match_q,
     unindexed,
 )
@@ -453,13 +454,62 @@ def serialize_event(event: TimelineEvent, *, include_ui_messages: bool = False) 
     }
 
 
+_TURN_BOUNDARIES = (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED)
+
+
+def build_turns_below(events: list[TimelineEvent], has_more: bool) -> dict[str, str]:
+    """The turns the bottom of a page continues: ``{session_id: occurred_at of the turn.started}``.
+
+    The browser draws a turn as a rail from the rows of the page. A page is cut in time, so a turn can start
+    below it, and a session with rows on the page but no turn boundary there cannot tell whether it is in a turn.
+    This is what the page cannot know: for each session of the page, the nearest turn boundary OLDER than the
+    oldest row of the page, kept when it is a ``turn.started`` (the turn was open at the bottom edge of the page).
+    It gives the start of a turn whose end is on the page (its duration) and the start of a turn with no boundary
+    on the page (a turn that runs, or ran across the whole page).
+
+    A session needs the lookup only when its OLDEST boundary on the page is a ``turn.ended`` or when it has none: an
+    oldest ``turn.started`` is the start. The last page (``has_more`` false) has nothing below it. One indexed read
+    per session that needs it: the session index, walked newest first from the edge, stops at the first boundary
+    (the ``kind`` comparison carries a unary plus so it never drives another index).
+    """
+    if not has_more or not events:
+        return {}
+    oldest_boundary: dict[str, str] = {}
+    sessions: set[str] = set()
+    for event in events:  # newest first: the last boundary seen of a session is its oldest
+        if event.session_id is None:
+            continue
+        sessions.add(event.session_id)
+        if event.kind in _TURN_BOUNDARIES:
+            oldest_boundary[event.session_id] = event.kind
+    edge = events[-1]
+    below: dict[str, str] = {}
+    for session_id in sorted(sessions):
+        if oldest_boundary.get(session_id) == TimelineKind.TURN_STARTED:
+            continue
+        row = (
+            TimelineEvent.objects.filter(
+                before_condition((edge.occurred_at, edge.id)), kind_in(*_TURN_BOUNDARIES), session_id=session_id,
+            )
+            .order_by("-occurred_at", "-id")
+            .values("kind", "occurred_at")
+            .first()
+        )
+        if row is not None and row["kind"] == TimelineKind.TURN_STARTED:
+            below[session_id] = format_occurred_at(row["occurred_at"])
+    return below
+
+
 def latest_event_id() -> int | None:
     """The highest id of the whole table, whatever the scope."""
     return TimelineEvent.objects.order_by("-id").values_list("id", flat=True).first()
 
 
-def fetch_feed(request: FeedRequest) -> dict:
+def fetch_feed(request: FeedRequest, *, with_turns_below: bool = True) -> dict:
     """The response body of ``GET /api/timeline/``.
+
+    ``with_turns_below`` adds ``turns_below`` to a page (:func:`build_turns_below`): the browser list needs it, a
+    reader of the rows alone (the native speech) does not and skips its reads.
 
     ``latest_id`` is read FIRST (display design 7.2): a row committed afterwards may appear in
     ``events`` with a higher id, which is harmless; a row can never be below ``latest_id`` and missing
@@ -474,6 +524,8 @@ def fetch_feed(request: FeedRequest) -> dict:
     else:
         events, has_more = _fetch_page(request)
         truncated = False
+        if with_turns_below:
+            visibility = {"turns_below": build_turns_below(events, has_more)}
     return {
         "events": [serialize_event(event, include_ui_messages=True) for event in events],
         "has_more": has_more,

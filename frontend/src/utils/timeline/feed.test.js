@@ -32,6 +32,8 @@ function createServer(initial = [], { pageSize = PAGE } = {}) {
     // The sessions hidden NOW: the endpoint leaves their rows out of every read.
     const hidden = new Set()
     const visible = (e) => !hidden.has(e.session_id)
+    // What a test says the server answers for `turns_below` of a page (the rows of the page in, the map out).
+    let belowFor = () => ({})
     function compute({ projectIds, query, before, afterId }) {
         const latest_id = table.length ? Math.max(...table.map((e) => e.id)) : null
         const sessions = { s1: { title: `T${++counter}`, project_id: 'p1', provider: 'codex', hidden: false, archived: false } }
@@ -52,12 +54,16 @@ function createServer(initial = [], { pageSize = PAGE } = {}) {
             rows = rows.filter((e) => compareNewestFirst(e, { occurred_at: time, id: Number(id) }) > 0)
         }
         const page = rows.slice(0, pageSize + 1)
-        return { events: page.slice(0, pageSize), has_more: page.length > pageSize, truncated: false, latest_id, sessions }
+        const events = page.slice(0, pageSize)
+        return { events, has_more: page.length > pageSize, truncated: false, latest_id, sessions, turns_below: belowFor(events) }
     }
     return {
         table,
         calls,
         hidden,
+        setTurnsBelow(fn) {
+            belowFor = fn
+        },
         commit(e) {
             table.push(e)
         },
@@ -1553,4 +1559,36 @@ test('a failed backfill is forgotten on a filter change', async () => {
     feed.refresh()
     await feed.idle()
     assert.deepEqual(labels(server), ['first', 'after:4', 'first@s2', 'first', 'after:5'], 'no backfill of the old list')
+})
+
+test('turnsBelow keeps, for each session, the answer of the oldest page that holds its rows', async () => {
+    const rows = [event(1, at(1), { session_id: 'a' }), event(2, at(2), { session_id: 'b' }), event(3, at(3), { session_id: 'a' }), event(4, at(4), { session_id: 'b' })]
+    const { server, feed, state } = setup(rows)
+    // First page: `a` and `b` continue a turn started below; second page: `a` has nothing below any more.
+    const answers = [{ a: at(0), b: at(0) }, {}]
+    server.setTurnsBelow(() => answers.shift())
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual(state.turnsBelow, { b: Date.parse(at(0)), a: Date.parse(at(0)) })
+    feed.loadMore()
+    await feed.idle()
+    assert.deepEqual(Object.keys(state.turnsBelow).sort(), ['a', 'b'])
+    assert.deepEqual(state.turnsBelow, { a: null, b: null }, 'the lower page holds both sessions and says there is no turn below')
+})
+
+test('a live response does not touch turnsBelow, and a new first page starts it again', async () => {
+    const { server, feed, state } = setup([event(1, at(1), { session_id: 'a' }), event(2, at(2), { session_id: 'a' })], { pageSize: 5 })
+    server.setTurnsBelow(() => ({ a: at(0) }))
+    feed.setScope([])
+    await feed.idle()
+    const before = Date.parse(at(0))
+    assert.deepEqual(state.turnsBelow, { a: before })
+    server.commit(event(3, at(3), { session_id: 'a' }))
+    feed.notifyLatest(3)
+    await feed.idle()
+    assert.deepEqual(state.turnsBelow, { a: before })
+    server.setTurnsBelow(() => ({}))
+    feed.setScope(['p1'])
+    await feed.idle()
+    assert.deepEqual(state.turnsBelow, { a: null })
 })

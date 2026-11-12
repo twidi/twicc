@@ -144,6 +144,23 @@ export function queryKey(query) {
 }
 
 /**
+ * Whether the list shows the turn boundaries (`turn.started` and `turn.ended`), so it can draw them as the turn
+ * rail (see rows.js). The views `all` and `messages` hold them, `without_turns` and `waits_problems` do not.
+ * With the Events group checked, Turns must be one of the values. A Done by filter can keep one boundary of a
+ * turn and drop the other: the rail needs both, so it is off then.
+ *
+ * @param {TimelineFilters} filters
+ * @returns {boolean}
+ */
+export function showsTurnRail(filters) {
+    const view = viewOf(filters)
+    if (view !== 'all' && view !== 'messages') return false
+    if (effectiveValues(filters.authors, AUTHOR_KEYS)) return false
+    const families = effectiveValues(filters.families, FAMILY_KEYS)
+    return families === null || families.includes('turns')
+}
+
+/**
  * @param {TimelineFilters} filters
  * @returns {number} The number of checked panel values (the Filters button count, section 3.1). The view and
  *   the session filter do not count.

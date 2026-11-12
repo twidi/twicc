@@ -60,6 +60,7 @@ test('the actual row opens Summary from collapsed, passes exact saved references
         '../../utils/timeline/describeEvent': { describeEvent: () => ({ severity: 'info', kind: 'assistant_message.sent', parts: [{ text: 'Sent a message' }] }) },
         '../project/ProjectBadge.vue': { render: () => null }, './TimelineSessionMention.vue': { render: () => null },
         './TimelineEventLine.vue': { setup: (_, { slots }) => () => Vue.h('event-line', slots.wording?.()) },
+        './TimelineTurnLine.vue': { setup: () => () => null },
         './TimelineMessage.vue': Message,
         '../ui/TextToSpeechButton.vue': { props: ['text', 'summaryRef', 'summaryIdentity', 'originalText'], emits: ['summary-changed'], setup: (p, { emit }) => () => Vue.h('speech', { ...p, changed: id => emit('summary-changed', id) }) },
     })

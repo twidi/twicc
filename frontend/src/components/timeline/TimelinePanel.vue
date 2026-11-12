@@ -33,7 +33,7 @@ import { getProviderHelpers } from '../../providers'
 import { compactHeight } from '../../utils/compactHeight'
 import { bindTimelineEvents } from '../../utils/timeline/liveEvents'
 import { timeColumnSizer } from '../../utils/timeline/eventTime'
-import { VIEWS, queryKey, toQuery } from '../../utils/timeline/filters'
+import { VIEWS, queryKey, showsTurnRail, toQuery } from '../../utils/timeline/filters'
 import { buildTimelineRows, estimateRowHeight, isEventRowKey, isNearEnd } from '../../utils/timeline/rows'
 import { createLabelsFor } from '../../utils/timeline/providerLabels'
 import { resolveTimelineScope } from '../../utils/timeline/scope'
@@ -131,6 +131,10 @@ const eventRows = computed(() => buildTimelineRows(state.events, {
     sessions: state.sessions,
     scope: { kind: scope.value.kind, projectId: scope.value.projectId },
     isSubagent: context.value.isSubagent,
+    // Only when the filters keep the turn boundaries: the rail IS how they are shown.
+    turnRail: showsTurnRail(filters.value),
+    // What the server knows of the turns that start below the loaded rows (a turn the page cuts, a session with no boundary on it).
+    turnsBelow: state.turnsBelow,
 }))
 
 /**

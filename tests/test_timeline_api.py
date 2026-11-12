@@ -405,7 +405,7 @@ def test_the_cap_applies_to_the_merged_set_of_rows_and_instance_events(projects)
 
 def test_an_empty_feed_has_a_null_latest_id_and_after_id_zero_fetches_the_first_event():
     body = call().json()
-    assert body == {"events": [], "has_more": False, "truncated": False, "latest_id": None, "sessions": {}}
+    assert body == {"events": [], "has_more": False, "truncated": False, "latest_id": None, "sessions": {}, "turns_below": {}}
     assert call(after_id=0).json()["latest_id"] is None
     first = make_event(at=1)
     assert ids(call(after_id=0).json()) == [first.id]
@@ -704,3 +704,68 @@ def test_message_snapshots_keep_saved_text_in_every_feed_scope(projects, tmp_pat
         assert event["occurred_at"] == "2026-10-14T10:00:02.000000Z"
         assert body["sessions"][session.id]["title"] == "Saved session"
     assert ids(call(**params, families="messages", session=session.id).json()) == [saved.id]
+
+
+# -- Turns below a page (the browser draws turns as rails from the rows of a page) -------------------------
+
+
+def test_turns_below_names_the_turn_started_under_the_page_for_a_session_with_no_boundary_on_it(projects):
+    make_event("turn.started", project=projects[0], session_id="a", at=0)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=10)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=20)
+    body = call(limit=2).json()
+    assert body["has_more"] is True
+    assert body["turns_below"] == {"a": "2026-10-14T10:00:00.000000Z"}
+
+
+def test_turns_below_gives_the_start_of_a_turn_whose_end_is_the_oldest_boundary_of_the_page(projects):
+    make_event("turn.started", project=projects[0], session_id="a", at=0)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=10)
+    make_event("turn.ended", project=projects[0], session_id="a", at=20)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=30)
+    body = call(limit=2).json()
+    assert [event["kind"] for event in body["events"]] == ["assistant_message.sent", "turn.ended"]
+    assert body["turns_below"] == {"a": "2026-10-14T10:00:00.000000Z"}
+
+
+def test_turns_below_is_empty_for_a_session_outside_a_turn_or_whose_start_is_on_the_page(projects):
+    # `a`: its last boundary below the page is an end (idle). `b`: the start of its turn is on the page.
+    make_event("turn.ended", project=projects[0], session_id="a", at=0)
+    make_event("turn.started", project=projects[0], session_id="b", at=5)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=10)
+    make_event("assistant_message.sent", project=projects[0], session_id="b", at=20)
+    body = call(limit=3).json()
+    assert [event["session_id"] for event in body["events"]] == ["b", "a", "b"]
+    assert body["turns_below"] == {}
+
+
+def test_turns_below_is_empty_on_the_last_page_and_on_live_responses(projects):
+    make_event("turn.started", project=projects[0], session_id="a", at=0)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=10)
+    assert call().json()["turns_below"] == {}
+    first = make_event("assistant_message.sent", project=projects[0], session_id="a", at=20)
+    assert "turns_below" not in call(after_id=first.id - 1).json()
+
+
+def test_turns_below_looks_for_the_nearest_boundary_before_the_oldest_row_of_the_page_only(projects):
+    # Two earlier turns of `a`: only the nearest boundary counts, here the end of the first one.
+    make_event("turn.started", project=projects[0], session_id="a", at=0)
+    make_event("turn.ended", project=projects[0], session_id="a", at=5)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=10)
+    body = call(limit=1).json()
+    assert body["turns_below"] == {}
+
+
+def test_turns_below_costs_one_indexed_read_per_session_that_needs_it(projects):
+    for name in ("a", "b", "c"):
+        make_event("turn.started", project=projects[0], session_id=name, at=0)
+    make_event("assistant_message.sent", project=projects[0], session_id="a", at=10)
+    make_event("turn.started", project=projects[0], session_id="b", at=11)
+    make_event("assistant_message.sent", project=projects[0], session_id="c", at=12)
+    # The view runs in another thread: read the statements of the service it calls, in this one.
+    with CaptureQueriesContext(connection) as captured:
+        body = timeline_feed.fetch_feed(parse_request({"limit": "3"}))
+    assert body["has_more"] is True
+    reads = [query["sql"] for query in captured.captured_queries if "LIMIT 1" in query["sql"] and "core_timelineevent" in query["sql"] and "turn.ended" in query["sql"]]
+    # `b` has its start on the page: no read. `a` and `c` need one each.
+    assert len(reads) == 2, reads

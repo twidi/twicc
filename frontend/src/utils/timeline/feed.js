@@ -23,7 +23,7 @@
 //     Nothing is reloaded; a failed backfill is queued again after the next successful live fetch. The edge
 //     of the loaded window is the pagination cursor, not the tail, which a removal may have made newer.
 
-import { compareNewestFirst, cursorOf } from './eventTime.js'
+import { compareNewestFirst, cursorOf, parseOccurredAt } from './eventTime.js'
 import { queryKey } from './filters.js'
 
 /**
@@ -41,7 +41,7 @@ import { queryKey } from './filters.js'
 /** @returns {FeedState} */
 export function createFeedState() {
     return {
-        status: 'idle', events: [], sessions: {}, hasMore: false, liveCursor: null, pageCursor: null,
+        status: 'idle', events: [], sessions: {}, turnsBelow: {}, hasMore: false, liveCursor: null, pageCursor: null,
         loadingMore: false, loadError: null,
     }
 }
@@ -174,6 +174,22 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         pausedTasks = []
     }
 
+    /**
+     * `state.turnsBelow`: for each session of a page, when the turn its oldest rows belong to started below that
+     * page (ms), else null. Each page answers for the sessions it holds, so a later (older) page replaces the
+     * answer of a session an earlier page held: the oldest page that has rows of a session knows its turn best.
+     * A live response says nothing about the bottom of the list and never calls this.
+     */
+    function mergeTurnsBelow(previous, body) {
+        const next = { ...previous }
+        const below = body.turns_below ?? {}
+        for (const event of body.events) {
+            const sessionId = event.session_id
+            if (sessionId) next[sessionId] = Object.hasOwn(below, sessionId) ? parseOccurredAt(below[sessionId]) : null
+        }
+        return next
+    }
+
     function mergeSessions(sessions) {
         if (sessions && Object.keys(sessions).length) state.sessions = { ...state.sessions, ...sessions }
     }
@@ -194,6 +210,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         if (stale(gen)) return
         state.events = [...body.events].sort(compareNewestFirst)
         state.sessions = { ...state.sessions, ...body.sessions }
+        state.turnsBelow = mergeTurnsBelow({}, body)
         state.hasMore = body.has_more === true && state.events.length > 0
         state.pageCursor = state.events.length ? cursorOf(state.events[state.events.length - 1]) : null
         state.liveCursor = body.latest_id ?? null
@@ -234,6 +251,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         if (stale(gen)) return
         state.events = mergeEvents(state.events, body.events, { hasMore: false, live: false })
         mergeSessions(body.sessions)
+        state.turnsBelow = mergeTurnsBelow(state.turnsBelow, body)
         // The cursor never moves backwards through live rows: it is the last row of THIS page.
         if (body.events.length) state.pageCursor = cursorOf(body.events[body.events.length - 1])
         // An empty page ends the list, whatever `has_more` says: no endless loop on a misbehaving server.

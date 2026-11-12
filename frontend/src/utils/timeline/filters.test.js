@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-    activeCount, AUTHORS, createFilters, FAMILIES, groupPills, PROVIDERS, queryKey, toggleValue, toQuery, VIEWS,
+    activeCount, AUTHORS, createFilters, FAMILIES, groupPills, PROVIDERS, queryKey, showsTurnRail, toggleValue, toQuery, VIEWS,
 } from './filters.js'
 
 const familyKeys = FAMILIES.map((family) => family.value)
@@ -182,4 +182,19 @@ test('the Messages family serializes without changing the default All view', () 
     assert.deepEqual(toQuery(filters({ families: ['messages'] })), { families: 'messages' })
     assert.equal(createFilters().view, 'all')
     assert.equal(groupPills(filters({ families: ['messages'] }), { providerLabel })[0].shown[0], 'Messages')
+})
+
+test('the turn rail needs both turn boundaries in the list', () => {
+    assert.equal(showsTurnRail(createFilters()), true)
+    assert.equal(showsTurnRail(filters({ view: 'messages' })), true)
+    assert.equal(showsTurnRail(filters({ view: 'without_turns' })), false)
+    assert.equal(showsTurnRail(filters({ view: 'waits_problems' })), false)
+    assert.equal(showsTurnRail(filters({ families: ['messages'] })), false)
+    assert.equal(showsTurnRail(filters({ families: ['messages', 'turns'] })), true)
+    // A complete group filters nothing.
+    assert.equal(showsTurnRail(filters({ families: familyKeys })), true)
+    // The session and provider filters keep both boundaries of a turn; a Done by filter can keep only one.
+    assert.equal(showsTurnRail(filters({ providers: ['codex'], session: { id: 's1', title: null } })), true)
+    assert.equal(showsTurnRail(filters({ authors: ['you'] })), false)
+    assert.equal(showsTurnRail(filters({ authors: authorKeys })), true)
 })

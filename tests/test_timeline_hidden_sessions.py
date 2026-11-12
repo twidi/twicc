@@ -342,7 +342,7 @@ def test_a_filter_that_can_never_match_answers_the_empty_page_without_reading_ev
     for before in ({}, {"before": "2026-10-14T10:00:09.000000Z,99"}):
         with CaptureQueriesContext(connection) as captured:
             body = timeline_feed.fetch_feed(parse_request({**params, **before}))
-        assert body == {"events": [], "has_more": False, "truncated": False, "latest_id": last.id, "sessions": {}}
+        assert body == {"events": [], "has_more": False, "truncated": False, "latest_id": last.id, "sessions": {}, "turns_below": {}}
         assert event_reads(captured) == []
     assert call(**params).json()["events"] == []
 

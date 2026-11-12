@@ -58,6 +58,11 @@ const SpeechButton = compileComponent(new URL('../ui/TextToSpeechButton.vue', im
     '../../stores/textToSpeech': speechModule,
     '../../composables/useToast': { toast: { error(message) { throw new Error(message) } } },
 })
+const TurnLine = compileComponent(new URL('./TimelineTurnLine.vue', import.meta.url), {
+    'vue-i18n': { useI18n: () => ({ t: (key, params) => (params?.duration ? `${key}:${params.duration}` : key) }) },
+    '../../composables/useSecondClock': { useSecondClock: () => Vue.ref(Date.parse('2026-10-14T12:01:00.000Z')) },
+    '../../utils/date': { formatDuration: (seconds) => `${seconds}s` },
+})
 const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url), {
     'vue-router': { RouterLink },
     '../../composables/useMessageSummary.js': messageSummaryModule(),
@@ -67,6 +72,7 @@ const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url),
     '../project/ProjectBadge.vue': ProjectBadge,
     './TimelineSessionMention.vue': Mention,
     './TimelineEventLine.vue': Line,
+    './TimelineTurnLine.vue': TurnLine,
     './TimelineMessage.vue': Message,
     '../ui/TextToSpeechButton.vue': SpeechButton,
 })
@@ -94,8 +100,8 @@ function textOf(node) {
 const sessionLinks = (root) => byClass(root, 'timeline-session').flatMap((mention) => descendants(mention, (n) => n.type === 'a'))
 
 /** `emitted`: the `toggle-session` payloads of the row, in order. */
-async function render(t, events, { scope = { kind: 'global' }, index = 0, sessionTable = sessions, sessionFilterId = null, emitted = [], pinia = createPinia() } = {}) {
-    const rows = buildTimelineRows(events, { sessions: sessionTable, scope, dayKeyOf: () => 'd', dayLabelOf: () => 'Day' })
+async function render(t, events, { scope = { kind: 'global' }, index = 0, sessionTable = sessions, sessionFilterId = null, emitted = [], pinia = createPinia(), turnRail = false } = {}) {
+    const rows = buildTimelineRows(events, { sessions: sessionTable, scope, dayKeyOf: () => 'd', dayLabelOf: () => 'Day', turnRail })
         .filter((row) => row.type === 'event')
     const { renderer, root } = makeRenderer(140, node => { node.focus = () => { node.focused = true } })
     const context = { sessions: sessionTable, labelsFor: () => null, time: { locale: 'en-GB', timeZone: 'UTC' } }
@@ -132,11 +138,11 @@ test('the group head: a header line (provider icon, title link) above its own ev
     assert.equal(byClass(root, 'timeline-row-header').length, 1)
     const [header] = byClass(root, 'timeline-row-header')
     const [line] = byClass(root, 'timeline-event-line')
-    // The header and the event line are siblings in the card: the header is a line of its own, above the event.
+    // The header is a line of its own, above the body that holds the event line (and its saved message).
     const [card] = row.children.filter((n) => n.type !== '#comment')
     assert.equal(classesOf(card), 'timeline-row-card')
     // Elements only: the space between the two lines is for a copy, it renders nothing between two blocks.
-    assert.deepEqual(card.children.filter((n) => n.type !== '#comment' && n.type !== '#text').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--neutral timeline-event-line--indented'])
+    assert.deepEqual(card.children.filter((n) => n.type !== '#comment' && n.type !== '#text').map(classesOf), ['timeline-row-header', 'timeline-row-body'])
     assert.equal(descendants(line, (n) => n === header).length, 0)
     const link = descendants(header, (n) => n.type === 'a')[0]
     assert.equal(JSON.parse(link.props['data-to']).params.sessionId, 's1')
@@ -146,6 +152,46 @@ test('the group head: a header line (provider icon, title link) above its own ev
     assert.equal(byClass(line, 'timeline-session').length, 0)
     assert.equal(descendants(line, (n) => n.type === 'wa-icon' && classesOf(n).includes('timeline-row-icon')).length, 1)
     assert.equal(byClass(line, 'timeline-time').length, 1)
+})
+
+const at = (second) => `2026-10-14T12:00:${String(second).padStart(2, '0')}.000000Z`
+const turnEvents = () => [
+    make('turn.ended', { occurred_at: at(40) }), make('assistant_message.sent', { occurred_at: at(30) }), make('turn.started', { occurred_at: at(10) }),
+]
+
+test('a turn on a rail: the end row is a sentence with the duration, the start row a stub, the others sit on the line', async (t) => {
+    const events = turnEvents()
+    const end = await render(t, events, { turnRail: true, index: 0 })
+    const [endLine] = byClass(end, 'timeline-turn-line--end')
+    assert.equal(textOf(endLine), 'session.timeline.turnEndedIn:30s')
+    assert.equal(byClass(end, 'timeline-event-line').length, 0, 'no event line: the sentence replaces it')
+    assert.equal(byClass(end, 'timeline-row-body')[0].props['data-rail-up'] ?? null, null)
+    assert.equal(byClass(end, 'timeline-row-body')[0].props['data-rail-down'], 'solid')
+
+    const inside = await render(t, events, { turnRail: true, index: 1 })
+    assert.equal(byClass(inside, 'timeline-event-line').length, 1)
+    assert.equal(byClass(inside, 'timeline-row-body')[0].props['data-rail-up'], 'solid')
+    assert.equal(byClass(inside, 'timeline-row-body')[0].props['data-rail-down'], 'solid')
+
+    const start = await render(t, events, { turnRail: true, index: 2 })
+    const [startLine] = byClass(start, 'timeline-turn-line--start')
+    assert.equal(byClass(start, 'timeline-turn-text').length, 0, 'no text on the start stub')
+    assert.equal(textOf(startLine), 'session.timeline.turnStarted', 'a name for a screen reader, out of sight')
+    assert.equal(byClass(start, 'timeline-row-body')[0].props['data-rail-up'], 'solid')
+    assert.equal(byClass(start, 'timeline-row-body')[0].props['data-rail-down'] ?? null, null)
+})
+
+test('a running turn: its synthetic top row says how long the turn runs', async (t) => {
+    const root = await render(t, [make('assistant_message.sent', { occurred_at: at(30) }), make('turn.started', { occurred_at: at(10) })], { turnRail: true, index: 0 })
+    // The clock of the harness is one minute after 12:00:00: 60 - 10 seconds.
+    assert.equal(textOf(byClass(root, 'timeline-turn-text')[0]), 'session.timeline.turnRunningFor:50s')
+})
+
+test('without the rail, the turn boundaries are plain event lines', async (t) => {
+    const root = await render(t, turnEvents(), { index: 0 })
+    assert.equal(byClass(root, 'timeline-turn-line').length, 0)
+    assert.equal(byClass(root, 'timeline-event-line').length, 1)
+    assert.equal(byClass(root, 'timeline-row-body')[0].props['data-rail-up'] ?? null, null)
 })
 
 test('the header title is one truncating line with the full title as tooltip, link or plain text', async (t) => {

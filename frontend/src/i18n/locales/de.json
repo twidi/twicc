@@ -2650,6 +2650,8 @@
     "session.timeline.to": "zu",
     "session.timeline.turnEnded": "Durchgang beendet",
     "session.timeline.turnStarted": "Durchgang gestartet",
+    "session.timeline.turnEndedIn": "Durchgang beendet nach {duration}",
+    "session.timeline.turnRunningFor": "Durchgang läuft seit {duration}",
     "session.timeline.unarchived": "Archivierung aufgehoben",
     "session.timeline.unhidden": "Eingeblendet",
     "session.timeline.unmuted": "Stummschaltung aufgehoben",

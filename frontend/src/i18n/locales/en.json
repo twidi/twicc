@@ -2650,6 +2650,8 @@
     "session.timeline.to": "to",
     "session.timeline.turnEnded": "Turn ended",
     "session.timeline.turnStarted": "Turn started",
+    "session.timeline.turnEndedIn": "Turn ended in {duration}",
+    "session.timeline.turnRunningFor": "Turn running for {duration}",
     "session.timeline.unarchived": "Unarchived",
     "session.timeline.unhidden": "Unhidden",
     "session.timeline.unmuted": "Unmuted",
