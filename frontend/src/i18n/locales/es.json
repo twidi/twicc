@@ -2654,7 +2654,7 @@
     "session.timeline.turnEnded": "Turno terminado",
     "session.timeline.turnStarted": "Turno iniciado",
     "session.timeline.turnEndedIn": "Turno terminado en {duration}",
-    "session.timeline.turnRunningFor": "Turno en curso desde hace {duration}",
+    "session.timeline.turnRunningFor": "Turno en curso desde hace {duration} …",
     "session.timeline.compactionRequested": "Compactación solicitada",
     "session.timeline.compactionCompleted": "Compactación terminada",
     "session.timeline.unarchived": "Desarchivada",

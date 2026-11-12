@@ -93,7 +93,7 @@ const showsText = computed(() => sentence.value !== '')
     width: var(--timeline-turn-radius);
     height: var(--timeline-turn-radius);
     box-sizing: border-box;
-    border-inline-start: 2px solid var(--timeline-rail-color);
+    border-inline-start: var(--timeline-rail-width) solid var(--timeline-rail-color);
 }
 
 /* The end: the curve opens downwards from the middle of the first text line. */
@@ -101,14 +101,14 @@ const showsText = computed(() => sentence.value !== '')
     inset-block-start: var(--timeline-turn-end-y);
     /* Longer than the radius: the horizontal part runs on to a short distance of the text, which does not move. */
     width: calc(var(--timeline-turn-text-start) - var(--timeline-rail-x) - 0.4rem);
-    border-block-start: 2px solid var(--timeline-rail-color);
+    border-block-start: var(--timeline-rail-width) solid var(--timeline-rail-color);
     border-start-start-radius: var(--timeline-turn-radius);
 }
 
 /* The start: the curve ends on the horizontal line `--timeline-turn-corner-y` under the top of the row. */
 .timeline-turn-line--start .timeline-turn-corner {
     inset-block-start: calc(var(--timeline-turn-corner-y) - var(--timeline-turn-radius));
-    border-block-end: 2px solid var(--timeline-rail-color);
+    border-block-end: var(--timeline-rail-width) solid var(--timeline-rail-color);
     border-end-start-radius: var(--timeline-turn-radius);
 }
 
@@ -117,9 +117,9 @@ const showsText = computed(() => sentence.value !== '')
     content: "";
     position: absolute;
     inset-inline-start: 100%;
-    inset-block-end: -2px;
+    inset-block-end: calc(-1 * var(--timeline-rail-width));
     width: 2.6rem;
-    height: 2px;
+    height: var(--timeline-rail-width);
     background: linear-gradient(to right, var(--timeline-rail-color), transparent);
 }
 </style>

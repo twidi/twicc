@@ -283,7 +283,9 @@ function toggleSession() {
    another block (or page). The two ends of the turn are TimelineTurnLine.vue. */
 .timeline-row-body {
     /* The line: the middle of the icon column (the icon box is 1.25rem wide, under the session title start). */
-    --timeline-rail-x: calc(var(--timeline-event-indent) + 0.625rem - 1px);
+    /* The thickness of the line and of the curves, and the left edge of the line centred on the icon column. */
+    --timeline-rail-width: 1px;
+    --timeline-rail-x: calc(var(--timeline-event-indent) + 0.625rem - var(--timeline-rail-width) / 2);
     --timeline-rail-color: color-mix(in srgb, var(--wa-color-text-quiet) 55%, transparent);
     /* The middle of the icon of an event line, and the room the line leaves around it. */
     --timeline-rail-icon-y: 0.85rem;
@@ -321,7 +323,7 @@ function toggleSession() {
     content: "";
     position: absolute;
     inset-inline-start: var(--timeline-rail-x);
-    width: 2px;
+    width: var(--timeline-rail-width);
     pointer-events: none;
 }
 

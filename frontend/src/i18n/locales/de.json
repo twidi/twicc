@@ -2654,7 +2654,7 @@
     "session.timeline.turnEnded": "Durchgang beendet",
     "session.timeline.turnStarted": "Durchgang gestartet",
     "session.timeline.turnEndedIn": "Durchgang beendet nach {duration}",
-    "session.timeline.turnRunningFor": "Durchgang läuft seit {duration}",
+    "session.timeline.turnRunningFor": "Durchgang läuft seit {duration} …",
     "session.timeline.compactionRequested": "Komprimierung angefordert",
     "session.timeline.compactionCompleted": "Komprimierung beendet",
     "session.timeline.unarchived": "Archivierung aufgehoben",

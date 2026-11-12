@@ -2654,7 +2654,7 @@
     "session.timeline.turnEnded": "Tour terminé",
     "session.timeline.turnStarted": "Tour démarré",
     "session.timeline.turnEndedIn": "Tour terminé en {duration}",
-    "session.timeline.turnRunningFor": "Tour en cours depuis {duration}",
+    "session.timeline.turnRunningFor": "Tour en cours depuis {duration} …",
     "session.timeline.compactionRequested": "Compactage demandé",
     "session.timeline.compactionCompleted": "Compactage terminé",
     "session.timeline.unarchived": "Désarchivée",
