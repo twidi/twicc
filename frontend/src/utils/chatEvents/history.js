@@ -3,9 +3,10 @@ import { localUiError } from '../../i18n/uiMessages.js'
 // Complete snapshots for one loaded chat. The Timeline page keeps its progressive feed.
 import { compareNewestFirst, cursorOf } from '../timeline/eventTime.js'
 
-/** The chat already shows its creation, turn flow, and user/assistant messages. */
+/** The chat already shows its creation, turn flow, user/assistant messages, and compactions (its own divider). */
 const HIDDEN_KINDS = new Set([
     'turn.started', 'turn.ended', 'session.created', 'user_message.sent', 'assistant_message.sent',
+    'compaction.requested', 'compaction.completed',
 ])
 /** The process start of a new session is part of its creation; a resume keeps its row. */
 const isCreationStart = event => event.kind === 'process.started' && event.data?.cause === 'new'

@@ -107,6 +107,17 @@ test('the creation, the turns and the start of a new session have no row; a resu
     assert.deepEqual(f.state.snapshot.events.map(e => e.id), [5, 6])
 })
 
+test('compaction events have no chat row: the chat already shows its own compaction divider', async () => {
+    const f = fixture(), kind = (id, k) => ({ ...event(id), kind: k, data: { text: 'summary', trigger: 'auto' } })
+    await initial(f, [event(1), kind(2, 'compaction.requested'), kind(3, 'compaction.completed')])
+    assert.deepEqual(f.state.snapshot.events.map(e => e.id), [1])
+
+    f.controller.notifyLatest(402); await tick()
+    f.requests.at(-1).resolve(body([kind(401, 'compaction.requested'), kind(402, 'compaction.completed')], { latest_id: 402 }))
+    await f.controller.idle()
+    assert.deepEqual(f.state.snapshot.events.map(e => e.id), [1])
+})
+
 test('message snapshots have no chat row in initial history or live updates', async () => {
     const f = fixture(), message = (id, kind) => ({ ...event(id), kind, data: { text: 'Already in the chat' } })
     await initial(f, [event(1), message(2, 'user_message.sent'), message(3, 'assistant_message.sent')])
