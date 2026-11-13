@@ -1199,6 +1199,69 @@ async def test_final_wait_survives_off_newer_start_and_same_id_signal(harness):
     await h.registry.shutdown()
 
 
+async def test_late_indexed_final_is_observed_but_not_consumed_by_ordinary_watermark(harness):
+    h = harness
+    h.policy['final_only'] = True
+    ending = await final_ending()
+    await h.listener.enable(activation())
+    h.policy['final_only'] = False
+    await h.listener.invalidate({'type': 'synced_settings_updated'})
+    await h.listener._refresh_task
+    await Session.objects.acreate(id='other', project_id='p', provider='codex', title='Other', file_path='/tmp/other.jsonl')
+    newer = await event(600, session='other')
+    await h.listener.refresh(); await select(h, newer)
+    await h.listener.started(h.session.playback)
+    exact = await event(1, text='Late indexed final')
+    await h.listener.refresh()
+    assert exact.id in h.listener.seen
+    assert exact.id not in h.listener.consumed
+    assert h.listener.pending == []
+    await resolve_ending(ending, exact)
+    await h.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [ending.id]})
+    await h.listener._refresh_task
+    assert [e['id'] for e in h.listener.pending] == [exact.id]
+    await finish(h)
+    await select(h, exact, 2)
+    assert h.opened[-1][0]['text'] == 'Late indexed final'
+    await h.registry.shutdown()
+
+
+async def test_on_during_summary_descriptor_discards_progress_and_preserves_cutoff(harness, fake_summaries, monkeypatch):
+    h = harness
+    h.policy['summary'] = True
+    await h.listener.enable(activation())
+    first = await event(1)
+    await h.listener.refresh()
+    retained_handle = h.listener.preparations[first.id]['handle'].id
+    progress = await event(2)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = native_timeline.summaries.resolve_timeline_summary
+    async def delayed_resolve(event_id):
+        result = await original(event_id)
+        entered.set()
+        await release.wait()
+        return result
+    monkeypatch.setattr(native_timeline.summaries, 'resolve_timeline_summary', delayed_resolve)
+    refresh = asyncio.create_task(h.listener.refresh())
+    await entered.wait()
+    h.policy['final_only'] = True
+    await h.listener.invalidate({'type': 'synced_settings_updated'})
+    release.set()
+    await refresh
+    await h.listener._refresh_task
+    assert fake_summaries.acquired == [first.id]
+    assert retained_handle in fake_summaries.released
+    assert h.listener.pending == []
+    assert h.listener.preparations == {}
+    recovery = h.session.listening.copy()
+    assert recovery['ordinary_after_id'] == progress.id
+    h.policy.update(final_only=False, summary=False)
+    unread = await event(3)
+    await replace_native(h, recovery)
+    assert [e['id'] for e in h.listener.pending] == [unread.id]
+    await h.registry.shutdown()
+
+
 async def test_replacement_restores_old_final_and_prevents_off_progress_replay(harness):
     h = harness
     h.policy['final_only'] = True

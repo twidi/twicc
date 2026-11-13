@@ -294,8 +294,45 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             || connectionStatus.value !== 'OPEN' || !tts.available || tts.status !== 'idle') return
         const next = activation.pending[0]
         if (!next) return
-        const preparation = summaryEnabled() ? activation.preparations.get(next.message.id) : null
+        let preparation = summaryEnabled() ? activation.preparations.get(next.message.id) : null
         if (summaryEnabled() && !preparation?.descriptor) return
+        if (next.endingId) {
+            // The saved association remains unselected while another reader owns playback.
+            const epoch = activation.finalEpoch, connectionEpoch = activation.connectionEpoch
+            activation.processing = true
+            let body
+            try {
+                body = await store._fetchFinalMessages({ endingIds: [next.endingId], projectIds: scopeOf().projectIds,
+                    includeMuted: includeMuted() })
+            } catch {
+                if (current(activation)) showError(store, localUiMessage('session.timelineSpeech.loadFailed'))
+                return
+            } finally {
+                activation.processing = false
+            }
+            if (!current(activation) || store.suspended) return
+            if (epoch !== activation.finalEpoch || connectionEpoch !== activation.connectionEpoch) {
+                queueMicrotask(() => drain(activation))
+                return
+            }
+            if (!activation.caughtUp || connectionStatus.value !== 'OPEN') return
+            Object.assign(activation.feed.state.sessions, body.sessions)
+            const result = body.items.find(item => item.ending_id === next.endingId)
+            if (result?.state !== 'ready' || result.message?.id !== next.message.id) {
+                activation.pending = activation.pending.filter(entry => entry !== next)
+                if (result?.state !== 'pending') {
+                    activation.finals.delete(next.endingId)
+                    activation.finalDirty.delete(next.endingId)
+                }
+                purge(activation)
+                return
+            }
+            purge(activation)
+            preparation = summaryEnabled() ? activation.preparations.get(next.message.id) : null
+            // Stop, scope, visibility, preference and manual playback can change during validation.
+            if (activation.pending[0] !== next || pageHidden() || tts.status !== 'idle'
+                || !tts.available || (summaryEnabled() && !preparation?.descriptor)) return
+        }
         const entry = activation.pending.shift(), event = entry.message
         activation.processing = true
         activation.reading = event
@@ -332,6 +369,10 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 sortPending(activation)
                 purge(activation)
                 return
+            }
+            if (entry.endingId) {
+                activation.finals.delete(entry.endingId)
+                activation.finalDirty.delete(entry.endingId)
             }
             if (result.ok) {
                 result = await result.ended
@@ -392,13 +433,16 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 for (const result of body.items) {
                     const obligation = activation.finals.get(result.ending_id)
                     if (!obligation || !endingIds.includes(result.ending_id) || result.state === 'pending') continue
-                    activation.finals.delete(result.ending_id)
                     activation.finalDirty.delete(result.ending_id)
                     const event = result.message
                     if (result.state !== 'ready' || !event || typeof event.data?.text !== 'string'
                         || !event.data.text.trim() || activation.consumed.has(event.id)
                         || hidden(activation, event, result.ending_id) || (!includeMuted() && muted(activation, event))
-                        || !activation.boundaries.has(event.project_id)) continue
+                        || !activation.boundaries.has(event.project_id)) {
+                        activation.finals.delete(result.ending_id)
+                        activation.pending = activation.pending.filter(entry => entry.endingId !== result.ending_id)
+                        continue
+                    }
                     const pending = activation.pending.find(entry => entry.message.id === event.id)
                     if (pending?.endingId) continue
                     if (pending) {

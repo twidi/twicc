@@ -1143,6 +1143,58 @@ test('final queue orders by ending time and ending ID without changing old messa
     assert.deepEqual(h.opens.map(body => body.text), ['Manual', 'Message 2', 'Message 3', 'Message 1'])
 })
 
+for (const notify of [false, true]) {
+    test(`queued final is discarded and its summary released after source replacement behind manual speech (signal ${notify})`, async () => {
+        const h = setup(true); h.summariesEnabled()
+        const manual = h.tts.play('Manual'); await settle(); await h.start(); await manual
+        h.finals.set(10, finalResult(10))
+        await h.enable([ending(10)])
+        assert.equal(h.store.pendingCount, 1)
+        h.finals.set(10, finalResult(10, null, 10, 'unavailable'))
+        h.data.sessions.s = { hidden: false, storage_incarnation: 'replacement', history_epoch: 1 }
+        await h.live([], { latest_id: 11 })
+        if (notify) { h.emit('twicc:timeline-changed', 11, [10]); await settle() }
+        await h.end()
+        assert.deepEqual(h.opens.map(body => body.text), ['Manual'])
+        assert.equal(h.store.pendingCount, 0)
+        assert.ok(h.summaryDeletes.includes('/api/summaries/summary-1/'))
+    })
+}
+
+for (const change of ['stop', 'manual', 'OFF', 'ON', 'summary OFF', 'hidden', 'scope']) {
+    test(`final selection await preserves ownership and admission after ${change}`, async () => {
+        const h = setup(true), held = deferred()
+        if (change === 'summary OFF') h.summariesEnabled()
+        const manual = h.tts.play('Manual'); await settle(); await h.start(); await manual
+        h.finals.set(10, finalResult(10))
+        await h.enable([ending(10)], 'ws:w')
+        h.finalReplies.push(() => held.promise)
+        await h.end()
+        assert.deepEqual(h.opens.map(body => body.text), ['Manual'], 'exact proof must resolve before selection')
+        if (change === 'stop') h.store.disable()
+        if (change === 'manual') {
+            const priority = h.tts.play('Priority'); await settle(); await h.start(); await priority
+        }
+        if (change === 'OFF') h.settings.timelineSpeechFinalOnly = false
+        if (change === 'summary OFF') h.settings.timelineSummaryEnabled = false
+        if (change === 'ON') {
+            h.settings.timelineSpeechFinalOnly = false
+            h.settings.timelineSpeechFinalOnly = true
+        }
+        if (change === 'hidden') h.data.sessions.s = { hidden: true }
+        if (change === 'scope') h.workspaces.workspaces.w.ids = ['q']
+        await settle()
+        held.resolve({ items: [finalResult(10)], sessions: page().sessions }); await settle()
+        if (change === 'manual') {
+            assert.deepEqual(h.opens.map(body => body.text), ['Manual', 'Priority'])
+            assert.equal(h.store.pendingCount, 1)
+            await h.end()
+            assert.deepEqual(h.opens.map(body => body.text), ['Manual', 'Priority', 'Message 1'])
+        } else assert.deepEqual(h.opens.map(body => body.text),
+            ['OFF', 'ON', 'summary OFF'].includes(change) ? ['Manual', 'Message 1'] : ['Manual'])
+    })
+}
+
 test('switch on releases only unselected progress preparations and retains final obligations through switch off', async () => {
     const h = setup(); h.summariesEnabled()
     await h.enable([message(1), message(2)])
@@ -1178,7 +1230,8 @@ test('resolution signal during an in-flight pending read triggers one coalesced 
     h.emit('twicc:timeline-changed', 10, [10, 999])
     held.resolve({ items: [finalResult(10, null, 10, 'pending')], sessions: {} }); await settle()
     assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
-    assert.deepEqual(h.finalRequests.map(request => request.endingIds), [[10], [10]])
+    assert.deepEqual(h.finalRequests.map(request => request.endingIds), [[10], [10], [10]],
+        'one coalesced resolution follow-up, then one exact selection validation')
 })
 
 test('read failure reports load error and reconnect retries the retained final obligation', async () => {
@@ -1245,7 +1298,8 @@ test('new eligible endings resolve in batches of at most 100', async () => {
     const endings = Array.from({ length: 205 }, (_, index) => ending(index + 1))
     h.finals.set(205, finalResult(205, message(500)))
     await h.enable(endings)
-    assert.deepEqual(h.finalRequests.map(request => request.endingIds.length), [100, 100, 5])
+    assert.deepEqual(h.finalRequests.map(request => request.endingIds.length), [100, 100, 5, 1],
+        'bounded admission batches, then one exact selection validation')
     assert.deepEqual(h.opens.map(body => body.text), ['Message 500'])
 })
 
@@ -1369,7 +1423,7 @@ for (const outageMs of [119_999, 120_000]) {
         } else {
             assert.deepEqual(h.summaryCalls, [1])
             assert.deepEqual(h.opens.map(body => body.summary_id), ['summary-1'])
-            assert.deepEqual(h.finalRequests.map(request => request.endingIds), [[10], [10]])
+            assert.deepEqual(h.finalRequests.map(request => request.endingIds), [[10], [10], [10]])
             assert.equal(h.infos.length, 0)
         }
     })

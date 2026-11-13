@@ -374,7 +374,6 @@ class TimelineListener:
                 continue
             occurred = timezone.datetime.fromisoformat(event['occurred_at'])
             if self.watermark is not None and occurred < self.watermark - timedelta(seconds=5):
-                self.consumed.add(event['id'])
                 continue
             if event['id'] not in {item['id'] for item in self.pending}:
                 self.pending.append(event)
@@ -512,24 +511,47 @@ class TimelineListener:
         current = await sync_to_async(_read_policy)()
         if self.active is not active or epoch != self._epoch or not self._caught_up or not current['summary']:
             return
-        if current.get('final_only', True):
-            active['ordinary_after_id'] = max(active['ordinary_after_id'], self.cursor)
-            self.pending = [event for event in self.pending if event['id'] in self.final_entries]
+        summary_policy = (current['summary'], current.get('summary_model'))
+
+        async def admitted(policy=None):
+            # Descriptor and handle resolution yield while settings invalidations wait for this lock.
+            if policy is None:
+                policy = await sync_to_async(_read_policy)()
+            if self.active is not active or epoch != self._epoch or not self._caught_up:
+                return False
+            if policy.get('final_only', True):
+                active['ordinary_after_id'] = max(active['ordinary_after_id'], self.cursor)
+                self.pending = [event for event in self.pending if event['id'] in self.final_entries]
+            same_policy = summary_policy == (policy['summary'], policy.get('summary_model'))
+            pending_ids = {event['id'] for event in self.pending}
+            for event_id in list(self.preparations):
+                if self.selected and self.selected['event']['id'] == event_id:
+                    continue
+                if event_id not in pending_ids or not same_policy:
+                    await self._release_preparation(event_id)
+            return same_policy and self.active is active and epoch == self._epoch and self._caught_up
+
+        if not await admitted(current):
+            return
         missing = [e for e in self.pending if e['id'] not in self.preparations]
         for event in missing:
+            if event not in self.pending:
+                continue
             source = None
             try:
                 source, descriptor = await summaries.resolve_timeline_summary(event['id'])
             except ValueError as error:
                 descriptor = {'error': str(error), **({'ui_message': error.ui_message} if getattr(error, 'ui_message', None) else {})}
-            if self.active is not active or epoch != self._epoch or not self._caught_up:
+            if not await admitted():
                 return
+            if event not in self.pending:
+                continue
             self.preparations[event['id']] = {
                 'descriptor': descriptor, 'source': source, 'handle': None, 'watcher': None,
             }
         running = sum(1 for p in self.preparations.values() if p['handle'] is not None
                       and p['handle'].state == 'running' and not p['descriptor'].get('saved'))
-        for event in self.pending:
+        for event in list(self.pending):
             preparation = self.preparations.get(event['id'])
             if preparation is None:
                 continue
@@ -538,13 +560,17 @@ class TimelineListener:
                 continue
             if running >= 2 and not descriptor.get('saved'):
                 continue
+            if not await admitted():
+                return
+            if event not in self.pending:
+                continue
             try:
                 handle = await summaries.acquire_summary(
                     {'event_id': event['id']}, _temporary_source=preparation['source'],
                     usage_origin='timeline',
                 )
                 handle.claim()
-                if self.active is not active or epoch != self._epoch or not self._caught_up:
+                if not await admitted() or event not in self.pending:
                     await summaries.release_summary(handle.id)
                     return
                 preparation['handle'] = handle
