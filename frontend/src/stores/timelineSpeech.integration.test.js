@@ -93,7 +93,7 @@ function setup(t, fields = OPENROUTER) {
             getProjectScopeIds: id => [id], getProjectDisplayName: id => projects[id]?.name ?? id, getMainRepoProjectId: id => id,
         },
         workspacesStore: { getWorkspaceById: () => undefined, getAllProjectIds: () => [] },
-        connectionStatus: ref('OPEN'), eventTarget: target,
+        connectionStatus: ref('OPEN'), eventTarget: target, settingsStore: { timelineSpeechFinalOnly: false },
     })
     t.after(async () => {
         store.dispose()

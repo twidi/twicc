@@ -1,10 +1,10 @@
 import { i18n } from '../i18n/index.js'
 import { localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { defineStore } from 'pinia'
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import { ALL_PROJECTS_ID } from '../constants.js'
 import { createTimelineFeed, positionOfCursor } from '../utils/timeline/feed.js'
-import { compareNewestFirst, shiftEventTime } from '../utils/timeline/eventTime.js'
+import { shiftEventTime } from '../utils/timeline/eventTime.js'
 import { bindTimelineEvents } from '../utils/timeline/liveEvents.js'
 import { resolveTimelineScope } from '../utils/timeline/scope.js'
 import { sessionMention } from '../utils/timeline/sessions.js'
@@ -130,11 +130,17 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     const filters = useTimelineFiltersStore()
     const summaries = useSummariesStore()
     const summaryEnabled = () => settingsStore?.timelineSummaryEnabled !== false
+    const finalOnly = () => settingsStore?.timelineSpeechFinalOnly !== false
+    // Obligations are deliberately non-reactive. Track their membership for session flag watches.
+    const finalEligibilityVersion = ref(0)
     let active = null
     const pageDocument = eventTarget.document
     const pageHidden = () => pageDocument?.visibilityState === 'hidden'
     const current = activation => active === activation
     const count = activation => { store.pendingCount = activation.pending.length }
+    const sortPending = activation => activation.pending.sort((a, b) =>
+        a.speechTime < b.speechTime ? -1 : a.speechTime > b.speechTime ? 1
+            : (a.endingId ?? a.message.id) - (b.endingId ?? b.message.id))
 
     function scopeOf() {
         if (!store.activePageId) return null
@@ -153,11 +159,11 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         return { ...scope, members, label }
     }
 
-    function hidden(activation, event) {
+    function hidden(activation, event, eligibilityId = event.id) {
         return activation.hidden.has(event.session_id)
             || dataStore.getSession(event.session_id)?.hidden === true
             || activation.feed?.state.sessions[event.session_id]?.hidden === true
-            || event.id <= (activation.shown.get(event.session_id) ?? -1)
+            || eligibilityId <= (activation.shown.get(event.session_id) ?? -1)
     }
 
     function includeMuted() {
@@ -190,12 +196,15 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
 
     function prepare(activation) {
         if (!current(activation) || store.suspended) return
-        const pendingIds = new Set(activation.pending.map(event => event.id))
+        // Reconcile policy before summaries can acquire speculative ownership.
+        activation.pending = activation.pending.filter(entry => entry.endingId || !finalOnly())
+        count(activation)
+        const pendingIds = new Set(activation.pending.map(entry => entry.message.id))
         for (const id of activation.preparations.keys()) {
             if (activation.reading?.id !== id && (!summaryEnabled() || !pendingIds.has(id))) releasePreparation(activation, id)
         }
         if (!summaryEnabled()) { queueMicrotask(() => drain(activation)); return }
-        for (const event of activation.pending) {
+        for (const { message: event } of activation.pending) {
             if (activation.preparations.has(event.id)) continue
             const preparation = { event, descriptor: null, subscription: null }
             activation.preparations.set(event.id, preparation)
@@ -217,7 +226,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         let running = [...activation.preparations.values()].filter(preparation =>
             preparation.event.id !== activation.reading?.id && preparation.subscription
             && preparation.subscription.entry.state === 'running' && !preparation.descriptor?.saved).length
-        for (const event of activation.pending) {
+        for (const { message: event } of activation.pending) {
             const preparation = activation.preparations.get(event.id)
             if (preparation.subscription || !preparation.descriptor?.eligible) continue
             if (running >= 2 && !preparation.descriptor.saved) continue
@@ -228,8 +237,15 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     }
 
     function purge(activation) {
-        activation.pending = activation.pending.filter(event => activation.boundaries.has(event.project_id)
-            && !hidden(activation, event) && (includeMuted() || !muted(activation, event)))
+        const eligible = (event, eligibilityId) => activation.boundaries.has(event.project_id)
+            && !hidden(activation, event, eligibilityId) && (includeMuted() || !muted(activation, event))
+        activation.pending = activation.pending.filter(entry => eligible(entry.message, entry.endingId))
+        for (const [id, obligation] of activation.finals) {
+            if (!eligible(obligation)) {
+                activation.finals.delete(id)
+                activation.finalDirty.delete(id)
+            }
+        }
         count(activation)
         prepare(activation)
     }
@@ -258,7 +274,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         const event = activation.reading
         if (!event) return
         activation.readingStarted = true
-        if (!activation.watermark || event.occurred_at > activation.watermark) activation.watermark = event.occurred_at
+        if (!activation.readingEntry.endingId && (!activation.watermark || event.occurred_at > activation.watermark))
+            activation.watermark = event.occurred_at
         activation.context = { project: spokenProjectId(event.project_id), session: event.session_id, endedAt: null }
     }
 
@@ -277,11 +294,13 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             || connectionStatus.value !== 'OPEN' || !tts.available || tts.status !== 'idle') return
         const next = activation.pending[0]
         if (!next) return
-        const preparation = summaryEnabled() ? activation.preparations.get(next.id) : null
+        const preparation = summaryEnabled() ? activation.preparations.get(next.message.id) : null
         if (summaryEnabled() && !preparation?.descriptor) return
-        const event = activation.pending.shift()
+        const entry = activation.pending.shift(), event = entry.message
         activation.processing = true
         activation.reading = event
+        activation.readingEntry = entry
+        activation.consumed.add(event.id)
         activation.readingStarted = false
         count(activation)
         try {
@@ -308,8 +327,9 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             } else result = await tts.play(event.data.text, { owner: activation.token, announcement: announcement(activation, event) })
             if (!current(activation)) return
             if (result.busy) {
-                activation.pending.push(event)
-                activation.pending.sort((a, b) => compareNewestFirst(b, a))
+                activation.consumed.delete(event.id)
+                activation.pending.push(entry)
+                sortPending(activation)
                 purge(activation)
                 return
             }
@@ -325,8 +345,65 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         } finally {
             activation.processing = false
             activation.reading = null
-            if (!activation.pending.some(pending => pending.id === event.id)) releasePreparation(activation, event.id)
+            activation.readingEntry = null
+            if (!activation.pending.some(pending => pending.message.id === event.id)) releasePreparation(activation, event.id)
             if (current(activation)) prepare(activation)
+        }
+    }
+
+    // Pending obligations contain only ending identity, scope and time. Message snapshots enter the
+    // queue only after the server confirms the saved exact association.
+    function invalidateFinals(activation, ids = activation.finals.keys()) {
+        for (const id of ids) if (activation.finals.has(id)) activation.finalDirty.add(id)
+        void resolveFinals(activation)
+    }
+
+    async function resolveFinals(activation) {
+        if (!current(activation) || store.suspended || activation.resolvingFinals || !activation.caughtUp
+            || connectionStatus.value !== 'OPEN') return
+        const epoch = activation.finalEpoch
+        activation.resolvingFinals = true
+        try {
+            while (activation.finalDirty.size && current(activation) && activation.finalEpoch === epoch
+                && !store.suspended && activation.caughtUp && connectionStatus.value === 'OPEN') {
+                const endingIds = [...activation.finalDirty].filter(id => activation.finals.has(id)).slice(0, 100)
+                for (const id of endingIds) activation.finalDirty.delete(id)
+                if (!endingIds.length) break
+                let body
+                try {
+                    body = await store._fetchFinalMessages({ endingIds, projectIds: scopeOf().projectIds,
+                        includeMuted: includeMuted() })
+                } catch {
+                    if (current(activation) && activation.finalEpoch === epoch)
+                        showError(store, localUiMessage('session.timelineSpeech.loadFailed'))
+                    // Retain obligations. Reconnect/resume retries them without a timer.
+                    // A signal received during this failed read still owns a coalesced follow-up.
+                    continue
+                }
+                if (!current(activation) || store.suspended || activation.finalEpoch !== epoch) return
+                Object.assign(activation.feed.state.sessions, body.sessions)
+                for (const result of body.items) {
+                    const obligation = activation.finals.get(result.ending_id)
+                    if (!obligation || !endingIds.includes(result.ending_id) || result.state === 'pending') continue
+                    activation.finals.delete(result.ending_id)
+                    activation.finalDirty.delete(result.ending_id)
+                    const event = result.message
+                    if (result.state !== 'ready' || !event || typeof event.data?.text !== 'string'
+                        || !event.data.text.trim() || activation.consumed.has(event.id)
+                        || hidden(activation, event, result.ending_id) || (!includeMuted() && muted(activation, event))
+                        || !activation.boundaries.has(event.project_id)) continue
+                    const pending = activation.pending.find(entry => entry.message.id === event.id)
+                    if (pending?.endingId) continue
+                    if (pending) {
+                        pending.endingId = result.ending_id
+                        pending.speechTime = result.occurred_at
+                    } else activation.pending.push({ message: event, endingId: result.ending_id, speechTime: result.occurred_at })
+                }
+                sortPending(activation)
+                purge(activation)
+            }
+        } finally {
+            if (activation.finalEpoch === epoch) activation.resolvingFinals = false
         }
     }
 
@@ -360,17 +437,27 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             activation.hidden.delete(event.session_id)
         }
         purge(activation)
+        let addedFinal = false
         for (const event of body.events) {
             if (activation.seen.has(event.id)) continue
             activation.seen.add(event.id)
             const boundary = activation.boundaries.get(event.project_id)
-            if (event.kind !== 'assistant_message.sent' || typeof event.data?.text !== 'string' || !event.data.text.trim()
-                || !boundary || event.occurred_at <= boundary || hidden(activation, event)
-                || (!includeMuted() && muted(activation, event))
+            if (!boundary || event.occurred_at <= boundary || hidden(activation, event)
+                || (!includeMuted() && muted(activation, event))) continue
+            if (finalOnly() && event.kind === 'turn.ended'
+                && ['pending', 'ready'].includes(event.data?.final_message?.state)) {
+                activation.finals.set(event.id, { id: event.id, project_id: event.project_id, session_id: event.session_id })
+                activation.finalDirty.add(event.id)
+                addedFinal = true
+            }
+            if (finalOnly() || event.kind !== 'assistant_message.sent' || typeof event.data?.text !== 'string'
+                || !event.data.text.trim() || activation.consumed.has(event.id)
+                || activation.pending.some(entry => entry.message.id === event.id)
                 || (activation.watermark && event.occurred_at < shiftEventTime(activation.watermark, -5000))) continue
-            activation.pending.push(event)
+            activation.pending.push({ message: event, speechTime: event.occurred_at })
         }
-        activation.pending.sort((a, b) => compareNewestFirst(b, a))
+        sortPending(activation)
+        if (addedFinal) finalEligibilityVersion.value++
         count(activation)
         if (phase === 'live' && responseEpoch === activation.connectionEpoch && connectionStatus.value === 'OPEN') activation.caughtUp = true
         if (activation.bootstrap && (phase === 'first' || phase === 'before')) {
@@ -379,6 +466,10 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             else activation.bootstrap = false
         }
         prepare(activation)
+        if (activation.retryFinals) {
+            activation.retryFinals = false
+            invalidateFinals(activation)
+        } else void resolveFinals(activation)
     }
 
     function replaceScope(scope) {
@@ -398,6 +489,9 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         for (const id of scope.members) boundaries.set(id, activation.boundaries.get(id) ?? joinedAt)
         activation.boundaries = boundaries
         activation.scopeKey = key
+        activation.finalEpoch++
+        activation.resolvingFinals = false
+        activation.retryFinals = true
         purge(activation)
         const previous = activation.feed
         const afterId = activation.bootstrap ? null : previous?.state.liveCursor ?? 0
@@ -415,7 +509,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         })
         activation.feed = feed
         if (afterId !== null) activation.caughtUp = false
-        activation.unbind = bindTimelineEvents(eventTarget, {
+        const unbindFeed = bindTimelineEvents(eventTarget, {
             notifyLatest(id) {
                 if (!current(activation) || store.suspended || activation.feed !== feed) return
                 if (activation.bootstrap && feed.state.loadError) feed.retry()
@@ -425,10 +519,20 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             },
             refresh() {
                 if (!current(activation) || store.suspended || activation.feed !== feed) return
+                activation.retryFinals = true
                 if (activation.bootstrap && feed.state.loadError) feed.retry()
                 feed.refresh()
             },
         })
+        const onFinalized = event => {
+            if (current(activation) && !store.suspended && activation.feed === feed)
+                invalidateFinals(activation, event.detail?.finalizedEndingIds ?? [])
+        }
+        eventTarget.addEventListener('twicc:timeline-changed', onFinalized)
+        activation.unbind = () => {
+            unbindFeed()
+            eventTarget.removeEventListener('twicc:timeline-changed', onFinalized)
+        }
         // Observe mute changes even while excluded, without replaying messages when inclusion changes.
         feed.setScope(scope.projectIds, { include_muted: '1' }, { afterId })
         // Scope reset clears metadata; retain known titles before fresh responses merge over them.
@@ -439,6 +543,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
 
     const subscriptions = [
         watch(summaryEnabled, () => { if (active) prepare(active) }, { flush: 'sync' }),
+        watch(finalOnly, () => { if (active) prepare(active) }, { flush: 'sync' }),
         watch(scopeOf, replaceScope, { deep: true, flush: 'sync' }),
         watch(() => tts.available, available => { if (!available) disable() }, { flush: 'sync' }),
         watch(() => tts.playback, playback => {
@@ -460,6 +565,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             if (status !== 'OPEN' && active.outageSince === null) active.outageSince = store._now()
             if (store.suspended) return
             if (status === 'OPEN') {
+                active.retryFinals = true
                 if (active.bootstrap && active.feed.state.loadError) active.feed.retry()
                 active.feed.refresh()
             }
@@ -467,25 +573,31 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         watch(() => {
             // Reading the count tracks queue replacement; session flags remain independent of view ownership.
             void store.pendingCount
-            return [includeMuted(), active?.pending.map(event => {
+            void finalEligibilityVersion.value
+            return [includeMuted(), [...(active?.pending.map(entry => entry.message) ?? []), ...(active?.finals.values() ?? [])].map(event => {
                 const session = dataStore.getSession(event.session_id)
                 return [session?.hidden, session?.mute_on_user_turn]
-            }) ?? []]
+            })]
         }, () => { if (active) purge(active) }, { flush: 'sync' }),
     ]
     // Replace the activation before cancelling work. Old audio, summary and feed promises lose ownership together.
     function renew(activation, { fresh = false } = {}) {
         const boundary = fresh ? wireTime(store._now()) : activation.boundary
         const pending = fresh ? [] : [...activation.pending]
-        if (!fresh && activation.reading && !activation.readingStarted) pending.push(activation.reading)
-        pending.sort((a, b) => compareNewestFirst(b, a))
+        if (!fresh && activation.reading && !activation.readingStarted) pending.push(activation.readingEntry)
         const next = { ...activation, token: Symbol('timeline-speech'), boundary,
             boundaries: fresh ? new Map([...activation.boundaries.keys()].map(id => [id, boundary])) : activation.boundaries,
             pending, preparations: new Map(), processing: false, reading: null, readingStarted: false,
+            readingEntry: null, consumed: new Set(activation.consumed),
+            finals: fresh ? new Map() : new Map(activation.finals), finalDirty: new Set(),
+            finalEpoch: 0, resolvingFinals: false, retryFinals: true,
             context: null, watermark: fresh ? null : activation.watermark,
             bootstrap: fresh || activation.bootstrap, caughtUp: false, replaceFeed: true,
             outageSince: fresh ? null : activation.outageSince,
         }
+        // A selected reading cancelled before playback can resume from its frozen queue entry.
+        if (!fresh && activation.reading && !activation.readingStarted) next.consumed.delete(activation.reading.id)
+        sortPending(next)
         active = next
         activation.unbind?.()
         activation.feed?.dispose()
@@ -532,6 +644,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             active = {
                 token: Symbol('timeline-speech'), boundary, boundaries: new Map(), scopeKey: null,
                 seen: new Set(), shown: new Map(), hidden: new Set(), pending: [], preparations: new Map(), reading: null,
+                readingEntry: null, consumed: new Set(), finals: new Map(), finalDirty: new Set(),
+                finalEpoch: 0, resolvingFinals: false, retryFinals: false,
                 bootstrap: true, caughtUp: connectionStatus.value === 'OPEN', processing: false, context: null, watermark: null,
                 feed: null, unbind: null, connectionEpoch: 0, readingStarted: false,
                 outageSince: connectionStatus.value === 'OPEN' ? null : store._now(),
@@ -570,6 +684,15 @@ export const useTimelineSpeechStore = defineStore('timelineSpeech', {
         async _fetchPage(params) {
             const { fetchTimelinePage } = await import('../composables/useTimelineFeed.js')
             return fetchTimelinePage(params)
+        },
+        async _fetchFinalMessages({ endingIds, projectIds, includeMuted }) {
+            const { apiFetch } = await import('../utils/api.js')
+            const query = new URLSearchParams({ ending_ids: endingIds.join(',') })
+            if (projectIds.length) query.set('projects', projectIds.join(','))
+            if (includeMuted) query.set('include_muted', '1')
+            const response = await apiFetch(`/api/timeline/final-messages/?${query}`)
+            if (!response.ok) throw new Error(String(response.status))
+            return response.json()
         },
         async _showInfo(messageDescriptor) {
             const { toast } = await import('../composables/useToast.js')

@@ -50,7 +50,7 @@ afterEach(async () => {
     await settle()
     _resetSpeechForTests()
 })
-function setup() {
+function setup(finalOnly = false) {
     _resetSpeechForTests()
     setActivePinia(createPinia())
     let handlers, now = CLICK, primeCount = 0
@@ -85,7 +85,15 @@ function setup() {
     target.document = new ListenerTarget()
     target.document.visibilityState = 'visible'
     const filters = useTimelineFiltersStore()
-    const settings = reactive({ timelineSummaryEnabled: true, summaryModel: 'auto' })
+    const settings = reactive({ timelineSummaryEnabled: true, timelineSpeechFinalOnly: finalOnly, summaryModel: 'auto' })
+    const finals = new Map(), finalRequests = [], finalReplies = []
+    store._fetchFinalMessages = async params => {
+        finalRequests.push(params)
+        if (finalReplies.length) return finalReplies.shift()(params)
+        return { items: params.endingIds.map(id => finals.get(id) ?? {
+            ending_id: id, state: 'pending', occurred_at: at(10), message: null,
+        }), sessions: page().sessions }
+    }
     const summaries = useSummariesStore(), summaryCalls = [], summaryStreams = new Map(), summaryDeletes = []
     let eligible = false
     const descriptor = id => ({ source_key: `event-${id}`, source_hash: `hash-${id}`, policy_key: settings.summaryModel,
@@ -114,15 +122,15 @@ function setup() {
     store._showInfo = message => infos.push(message)
     store._showError = error => errors.push(error)
     store.initialize({ dataStore: data, workspacesStore: workspaces, connectionStatus: status, eventTarget: target, settingsStore: settings })
-    const emit = (name, latestId) => {
+    const emit = (name, latestId, finalizedEndingIds) => {
         const event = new Event(name)
-        event.detail = { latestId }
+        event.detail = { latestId, finalizedEndingIds }
         target.dispatchEvent(event)
     }
     cleanups.push(() => { store.dispose(); tts.stop(); store.$dispose(); tts.$dispose() })
     return {
         store, filters, tts, data, workspaces, status, target, opens, requests, replies, errors, emit,
-        settings, summaries, summaryCalls, summaryDeletes, acquisitions, infos,
+        settings, summaries, summaryCalls, summaryDeletes, acquisitions, infos, finals, finalRequests, finalReplies,
         visibility(value) { target.document.visibilityState = value; target.document.dispatchEvent(new Event('visibilitychange')) },
         summariesEnabled() { eligible = true },
         async summary(id, state = 'complete', error = null) {
@@ -620,9 +628,9 @@ test('automatic ending holds selection while the player briefly reports idle', a
 test('initialization is idempotent and disposal removes all owned listeners', async () => {
     const h = setup()
     await h.enable([])
-    assert.equal(h.target.listeners.size, 4)
+    assert.equal(h.target.listeners.size, 5)
     h.store.initialize({ dataStore: h.data, workspacesStore: h.workspaces, connectionStatus: h.status, eventTarget: h.target })
-    assert.equal(h.target.listeners.size, 4)
+    assert.equal(h.target.listeners.size, 5)
     h.store.dispose()
     assert.equal(h.target.listeners.size, 0)
     h.status.value = 'CLOSED'; h.status.value = 'OPEN'
@@ -1058,4 +1066,281 @@ test('short truncated catch-up paginates missed messages and preserves listening
     assert.deepEqual(h.opens.map(body => body.text), ['Message 1', 'Message 2', 'Message 3', 'Message 4', 'Message 5'])
     assert.equal(h.errors.length, 0)
     assert.equal(h.infos.length, 0)
+})
+
+const ending = (id, second = 10, project = 'p', session = 's') => ({
+    id, kind: 'turn.ended', occurred_at: at(second), project_id: project, session_id: session,
+    data: { final_message: { state: 'pending', storage_incarnation: 'source', history_epoch: 0 } },
+})
+const finalResult = (id, selected = message(1), second = 10, state = 'ready') => ({
+    ending_id: id, state, occurred_at: state === 'unavailable' ? null : at(second),
+    message: state === 'ready' ? selected : null,
+})
+
+for (const order of ['message first', 'ending first', 'already published YES', 'NO then forced final', 'Codex shell accepted']) {
+    test(`final-only reads the exact saved selection once: ${order}`, async () => {
+        const h = setup(true), selected = message(1)
+        if (order === 'ending first' || order === 'Codex shell accepted') {
+            await h.enable([ending(10)])
+            assert.equal(h.opens.length, 0)
+            h.finals.set(10, finalResult(10, selected))
+            await h.live([selected])
+            h.emit('twicc:timeline-changed', 10, [10]); await settle()
+        } else {
+            await h.enable([selected, message(2)])
+            assert.equal(h.opens.length, 0)
+            h.finals.set(10, finalResult(10, selected))
+            await h.live([ending(10)])
+        }
+        assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+        h.emit('twicc:timeline-changed', 10, [10]); await settle()
+        await h.start(); await h.end()
+        assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+    })
+}
+
+test('final-only holds shell work and settles empty, legacy and unavailable endings without summaries', async () => {
+    const h = setup(true); h.summariesEnabled()
+    h.finals.set(11, finalResult(11, null, 11, 'none'))
+    h.finals.set(12, finalResult(12, null, 12, 'unavailable'))
+    h.finals.set(13, finalResult(13, { ...message(3), data: { text: '   ' } }, 13))
+    await h.enable([message(1), ending(10), ending(11), ending(12), ending(13),
+        { ...ending(14), data: {} }])
+    assert.deepEqual(h.opens, [])
+    assert.deepEqual(h.summaryCalls, [])
+    const reads = h.finalRequests.length
+    h.emit('twicc:timeline-changed', 14, [11, 12, 13, 14, 999]); await settle()
+    assert.equal(h.finalRequests.length, reads)
+})
+
+test('final admission uses ending time, bypasses ordinary watermark and keeps summary message identity', async () => {
+    const h = setup(true); h.summariesEnabled()
+    h.finals.set(20, finalResult(20, message(2, 40, 'p', 'other'), 40))
+    await h.enable([ending(10), ending(20, 40, 'p', 'other')])
+    assert.deepEqual(h.summaryCalls, [2])
+    await h.summary(2); await h.start()
+    const old = { ...message(1), occurred_at: '2026-11-04T10:20:00.000000Z' }
+    h.finals.set(10, finalResult(10, old, 10))
+    h.settings.timelineSpeechFinalOnly = false
+    h.emit('twicc:timeline-changed', 20, [10]); await settle()
+    assert.deepEqual(h.summaryCalls, [2, 1])
+    await h.end()
+    assert.deepEqual(h.opens.map(body => body.summary_id), ['summary-2', 'summary-1'])
+    await h.summary(1); await h.start(); await h.end()
+    await h.live([message(3, 1)], { latest_id: 21 })
+    assert.equal(h.opens.at(-1).summary_id, 'summary-3', 'final speech never advances the ordinary watermark')
+})
+
+test('final queue orders by ending time and ending ID without changing old message snapshots', async () => {
+    const h = setup(true)
+    const manual = h.tts.play('Manual'); await settle(); await h.start(); await manual
+    h.finals.set(30, finalResult(30, message(1, 50), 20))
+    h.finals.set(20, finalResult(20, message(2, 40), 10))
+    h.finals.set(21, finalResult(21, message(3, 30), 10))
+    await h.enable([ending(30, 20), ending(21), ending(20)])
+    await h.end()
+    for (let i = 0; i < 3; i++) { await h.start(); await h.end() }
+    assert.deepEqual(h.opens.map(body => body.text), ['Manual', 'Message 2', 'Message 3', 'Message 1'])
+})
+
+test('switch on releases only unselected progress preparations and retains final obligations through switch off', async () => {
+    const h = setup(); h.summariesEnabled()
+    await h.enable([message(1), message(2)])
+    const selected = h.tts.playback.identity
+    h.settings.timelineSpeechFinalOnly = true; await settle()
+    await h.live([ending(10)])
+    assert.deepEqual(h.tts.playback.identity, selected)
+    assert.ok(h.summaryDeletes.includes('/api/summaries/summary-2/'))
+    assert.ok(!h.summaryDeletes.includes('/api/summaries/summary-1/'))
+    h.settings.timelineSpeechFinalOnly = false
+    h.finals.set(10, finalResult(10, { ...message(3), occurred_at: '2026-11-04T10:20:00.000000Z' }))
+    h.emit('twicc:timeline-changed', 10, [10]); await settle()
+    await h.summary(1); await h.start(); await h.end()
+    assert.deepEqual(h.opens.map(body => body.summary_id), ['summary-1', 'summary-3'])
+})
+
+test('message selected in ordinary mode is not repeated when its final association arrives', async () => {
+    const h = setup()
+    await h.enable([message(1)])
+    h.settings.timelineSpeechFinalOnly = true
+    h.finals.set(10, finalResult(10))
+    await h.live([ending(10)])
+    await h.start(); await h.end()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+})
+
+test('resolution signal during an in-flight pending read triggers one coalesced exact follow-up', async () => {
+    const h = setup(true), held = deferred()
+    h.finalReplies.push(() => held.promise)
+    await h.enable([ending(10)])
+    h.finals.set(10, finalResult(10))
+    h.emit('twicc:timeline-changed', 10, [10])
+    h.emit('twicc:timeline-changed', 10, [10, 999])
+    held.resolve({ items: [finalResult(10, null, 10, 'pending')], sessions: {} }); await settle()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+    assert.deepEqual(h.finalRequests.map(request => request.endingIds), [[10], [10]])
+})
+
+test('read failure reports load error and reconnect retries the retained final obligation', async () => {
+    const h = setup(true)
+    h.finalReplies.push(() => Promise.reject(new Error('offline')))
+    await h.enable([ending(10)])
+    assert.equal(h.errors.length, 1)
+    assert.deepEqual(h.opens, [])
+    h.finals.set(10, finalResult(10))
+    h.status.value = 'CLOSED'; h.replies.push(page()); h.status.value = 'OPEN'; await settle()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+})
+
+test('reconnect refreshes pending finals without replay and unrelated signals do not resolve them', async () => {
+    const h = setup(true)
+    await h.enable([ending(10)])
+    await h.live([message(2)])
+    assert.equal(h.finalRequests.length, 1)
+    h.finals.set(10, finalResult(10))
+    h.replies.push(page())
+    h.emit('twicc:ws-reconnected'); await settle()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+    await h.start(); await h.end()
+    h.replies.push(page([ending(10)])); h.emit('twicc:ws-reconnected'); await settle()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+})
+
+for (const invalidation of ['stop', 'scope departure', 'hidden', 'muted', 'source unavailable', 'long outage']) {
+    test(`obsolete final cannot start after ${invalidation}`, async () => {
+        const h = setup(true), held = deferred()
+        h.finalReplies.push(() => held.promise)
+        await h.enable([ending(10)], 'ws:w')
+        if (invalidation === 'stop') h.store.disable()
+        if (invalidation === 'scope departure') { h.workspaces.workspaces.w.ids = ['q']; await settle() }
+        if (invalidation === 'hidden') { h.data.sessions.s = { hidden: true }; await settle() }
+        if (invalidation === 'muted') { h.data.sessions.s = { mute_on_user_turn: true }; await settle() }
+        if (invalidation === 'long outage') {
+            h.status.value = 'CLOSED'; h.now(CLICK + 120_000)
+            h.replies.push(page()); h.status.value = 'OPEN'; await settle()
+        }
+        held.resolve({ items: [finalResult(10, message(1), 10,
+            invalidation === 'source unavailable' ? 'unavailable' : 'ready')], sessions: {} }); await settle()
+        assert.deepEqual(h.opens, [])
+        assert.deepEqual(h.summaryCalls, [])
+    })
+}
+
+test('scope replacement invalidates stale reads and resume retries pending finals', async () => {
+    const h = setup(true), held = deferred()
+    h.finalReplies.push(() => held.promise)
+    await h.enable([ending(10)], 'ws:w')
+    h.workspaces.workspaces.w.ids = ['p', 'q']; await settle()
+    held.resolve({ items: [finalResult(10, message(99))], sessions: {} }); await settle()
+    assert.deepEqual(h.opens, [])
+    h.visibility('hidden'); h.finals.set(10, finalResult(10))
+    h.visibility('visible'); h.replies.push(page()); h.store.resume(); await settle()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+    assert.ok(h.finalRequests.every(request => request.includeMuted === false))
+    assert.deepEqual(h.finalRequests.at(-1).projectIds, ['p', 'q'])
+})
+
+test('new eligible endings resolve in batches of at most 100', async () => {
+    const h = setup(true)
+    const endings = Array.from({ length: 205 }, (_, index) => ending(index + 1))
+    h.finals.set(205, finalResult(205, message(500)))
+    await h.enable(endings)
+    assert.deepEqual(h.finalRequests.map(request => request.endingIds.length), [100, 100, 5])
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 500'])
+})
+
+test('pending final survives OFF and a newer ordinary playback watermark', async () => {
+    const h = setup(true)
+    await h.enable([ending(10)])
+    h.settings.timelineSpeechFinalOnly = false
+    await h.live([message(20, 50)])
+    await h.start()
+    h.finals.set(10, finalResult(10, { ...message(1), occurred_at: '2026-11-04T10:20:00.000000Z' }))
+    h.emit('twicc:timeline-changed', 20, [10]); await settle()
+    await h.end()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 20', 'Message 1'])
+})
+
+test('final proof upgrades an unselected ordinary entry and survives a later ON toggle', async () => {
+    const h = setup(true)
+    const manual = h.tts.play('Manual'); await settle(); await h.start(); await manual
+    await h.enable([ending(10)])
+    h.settings.timelineSpeechFinalOnly = false
+    await h.live([message(20, 50)])
+    h.finals.set(10, finalResult(10, message(20, 50)))
+    h.emit('twicc:timeline-changed', 20, [10]); await settle()
+    h.settings.timelineSpeechFinalOnly = true; await settle()
+    await h.end()
+    assert.deepEqual(h.opens.map(body => body.text), ['Manual', 'Message 20'])
+})
+
+test('matching signal during a failed read still triggers its coalesced follow-up', async () => {
+    const h = setup(true), held = deferred()
+    h.finalReplies.push(() => held.promise)
+    await h.enable([ending(10)])
+    h.finals.set(10, finalResult(10))
+    h.emit('twicc:timeline-changed', 10, [10]); await settle()
+    held.reject(new Error('obsolete failure')); await settle()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
+    assert.equal(h.errors.length, 1)
+})
+
+for (const flag of ['hidden', 'mute_on_user_turn']) {
+    test(`pending final discarded on ${flag} cannot return after the flag clears`, async () => {
+        const h = setup(true)
+        await h.enable([ending(10)])
+        h.data.sessions.s = { [flag]: true }; await settle()
+        h.data.sessions.s[flag] = false; await settle()
+        h.finals.set(10, finalResult(10))
+        h.emit('twicc:timeline-changed', 10, [10]); await settle()
+        assert.deepEqual(h.opens, [])
+    })
+}
+
+for (const endingId of [10, 20]) {
+    test(`session show cutoff uses ending ${endingId} instead of its older selected message`, async () => {
+        const h = setup(true)
+        const manual = h.tts.play('Manual'); await settle(); await h.start(); await manual
+        h.finals.set(endingId, finalResult(endingId, message(1), endingId))
+        await h.enable([{ ...ending(15, 15), kind: 'hidden.ended', data: {} }, ending(endingId, endingId)])
+        await h.live([message(21)])
+        await h.end()
+        assert.deepEqual(h.opens.map(body => body.text), endingId === 20 ? ['Manual', 'Message 1'] : ['Manual'])
+    })
+}
+
+test('missing preference defaults to final-only and OFF endings never replay on ON', async () => {
+    const h = setup()
+    delete h.settings.timelineSpeechFinalOnly
+    await h.enable([message(1)])
+    assert.deepEqual(h.opens, [])
+    h.settings.timelineSpeechFinalOnly = false
+    await h.live([ending(10)])
+    h.settings.timelineSpeechFinalOnly = true
+    h.finals.set(10, finalResult(10))
+    h.emit('twicc:timeline-changed', 10, [10]); await settle()
+    assert.deepEqual(h.opens, [])
+    assert.deepEqual(h.finalRequests, [])
+})
+
+test('old ending cannot authorize speech even when its selected message has a new date', async () => {
+    const h = setup(true)
+    h.finals.set(10, finalResult(10, message(20), 0))
+    await h.enable([ending(10, 0), message(20)])
+    assert.deepEqual(h.opens, [])
+    assert.deepEqual(h.finalRequests, [])
+})
+
+test('coalesced final read waits for successful reconnect when the socket closes during its pending response', async () => {
+    const h = setup(true), held = deferred()
+    h.finalReplies.push(() => held.promise)
+    await h.enable([ending(10)])
+    h.emit('twicc:timeline-changed', 10, [10]); await settle()
+    h.status.value = 'CLOSED'
+    held.resolve({ items: [finalResult(10, null, 10, 'pending')], sessions: {} }); await settle()
+    assert.equal(h.finalRequests.length, 1)
+    assert.deepEqual(h.opens, [])
+    h.finals.set(10, finalResult(10))
+    h.replies.push(page()); h.status.value = 'OPEN'; await settle()
+    assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
 })
