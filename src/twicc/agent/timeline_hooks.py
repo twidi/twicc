@@ -85,6 +85,9 @@ def record_logical_turn_boundary(*, agent, snapshot: CompletionSnapshot, kind: s
     data = {"message_refs": refs, "input_origins": agent._timeline_origins_for_refs(refs) or None}
     if kind == TimelineKind.TURN_ENDED:
         data["background_work"] = background_work
+        if ending is not None and snapshot.outcome == "normal":
+            data["final_message"] = {"state": "pending",
+                "storage_incarnation": ending.scope.storage_incarnation, "history_epoch": ending.scope.history_epoch}
     reason = ((getattr(agent, "kill_reason", None) or "error")
               if kind == TimelineKind.TURN_ENDED and snapshot.outcome in ("ended", "provider_error") else "")
     origin = _end_origin(agent, reason) if reason else None

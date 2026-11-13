@@ -131,6 +131,7 @@ def record_event_sync(
     caused_by: TimelineEvent | int | None = None,
     data: dict | None = None,
     dedupe_key: str | None = None,
+    final_message_resolution: dict | None = None,
 ) -> TimelineEvent | None:
     """Write one event. Returns the row, or ``None`` on failure or dedupe hit.
 
@@ -148,8 +149,16 @@ def record_event_sync(
     ``provider`` is an optional hint (a free source the caller already holds); the ``provider`` column is
     resolved by :func:`resolve_provider` whatever the caller passes. After a successful insert (not on a
     dedupe hit, not on a failure) the timeline signal is requested for when the transaction commits.
+
+    ``final_message_resolution`` never inserts. It resolves only the exact existing normal ending's
+    pending final metadata. Success or identical replay returns that ending; failure returns ``None``.
+    Only a changed resolution requests the timeline signal. Call under existing writer admission.
     """
     try:
+        if final_message_resolution is not None:
+            return _resolve_final_message(kind, session_id=session_id, project_id=project_id,
+                provider=provider, occurred_at=occurred_at, dedupe_key=dedupe_key,
+                resolution=final_message_resolution)
         resolved = resolve_event_origin(actor, origin)
         if kind in STARTED_OF:
             data = inherit_started_fields(kind, data, _open_started_data(session_id, kind))
@@ -186,6 +195,41 @@ def record_event_sync(
     except Exception:
         logger.exception("Timeline event %s could not be written for session %s", kind, session_id)
         return None
+
+
+def _resolve_final_message(kind, *, session_id, project_id, provider, occurred_at, dedupe_key, resolution):
+    """Resolve only a new ending's final proof; callers own writer admission."""
+    if kind != TimelineKind.TURN_ENDED or session_id is None or dedupe_key is None:
+        return None
+    state = resolution.get('state')
+    keys = {'state', 'storage_incarnation', 'history_epoch'} | ({'event_id'} if state == 'ready' else set())
+    if state not in ('ready', 'none') or set(resolution) != keys:
+        return None
+    if state == 'ready' and (type(resolution['event_id']) is not int or resolution['event_id'] <= 0):
+        return None
+    with transaction.atomic():
+        event = TimelineEvent.objects.filter(session_id=session_id, dedupe_key=dedupe_key,
+            kind=kind, project_id=project_id, provider=provider, occurred_at=occurred_at, actor='agent').first()
+        if event is None:
+            return None
+        previous = event.data.get('final_message')
+        if not isinstance(previous, dict):
+            return None
+        if previous.get('state') != 'pending':
+            return event if previous == resolution else None
+        scope = {name: resolution[name] for name in ('storage_incarnation', 'history_epoch')}
+        if (any(previous.get(name) not in (None, value) for name, value in scope.items())
+                or not Session.objects.filter(pk=session_id, provider=provider, project_id=project_id, **scope).exists()):
+            return None
+        if state == 'ready':
+            message = TimelineEvent.objects.filter(pk=resolution['event_id'], session_id=session_id,
+                project_id=project_id, provider=provider, kind=TimelineKind.ASSISTANT_MESSAGE_SENT, actor='agent').first()
+            if message is None or any(message.data.get(name) != value for name, value in scope.items()):
+                return None
+        event.data = {**event.data, 'final_message': resolution}
+        TimelineEvent.objects.filter(pk=event.pk).update(data=event.data)
+        timeline_signal.poke_on_commit()
+        return event
 
 
 class EventSpec(NamedTuple):

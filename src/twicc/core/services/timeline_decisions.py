@@ -272,6 +272,8 @@ def publish_message_if_ready(*, decision_id: str) -> int | None:
 def fulfill_final_message_obligation(*, ending_id: str) -> bool:
     """Resolve one frozen ending's exact last eligible native assistant group."""
     from twicc.core.services.timeline_messages import _ensure_decision_source, _fulfill_final_message
+    from twicc.core.models import TimelineEvent, TimelineKind
+    from twicc.core.services.session_timeline import record_event_sync
     with transaction.atomic():
         row = TimelineDecision.objects.filter(pk=ending_id, kind='ending', status='accepted').first()
         if row is None:
@@ -280,8 +282,22 @@ def fulfill_final_message_obligation(*, ending_id: str) -> bool:
             return True
         if not _ensure_decision_source(row):
             return False
-        if not _fulfill_final_message(row):
+        result = _fulfill_final_message(row)
+        if not result.resolved:
             return False
+        event = TimelineEvent.objects.filter(session_id=row.session_id,
+            dedupe_key=f'turn:{row.turn_id}:{TimelineKind.TURN_ENDED}').first()
+        # Legacy or intentionally absent records retain their old publication behavior.
+        if event is not None and event.data.get('final_message') is not None:
+            resolution = {'state': 'ready' if result.event_id is not None else 'none',
+                'storage_incarnation': row.storage_incarnation, 'history_epoch': row.history_epoch}
+            if result.event_id is not None:
+                resolution['event_id'] = result.event_id
+            if record_event_sync(TimelineKind.TURN_ENDED, session_id=row.session_id,
+                    project_id=row.session.project_id, provider=row.provider, actor='agent',
+                    occurred_at=row.occurred_at, dedupe_key=event.dedupe_key,
+                    final_message_resolution=resolution) is None:
+                return False
         TimelineDecision.objects.filter(pk=row.pk, force_pending=True).update(force_pending=False)
         _wake_after_commit()
         return True
@@ -389,7 +405,9 @@ def apply_accepted_ending(*, decision_id: str, now: datetime) -> bool:
                 project_id=row.session.project_id, provider=row.provider, actor=TimelineActor.AGENT,
                 occurred_at=row.occurred_at, dedupe_key=key,
                 data={'message_refs': row.payload.get('boundary_refs', row.payload.get('message_refs', [])),
-                      'input_origins': None, 'background_work': row.payload.get('background_work')})
+                      'input_origins': None, 'background_work': row.payload.get('background_work'),
+                      'final_message': {'state': 'pending', 'storage_incarnation': row.storage_incarnation,
+                                        'history_epoch': row.history_epoch}})
             if event is None and not TimelineEvent.objects.filter(session_id=row.session_id, dedupe_key=key,
                     kind=TimelineKind.TURN_ENDED, occurred_at=row.occurred_at).exists():
                 raise RuntimeError('Recovered ending event was not persisted')

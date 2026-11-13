@@ -11,7 +11,7 @@ from twicc.agent.states import AgentState
 from twicc.core.models import TimelineKind
 
 #: Version of the payload shapes below. Bump it when a kind's payload changes shape (design §3).
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class SessionCreatedData(NamedTuple):
@@ -70,6 +70,7 @@ class TurnEndedData(NamedTuple):
     background_work: dict | None = None
     message_refs: list | None = None
     input_origins: list | None = None
+    final_message: dict | None = None
 
 
 class CompactionRequestedData(NamedTuple):

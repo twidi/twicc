@@ -4,6 +4,7 @@ import hashlib
 import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
+from typing import NamedTuple
 from uuid import uuid4
 
 import orjson
@@ -22,6 +23,11 @@ from twicc.request_origin import RequestOrigin, SYSTEM_ORIGIN, origin_from_paylo
 
 logger = logging.getLogger(__name__)
 _MESSAGE_KINDS = (TimelineKind.USER_MESSAGE_SENT, TimelineKind.ASSISTANT_MESSAGE_SENT)
+
+
+class FinalMessageResult(NamedTuple):
+    resolved: bool
+    event_id: int | None
 
 
 def _saved_input_origins(session):
@@ -601,12 +607,12 @@ def _publish_decided_message(row):
     return event.pk
 
 
-def _fulfill_final_message(ending):
+def _fulfill_final_message(ending) -> FinalMessageResult:
     from twicc.core.services.timeline_decisions import force_message, publish_message_if_ready
     session = Session.objects.get(pk=ending.session_id)
     refs = [NativeMessageRef(**ref) for ref in ending.payload['snapshot']['final_refs']]
     if not refs:
-        return True
+        return FinalMessageResult(True, None)
     groups = _resolve_groups(session, refs, floor=ending.payload['source_floor'],
                              ceiling=ending.payload.get('source_ceiling'))
     helpers = get_provider_helpers(session.provider)
@@ -617,17 +623,17 @@ def _fulfill_final_message(ending):
         group = next((group for group in groups
                       if any(final_ref in aliases for _, _, aliases in group)), None)
         if group is None:
-            return False
+            return FinalMessageResult(False, None)
         if (all(helpers.is_final_assistant_message(raw) is None for _, raw, _ in group)
                 and not any(ref in refs and ref.kind != 'claude_message'
                             for _, _, aliases in group for ref in aliases)):
-            return False
+            return FinalMessageResult(False, None)
         data = _eligible_group(session, group, refs)
         if data is not None:
             selected = group, data
             break
     if selected is None:
-        return True
+        return FinalMessageResult(True, None)
     group, data = selected
     identity = _canonical(session, group[0])
     digest = hashlib.sha256(orjson.dumps([session.provider, TimelineKind.ASSISTANT_MESSAGE_SENT,
@@ -635,20 +641,23 @@ def _fulfill_final_message(ending):
     key = 'msg:' + digest
     if session.provider == 'codex':
         _capture(session, group, timeline_since=None, eligible=True, verified=refs, fulfill=False)
-        return _matching_event(session, dedupe_key=key, data=data, occurred_at=group[0][0].timestamp) is not None
+        event = _matching_event(session, dedupe_key=key, data=data, occurred_at=group[0][0].timestamp)
+        return FinalMessageResult(event is not None, event.pk if event is not None else None)
     row = _canonical_decision(session, identity_key=key, observed_ref=identity)
     if row is None:
         # A previously published message needs no new semantic candidate.
         if TimelineEvent.objects.filter(session_id=session.id, dedupe_key=key).exists():
-            return _matching_event(session, dedupe_key=key, data=data, occurred_at=group[0][0].timestamp) is not None
+            event = _matching_event(session, dedupe_key=key, data=data, occurred_at=group[0][0].timestamp)
+            return FinalMessageResult(event is not None, event.pk if event is not None else None)
         _capture(session, group, timeline_since=None, eligible=True, verified=refs, fulfill=False)
         row = _canonical_decision(session, identity_key=key, observed_ref=identity)
     if row is None or row.occurred_at != group[0][0].timestamp or {
             **row.payload['event_data'], 'storage_incarnation': session.storage_incarnation,
             'history_epoch': session.history_epoch} != data:
-        return False
+        return FinalMessageResult(False, None)
     force_message(decision_id=str(row.pk), reason='final_message')
-    return publish_message_if_ready(decision_id=str(row.pk)) is not None
+    event_id = publish_message_if_ready(decision_id=str(row.pk))
+    return FinalMessageResult(event_id is not None, event_id)
 
 
 def _ensure_decision_source(row):
