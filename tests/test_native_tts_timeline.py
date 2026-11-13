@@ -42,7 +42,7 @@ def harness(monkeypatch):
     Project.objects.create(id='q', name='Other', directory='/tmp/q')
     Project.objects.create(id='wt', name='Worktree', worktree_of_id='p')
     Session.objects.create(id='s', project_id='p', provider='codex', title='Session')
-    policy = {'entry': {'id': 'voice', 'kind': 'openrouter', **FIELDS}, 'adapt': 'off', 'summary': False}
+    policy = {'entry': {'id': 'voice', 'kind': 'openrouter', **FIELDS}, 'adapt': 'off', 'summary': False, 'final_only': False}
     monkeypatch.setattr(native_timeline, '_read_policy', lambda: policy.copy())
     workspaces = {'workspaces': [{'id': 'w', 'name': 'Workspace', 'projectIds': ['p']}]}
     monkeypatch.setattr(native_timeline, 'read_workspaces', lambda: workspaces)
@@ -1137,3 +1137,338 @@ async def test_notice_retry_after_short_flap_retains_accepted_boundary(harness):
         assert [item['id'] for item in h.listener.pending] == [fresh.id]
     finally:
         await h.registry.shutdown()
+
+
+async def final_ending(message=None, second=10, session='s'):
+    current = await Session.objects.aget(pk=session)
+    if not current.storage_incarnation:
+        current.storage_incarnation = str(uuid4())
+        await current.asave(update_fields=['storage_incarnation'])
+    scope = {'storage_incarnation': current.storage_incarnation, 'history_epoch': current.history_epoch}
+    if message:
+        await TimelineEvent.objects.filter(pk=message.id).aupdate(actor='agent', data={**message.data, **scope})
+    return await sync_to_async(record_event_sync)('turn.ended', project_id=current.project_id,
+        session_id=session, provider=current.provider, actor='agent', occurred_at=CLICK + timedelta(seconds=second),
+        data={'final_message': {'state': 'ready' if message else 'pending', **scope,
+                               **({'event_id': message.id} if message else {})}})
+
+
+async def resolve_ending(ending, message):
+    current = await Session.objects.aget(pk=ending.session_id)
+    scope = {'storage_incarnation': current.storage_incarnation, 'history_epoch': current.history_epoch}
+    await TimelineEvent.objects.filter(pk=message.id).aupdate(actor='agent', data={**message.data, **scope})
+    await TimelineEvent.objects.filter(pk=ending.id).aupdate(data={'final_message': {
+        'state': 'ready', 'event_id': message.id, **scope}})
+
+
+async def test_final_only_gates_summaries_and_uses_exact_earlier_message(harness, fake_summaries):
+    h = harness
+    h.policy.update(final_only=True, summary=True)
+    exact = await event(-2, text='Exact final')
+    await event(1, text='Progress')
+    await h.listener.enable(activation())
+    assert h.listener.pending == []
+    assert fake_summaries.acquired == []
+    ending = await final_ending(exact)
+    await h.listener.refresh()
+    assert [e['id'] for e in h.listener.pending] == [exact.id]
+    assert fake_summaries.acquired == [exact.id]
+    assert h.session._candidate['occurred_at'] == format_occurred_at(exact.occurred_at)
+    assert h.session._candidate['final_ending_id'] == ending.id
+    await h.registry.shutdown()
+
+
+async def test_final_wait_survives_off_newer_start_and_same_id_signal(harness):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    ending = await final_ending()
+    await h.listener.enable(activation())
+    assert h.session.listening['pending_final_ending_ids'] == [ending.id]
+    h.policy['final_only'] = False
+    await h.listener.invalidate({'type': 'synced_settings_updated'})
+    await h.listener._refresh_task
+    newer = await event(600)
+    await h.listener.refresh(); await select(h, newer); await finish(h)
+    await resolve_ending(ending, exact)
+    await h.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [ending.id]})
+    await h.listener._refresh_task
+    assert [e['id'] for e in h.listener.pending] == [exact.id]
+    await select(h, exact, 2)
+    assert h.opened[-1][0]['text'] == 'Message -2'
+    await h.registry.shutdown()
+
+
+async def test_replacement_restores_old_final_and_prevents_off_progress_replay(harness):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    ending = await final_ending()
+    progress = await event(20)
+    await h.listener.enable(activation())
+    recovery = h.session.listening.copy()
+    assert recovery['ordinary_after_id'] >= progress.id
+    recovery['boundary'] = format_occurred_at(CLICK + timedelta(seconds=595))
+    h.policy['final_only'] = False
+    await resolve_ending(ending, exact)
+    unread = await event(600)
+    await h.listener.enable(recovery)
+    assert [e['id'] for e in h.listener.pending] == [exact.id, unread.id]
+    await select(h, exact); await finish(h)
+    recovery = h.session.listening.copy()
+    await h.listener.enable(recovery)
+    assert [e['id'] for e in h.listener.pending] == [unread.id]
+    await h.registry.shutdown()
+
+
+async def test_final_hidden_show_cutoff_uses_ending_id(harness):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    await event(1, kind='hidden.ended')
+    await final_ending(exact)
+    await h.listener.enable(activation())
+    assert [e['id'] for e in h.listener.pending] == [exact.id]
+    await Session.objects.filter(pk='s').aupdate(hidden=True)
+    await h.listener.refresh()
+    assert h.listener.pending == []
+    await h.registry.shutdown()
+
+
+async def replace_native(h, recovery):
+    await h.listener.close()
+    h.session = h.registry.open(str(uuid4()), ('cookie', 'fp'))
+    h.listener = h.session.coordinator
+    h.listener.clock = lambda: CLICK + timedelta(seconds=650)
+    await h.listener.enable({**recovery, 'activation_id': str(uuid4())})
+
+
+async def test_expired_native_session_keeps_late_final_after_newer_ordinary_checkpoint(harness):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    waiting = await final_ending()
+    started = await event(11)
+    await final_ending(started, second=12)
+    await h.listener.enable(activation())
+    await select(h, started); await finish(h)
+    h.policy['final_only'] = False
+    newer = await event(600)
+    await h.listener.refresh(); await select(h, newer, 2); await finish(h)
+    recovery = h.session.listening.copy()
+    recovery['boundary'] = format_occurred_at(CLICK + timedelta(seconds=595))
+    await replace_native(h, recovery)
+    assert h.listener.pending == []
+    await resolve_ending(waiting, exact)
+    await h.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [waiting.id]})
+    await h.listener._refresh_task
+    assert [e['id'] for e in h.listener.pending] == [exact.id]
+    await select(h, exact); await finish(h)
+    await h.listener.refresh()
+    assert h.listener.pending == []
+    assert [body['text'] for body, _ in h.opened] == ['Message 11', 'Message 600', 'Message -2']
+    await h.registry.shutdown()
+
+
+async def test_consumed_ordinary_message_stays_consumed_when_final_association_arrives_after_replacement(harness):
+    h = harness
+    first = await event(1)
+    await h.listener.enable(activation()); await select(h, first); await finish(h)
+    newer = await event(600)
+    await h.listener.refresh(); await select(h, newer, 2); await finish(h)
+    h.policy['final_only'] = True
+    waiting = await final_ending(second=601)
+    await h.listener.refresh()
+    recovery = h.session.listening.copy()
+    recovery['boundary'] = format_occurred_at(CLICK + timedelta(seconds=595))
+    await replace_native(h, recovery)
+    await resolve_ending(waiting, first)
+    await h.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [waiting.id]})
+    await h.listener._refresh_task
+    assert h.listener.pending == []
+    assert h.session.listening['pending_final_ending_ids'] == []
+    await h.registry.shutdown()
+
+
+async def test_final_resolution_inflight_signal_is_not_lost(harness, monkeypatch):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    waiting = await final_ending()
+    await h.listener.enable(activation())
+    original = native_timeline.resolve_final_messages
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+    async def delayed(ids, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = await sync_to_async(original)(ids, **kwargs)
+        if calls == 1:
+            entered.set()
+            await release.wait()
+        return result
+    # Replace the thread adapter only for this asynchronous, controlled service call.
+    original_adapter = native_timeline.sync_to_async
+    monkeypatch.setattr(native_timeline, 'sync_to_async', lambda fn: delayed if fn is original else original_adapter(fn))
+    await h.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [waiting.id]})
+    await entered.wait()
+    await resolve_ending(waiting, exact)
+    await h.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [waiting.id]})
+    release.set()
+    await h.listener._refresh_task
+    assert [e['id'] for e in h.listener.pending] == [exact.id]
+    assert calls == 2
+    await h.registry.shutdown()
+
+
+async def test_reconnect_during_final_lookup_fences_summary_until_next_catchup(harness, fake_summaries, monkeypatch):
+    h = harness
+    h.policy.update(final_only=True, summary=True)
+    exact = await event(-2)
+    waiting = await final_ending()
+    await h.listener.enable(activation())
+    await resolve_ending(waiting, exact)
+    original = native_timeline.resolve_final_messages
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def delayed(ids, **kwargs):
+        result = await sync_to_async(original)(ids, **kwargs)
+        entered.set(); await release.wait()
+        return result
+    original_adapter = native_timeline.sync_to_async
+    monkeypatch.setattr(native_timeline, 'sync_to_async', lambda fn: delayed if fn is original else original_adapter(fn))
+    h.listener._final_dirty.add(waiting.id)
+    task = asyncio.create_task(h.listener.refresh())
+    await entered.wait()
+    # Reserve reconnect while preventing its catch-up from masking the stale response.
+    monkeypatch.setattr(h.listener, 'invalidate', lambda payload: asyncio.sleep(0))
+    await h.listener.reconnect()
+    release.set(); await task
+    assert fake_summaries.acquired == []
+    assert h.session._candidate is None
+    monkeypatch.setattr(native_timeline, 'sync_to_async', original_adapter)
+    await h.listener.refresh()
+    assert fake_summaries.acquired == [exact.id]
+    await h.registry.shutdown()
+
+
+async def test_final_replacement_scans_only_new_metadata_and_batches_exact_lookups(harness, monkeypatch):
+    h = harness
+    h.policy['final_only'] = True
+    await h.listener.enable(activation())
+    recovery = h.session.listening.copy()
+    for index in range(AFTER_ID_CAP + 1):
+        await event(1, text='Ignored progress')
+    exact = await event(-2)
+    waiting = [await final_ending(second=10) for _ in range(101)]
+    for ending in waiting:
+        await resolve_ending(ending, exact)
+    original = native_timeline.resolve_final_messages
+    batches = []
+    def resolve(ids, **kwargs):
+        batches.append(len(ids))
+        return original(ids, **kwargs)
+    monkeypatch.setattr(native_timeline, 'resolve_final_messages', resolve)
+    serialized = []
+    original_serializer = native_timeline.serialize_event
+    def serialize(row, **kwargs):
+        serialized.append(row.kind)
+        return original_serializer(row, **kwargs)
+    monkeypatch.setattr(native_timeline, 'serialize_event', serialize)
+    await replace_native(h, recovery)
+    assert [e['id'] for e in h.listener.pending] == [exact.id]
+    assert batches == [100, 1]
+    assert 'assistant_message.sent' not in serialized
+    assert h.session.listening['ending_cursor'] == waiting[-1].id
+    await h.registry.shutdown()
+
+
+async def test_ordinary_notifications_never_resolve_finals_without_obligations(harness, monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError('No outstanding final obligations')
+    monkeypatch.setattr(native_timeline, 'resolve_final_messages', forbidden)
+    await harness.listener.enable(activation())
+    await event(1)
+    await harness.listener.refresh()
+    await harness.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [9999]})
+    await harness.listener._refresh_task
+    assert len(harness.listener.pending) == 1
+    await harness.registry.shutdown()
+
+
+async def test_final_selection_checks_source_scope_before_new_summary_work(harness, fake_summaries):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    await final_ending(exact)
+    await h.listener.enable(activation())
+    await Session.objects.filter(pk='s').aupdate(history_epoch=1)
+    h.policy['summary'] = True
+    await select(h, exact)
+    assert fake_summaries.acquired == []
+    assert h.opened == []
+    assert h.listener.pending == []
+    await h.registry.shutdown()
+
+
+async def test_final_selection_checks_hidden_state_before_new_summary_work(harness, fake_summaries):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    await final_ending(exact)
+    await h.listener.enable(activation())
+    await Session.objects.filter(pk='s').aupdate(hidden=True)
+    h.policy['summary'] = True
+    await select(h, exact)
+    assert fake_summaries.acquired == []
+    assert h.opened == []
+    await h.registry.shutdown()
+
+
+async def test_replacement_does_not_revive_final_before_hidden_show_cutoff(harness):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    waiting = await final_ending()
+    await h.listener.enable(activation())
+    await event(11, kind='hidden.ended')
+    await h.listener.refresh()
+    recovery = h.session.listening.copy()
+    await resolve_ending(waiting, exact)
+    await replace_native(h, recovery)
+    assert h.listener.pending == []
+    await h.registry.shutdown()
+
+
+async def test_fresh_native_recovery_discards_old_endings_and_consumption(harness):
+    h = harness
+    h.policy['final_only'] = True
+    exact = await event(-2)
+    waiting = await final_ending()
+    ready = await event(12)
+    await final_ending(ready, second=13)
+    await h.listener.enable(activation())
+    recovery = h.session.listening.copy()
+    await h.listener.command({**recovery, 'type': 'listen', 'fresh': True})
+    await asyncio.gather(*tuple(h.listener._tasks))
+    await resolve_ending(waiting, exact)
+    await h.listener.invalidate({'type': 'timeline_changed', 'finalized_ending_ids': [waiting.id]})
+    await h.listener._refresh_task
+    assert h.listener.pending == []
+    assert h.session.listening['final_boundary'] == format_occurred_at(CLICK + timedelta(seconds=50))
+    assert h.session.listening['pending_final_ending_ids'] == []
+    await h.registry.shutdown()
+
+
+async def test_selection_mode_change_persists_ignored_progress_cutoff_before_replacement(harness):
+    h = harness
+    progress = await event(1)
+    await h.listener.enable(activation())
+    h.policy['final_only'] = True
+    await select(h, progress)
+    assert h.opened == []
+    recovery = h.session.listening.copy()
+    h.policy['final_only'] = False
+    unread = await event(2)
+    await replace_native(h, recovery)
+    assert [e['id'] for e in h.listener.pending] == [unread.id]
+    await h.registry.shutdown()

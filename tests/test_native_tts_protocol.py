@@ -136,3 +136,26 @@ def test_rejects_invalid_recovery_options(fields):
         parse_native_command(frame('listen', activation_id=str(uuid4()), page_id='page',
             scope={'kind': 'global', 'id': None}, include_muted=False,
             boundary='2026-11-05T12:00:00.000000Z', **fields))
+
+
+def final_listen(**extra):
+    return frame('listen', activation_id=str(uuid4()), page_id='page',
+        scope={'kind': 'global', 'id': None}, include_muted=False,
+        boundary='2026-11-05T12:10:00.000000Z', **extra)
+
+
+def test_final_recovery_metadata_round_trips_with_ordinary_checkpoint():
+    command = final_listen(final_boundary='2026-11-05T12:00:00.000000Z', ending_cursor=42,
+        ordinary_after_id=40, pending_final_ending_ids=[12, 31], excluded_event_ids=[2, 17])
+    assert parse_native_command(command) == command
+
+
+@pytest.mark.parametrize('extra', [
+    {'final_boundary': '2026-11-05T12:00:00Z'}, {'final_boundary': '2026-02-30T12:00:00.000000Z'},
+    {'ending_cursor': -1}, {'ending_cursor': True}, {'ordinary_after_id': -1},
+    {'pending_final_ending_ids': [0]}, {'pending_final_ending_ids': [True]},
+    {'pending_final_ending_ids': '12'},
+])
+def test_final_recovery_metadata_rejects_invalid_values(extra):
+    with pytest.raises(ValueError):
+        parse_native_command(final_listen(**extra))

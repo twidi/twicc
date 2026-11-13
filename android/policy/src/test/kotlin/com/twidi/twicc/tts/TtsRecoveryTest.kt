@@ -19,6 +19,110 @@ class TtsRecoveryTest {
         assertFalse(listen(h.state("recovery", handshake["seq"])).containsKey("telemetry_epoch"))
     }
 
+    @Test fun replacementKeepsFinalBoundaryAndOwnedBacklogWithoutAdvancingOrdinaryCheckpoint() {
+        val h = Harness()
+        val activation = h.controller.snapshot().listening!!.activationId
+        h.controller.dispatch(TtsCommand.ServerFrame("initial", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 1L, "ack_seq" to 2L, "listening" to mapOf("activation_id" to activation,
+                "final_boundary" to "2026-11-05T12:00:00.000000Z", "ending_cursor" to 900L,
+                "ordinary_after_id" to 899L, "pending_final_ending_ids" to listOf(12L, 31L)))))
+        h.controller.dispatch(TtsCommand.ServerFrame("initial", mapOf("protocol" to 1, "type" to "candidate",
+            "activation_id" to activation, "event_id" to 7L, "text" to "Final", "final_ending_id" to 31L,
+            "occurred_at" to "2026-11-05T12:10:00.000000Z", "final_occurred_at" to "2026-11-05T12:11:00.000000Z")))
+        val reading = h.controller.snapshot().playback
+        h.controller.dispatch(TtsCommand.PlayerFeedback(reading.readingId!!, reading.generation, PlayerSignal.Started))
+        h.lost(); h.now = 60000; h.reconnect()
+        h.controller.dispatch(TtsCommand.ServerFrame("recovery", mapOf("protocol" to 1, "type" to "error", "code" to "session_lost")))
+        h.controller.dispatch(TtsCommand.TransportOpened("new"))
+        val sent = h.opened("new").filterIsInstance<TtsEffect.Send>().filter { it.frame["type"] == "listen" }
+        assertTrue(sent.isNotEmpty())
+        for (value in sent.map { it.frame }) {
+            assertEquals("2026-11-05T12:00:00.000000Z", value["boundary"])
+            assertEquals("2026-11-05T12:00:00.000000Z", value["final_boundary"])
+            assertEquals(900L, value["ending_cursor"])
+            assertEquals(899L, value["ordinary_after_id"])
+            assertEquals(listOf(12L, 31L), value["pending_final_ending_ids"])
+            assertEquals(listOf(7L), value["excluded_event_ids"])
+        }
+    }
+
+    @Test fun obsoleteActivationCannotReplaceRecoveryMetadata() {
+        val h = Harness()
+        h.controller.dispatch(TtsCommand.ServerFrame("initial", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 1L, "ack_seq" to 2L, "listening" to mapOf("activation_id" to "old",
+                "final_boundary" to "2026-11-05T11:00:00.000000Z", "ending_cursor" to 900L,
+                "ordinary_after_id" to 899L, "pending_final_ending_ids" to listOf(12L)))))
+        h.lost(); h.now = 60000; h.reconnect()
+        h.controller.dispatch(TtsCommand.ServerFrame("recovery", mapOf("protocol" to 1, "type" to "error", "code" to "session_lost")))
+        h.controller.dispatch(TtsCommand.TransportOpened("new"))
+        val sent = h.opened("new").filterIsInstance<TtsEffect.Send>().filter { it.frame["type"] == "listen" }
+        assertTrue(sent.isNotEmpty())
+        for (value in sent.map { it.frame }) {
+            assertEquals("2026-11-05T12:00:00.000000Z", value["final_boundary"])
+            assertEquals(emptyList<Long>(), value["pending_final_ending_ids"])
+        }
+    }
+
+    @Test fun ordinaryConsumedIdsSurviveCheckpointPruningAndFinalModeReplacement() {
+        val h = Harness()
+        for ((id, occurred) in listOf(7L to "2026-11-05T12:01:00.000000Z", 8L to "2026-11-05T12:10:00.000000Z")) {
+            h.candidate(id, occurred)
+            val reading = h.controller.snapshot().playback
+            h.controller.dispatch(TtsCommand.PlayerFeedback(reading.readingId!!, reading.generation, PlayerSignal.Started))
+            h.controller.dispatch(TtsCommand.PlayerFeedback(reading.readingId, reading.generation, PlayerSignal.Ended(true)))
+        }
+        h.lost(); h.now = 60000; h.reconnect()
+        h.controller.dispatch(TtsCommand.ServerFrame("recovery", mapOf("protocol" to 1, "type" to "error", "code" to "session_lost")))
+        h.controller.dispatch(TtsCommand.TransportOpened("new"))
+        val sent = h.opened("new").filterIsInstance<TtsEffect.Send>().filter { it.frame["type"] == "listen" }
+        assertTrue(sent.isNotEmpty())
+        for (value in sent.map { it.frame }) {
+            assertEquals(listOf(7L, 8L), value["excluded_event_ids"])
+            assertEquals("2026-11-05T12:09:54.999999Z", value["boundary"])
+            assertEquals("2026-11-05T12:00:00.000000Z", value["final_boundary"])
+        }
+    }
+
+    @Test fun resumeAndLongOutageClearFinalBacklogAndCutoff() {
+        for (paused in listOf(false, true)) {
+            val h = Harness()
+            val activation = h.controller.snapshot().listening!!.activationId
+            h.controller.dispatch(TtsCommand.ServerFrame("initial", mapOf("protocol" to 1, "type" to "state",
+                "revision" to 1L, "ack_seq" to 2L, "listening" to mapOf("activation_id" to activation,
+                    "final_boundary" to "2026-11-05T12:00:00.000000Z", "ending_cursor" to 900L,
+                    "ordinary_after_id" to 899L, "pending_final_ending_ids" to listOf(12L),
+                    "excluded_event_ids" to listOf(7L)))))
+            val value = if (paused) {
+                h.controller.dispatch(TtsCommand.PauseTimeline(activation))
+                listen(h.controller.dispatch(TtsCommand.ResumeTimeline(activation, "2026-11-05T12:30:00.000000Z")))
+            } else {
+                h.lost(); h.now = 120000; val handshake = h.reconnect()
+                listen(h.state("recovery", handshake["seq"]))
+            }
+            assertEquals(emptyList<Long>(), value["pending_final_ending_ids"])
+            assertEquals(emptyList<Long>(), value["excluded_event_ids"])
+            assertEquals(0L, value["ending_cursor"])
+            assertEquals(0L, value["ordinary_after_id"])
+            if (paused) assertEquals("2026-11-05T12:30:00.000000Z", value["final_boundary"])
+            else assertEquals(true, value["fresh"])
+        }
+    }
+
+    @Test fun expiredSessionAfterLongOutageNeverRestoresOldFinalBacklogBeforeFreshReset() {
+        val h = Harness()
+        val activation = h.controller.snapshot().listening!!.activationId
+        h.controller.dispatch(TtsCommand.ServerFrame("initial", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 1L, "ack_seq" to 2L, "listening" to mapOf("activation_id" to activation,
+                "pending_final_ending_ids" to listOf(12L), "ending_cursor" to 900L, "ordinary_after_id" to 899L))))
+        h.lost(); h.now = 120000; h.reconnect()
+        h.controller.dispatch(TtsCommand.ServerFrame("recovery", mapOf("protocol" to 1, "type" to "error", "code" to "session_lost")))
+        h.controller.dispatch(TtsCommand.TransportOpened("new"))
+        val sent = h.opened("new").filterIsInstance<TtsEffect.Send>().filter { it.frame["type"] == "listen" }
+        assertTrue(sent.isNotEmpty())
+        assertTrue(sent.all { it.frame["fresh"] == true })
+        assertTrue(sent.all { it.frame["pending_final_ending_ids"] == emptyList<Long>() })
+    }
+
     private class Harness {
         var now = 0L
         val owner = DocumentOwner("instance", "page", 1)

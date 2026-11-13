@@ -12,7 +12,9 @@ data class ListeningScope(val kind: String, val id: String?, val label: String? 
     fun wire(): TtsFrame = mapOf("kind" to kind, "id" to id)
 }
 data class NativeListening(val activationId: String, val pageId: String, val scope: ListeningScope,
-    val boundary: String, val includeMuted: Boolean, val paused: Boolean = false)
+    val boundary: String, val includeMuted: Boolean, val paused: Boolean = false,
+    val finalBoundary: String = boundary, val endingCursor: Long = 0, val ordinaryAfterId: Long = 0,
+    val pendingFinalEndingIds: List<Long> = emptyList())
 data class NativePlayback(val readingId: String? = null, val generation: Long = 0, val operationId: String? = null,
     val identity: TtsFrame? = null, val source: String? = null, val text: String = "", val configId: String? = null,
     val status: String = "idle", val phase: String = "idle", val automatic: Boolean = false,

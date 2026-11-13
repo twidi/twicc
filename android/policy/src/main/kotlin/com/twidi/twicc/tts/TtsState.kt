@@ -39,6 +39,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     private var checkpointReset = false
     private var checkpoint: String? = null
     private val checkpointEvents = linkedMapOf<Long, java.time.Instant>()
+    private val consumedEvents = linkedSetOf<Long>()
+    private var playbackFinalEndingId: Long? = null
     private var playbackEvent: Pair<Long, String>? = null
     private var pendingCount = 0
     private var error: TtsFrame? = null
@@ -77,16 +79,20 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     private fun listenFields(current: NativeListening): TtsFrame = mapOf(
         "activation_id" to current.activationId, "scope" to current.scope.wire(), "page_id" to current.pageId,
         "include_muted" to current.includeMuted, "boundary" to (checkpoint ?: current.boundary),
-        "excluded_event_ids" to checkpointEvents.keys.toList())
+        "excluded_event_ids" to consumedEvents.toList(), "final_boundary" to current.finalBoundary,
+        "ending_cursor" to current.endingCursor, "ordinary_after_id" to current.ordinaryAfterId,
+        "pending_final_ending_ids" to current.pendingFinalEndingIds)
     private fun longOutage() = outageAt?.let { elapsedMs() - it >= 120000L } == true
     private fun recoverTimeline(fresh: Boolean = true) {
         val current = listening ?: return
         if (current.paused || stopSeq != null) return
         recoveryLostAt = null
         cancel(sendSkip = true)
-        val next = current.copy(activationId = newId())
+        val next = if (fresh) current.copy(activationId = newId(), finalBoundary = current.boundary,
+            endingCursor = 0, ordinaryAfterId = 0, pendingFinalEndingIds = emptyList())
+            else current.copy(activationId = newId())
         listening = next; pendingCount = 0
-        if (fresh) { checkpoint = null; checkpointEvents.clear() }
+        if (fresh) { checkpoint = null; checkpointEvents.clear(); consumedEvents.clear() }
         val notice = if (noticeDue) {
             reserve(null, null, "recovery", recoveryAnnouncement(), null, true)
             readingFields() + mapOf("text" to playback.text)
@@ -101,7 +107,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             if (ack >= reset && (state["listening"] as? Map<*, *>)?.get("activation_id") == listening?.activationId) {
                 recoverySeq = null
                 val serverBoundary = (state["listening"] as? Map<*, *>)?.get("boundary") as? String
-                if (serverBoundary != null) listening = listening?.copy(boundary = serverBoundary)
+                if (serverBoundary != null) listening = listening?.copy(boundary = serverBoundary,
+                    finalBoundary = ((state["listening"] as? Map<*, *>)?.get("final_boundary") as? String) ?: serverBoundary)
                 val nextLongOutage = recoveryLostAt?.let { elapsedMs() - it >= 120000L } == true
                 if (longOutage() && !longPolicyApplied || nextLongOutage) {
                     noticeDue = true; longPolicyApplied = true; recoverTimeline()
@@ -126,7 +133,12 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         sessionId = null; secret = null; openingFrame = null; serverRevision = -1
         ack = 0; ready = false
         connect()
-        listening?.takeUnless { it.paused }?.let { queue("listen", listenFields(it)) }
+        listening?.takeUnless { it.paused }?.let {
+            if (longOutage()) {
+                noticeDue = true; longPolicyApplied = true
+                recoverTimeline(fresh = true)
+            } else queue("listen", listenFields(it))
+        }
     }
     private fun readingFields(p: NativePlayback = playback): TtsFrame = mapOf("reading_id" to p.readingId, "generation" to p.generation)
     private fun connect() {
@@ -171,7 +183,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             resource?.let { effects += TtsEffect.Release(it) }; resource = null
             finish(false, failure, aborted = failure == null, details = failureDetails)
         }
-        playback = NativePlayback(generation = generation); playbackEvent = null
+        playback = NativePlayback(generation = generation); playbackEvent = null; playbackFinalEndingId = null
     }
     private fun errorOwner(value: NativePlayback): TtsFrame = if (value.readingId == null) emptyMap() else
         mapOf("automatic" to value.automatic, "operation_id" to value.operationId, "reading_id" to value.readingId, "generation" to value.generation)
@@ -219,7 +231,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 activate()
                 listening?.let { queue("disable", mapOf("activation_id" to it.activationId)); if (playback.automatic) cancel() }
                 val next = NativeListening(newId(), command.pageId, command.scope, command.boundary, command.includeMuted)
-                listening = next; pendingCount = 0; checkpoint = null; checkpointEvents.clear()
+                listening = next; pendingCount = 0; checkpoint = null; checkpointEvents.clear(); consumedEvents.clear()
                 outageAt = if (!ready) elapsedMs() else null; recoverySeq = null; noticeDue = false; longPolicyApplied = false
                 // Only explicit user activation carries the collection epoch.
                 // Recovery and notification resume rebuild listenFields without it.
@@ -255,8 +267,9 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             is TtsCommand.ResumeTimeline -> {
                 val current = listening ?: return emptyList()
                 if (stopSeq != null || !current.paused || current.activationId != command.activationId) return emptyList()
-                val next = current.copy(activationId = newId(), boundary = command.boundary, paused = false)
-                listening = next; pendingCount = 0; checkpoint = null; checkpointEvents.clear()
+                val next = current.copy(activationId = newId(), boundary = command.boundary, paused = false,
+                    finalBoundary = command.boundary, endingCursor = 0, ordinaryAfterId = 0, pendingFinalEndingIds = emptyList())
+                listening = next; pendingCount = 0; checkpoint = null; checkpointEvents.clear(); consumedEvents.clear()
                 if (longOutage()) noticeDue = true
                 if (ready && noticeDue) { longPolicyApplied = true; recoverTimeline() }
                 else queue("listen", listenFields(next))
@@ -317,6 +330,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                                 ready = true
                                 if (stopSeq == null) status = "connected"
                                 flushPending()
+                                retainListeningSnapshot(f)
                                 reconciled(f)
                             }
                             // Update backend metadata after acknowledgement. Listening intent follows commands and owned errors.
@@ -338,6 +352,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                         playback.audioId == null && resource == null) cancel()
                     "candidate" -> if (ready && recoverySeq == null && stopSeq == null && playback.readingId == null && listening?.paused == false && listening?.activationId == f["activation_id"]) {
                         reserve(null, f["identity"] as? TtsFrame, "message", f["text"] as? String ?: "", null, true)
+                        playbackFinalEndingId = (f["final_ending_id"] as? Number)?.toLong()
                         playbackEvent = (f["event_id"] as? Number)?.toLong()?.let { id ->
                             (f["occurred_at"] as? String)?.let { id to it }
                         }
@@ -368,12 +383,15 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                         playback = playback.copy(started = true, phase = "playing", status = "playing")
                         if (playback.source == "recovery") noticeDue = false
                         playbackEvent?.let { (id, occurred) ->
-                            checkpointEvents[id] = java.time.Instant.parse(occurred)
-                            val latest = checkpointEvents.values.maxOrNull()!!
-                            // The listener admits late arrivals within five seconds of its watermark.
-                            val floor = maxOf(latest.minusSeconds(5).minusNanos(1000), java.time.Instant.parse(listening!!.boundary))
-                            checkpoint = java.time.format.DateTimeFormatterBuilder().appendInstant(6).toFormatter().format(floor)
-                            checkpointEvents.entries.removeAll { it.value <= floor }
+                            consumedEvents.add(id)
+                            if (playbackFinalEndingId == null) {
+                                checkpointEvents[id] = java.time.Instant.parse(occurred)
+                                val latest = checkpointEvents.values.maxOrNull()!!
+                                // The listener admits late arrivals within five seconds of its watermark.
+                                val floor = maxOf(latest.minusSeconds(5).minusNanos(1000), java.time.Instant.parse(listening!!.boundary))
+                                checkpoint = java.time.format.DateTimeFormatterBuilder().appendInstant(6).toFormatter().format(floor)
+                                checkpointEvents.entries.removeAll { it.value <= floor }
+                            }
                         }
                         queue("started", readingFields())
                     }
@@ -414,6 +432,25 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         }
         return result
     }
+    /** Boundary, cursors, obligations and consumed IDs come from one acknowledged activation. */
+    private fun retainListeningSnapshot(frame: TtsFrame) {
+        val current = listening ?: return
+        if (current.paused || retained.isNotEmpty()) return
+        val state = frame["listening"] as? Map<*, *> ?: return
+        if (state["activation_id"] != current.activationId) return
+        val boundary = state["boundary"] as? String ?: current.boundary
+        listening = current.copy(boundary = boundary,
+            finalBoundary = state["final_boundary"] as? String ?: current.finalBoundary,
+            endingCursor = (state["ending_cursor"] as? Number)?.toLong() ?: current.endingCursor,
+            ordinaryAfterId = (state["ordinary_after_id"] as? Number)?.toLong() ?: current.ordinaryAfterId,
+            pendingFinalEndingIds = (state["pending_final_ending_ids"] as? List<*>)?.mapNotNull {
+                (it as? Number)?.toLong()
+            } ?: current.pendingFinalEndingIds)
+        (state["excluded_event_ids"] as? List<*>)?.forEach {
+            (it as? Number)?.toLong()?.let(consumedEvents::add)
+        }
+    }
+
     private fun matches(f: TtsFrame) = playback.readingId != null && f["reading_id"] == playback.readingId &&
         (f["generation"] as? Number)?.toLong() == playback.generation
     private fun obsoleteListeningError(f: TtsFrame): Boolean = f["reading_id"] == null &&

@@ -10,12 +10,16 @@ from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
+from django.db.models import Max
 from django.utils import timezone
 
-from twicc.core.models import Project
+from twicc.core.models import Project, TimelineEvent
 from twicc.core.services.timeline_feed import (
-    FeedRequest, build_sessions_table, fetch_click_boundary, fetch_feed, format_occurred_at,
+    FeedRequest, _page_querysets, build_sessions_table, cited_session_ids, fetch_feed, format_occurred_at,
+    latest_event_id, serialize_event,
 )
+from twicc.core.services.timeline_final_messages import resolve_final_messages
+from twicc.core.services.timeline_filters import TimelineFilter
 from twicc.projects import expand_project_ids_with_worktrees, project_scope_ids
 from twicc.summaries import service as summaries
 from twicc.synced_settings import read_synced_settings
@@ -74,7 +78,27 @@ def _read_policy():
             entry = None
     settings = read_synced_settings()
     return {'entry': entry, 'adapt': config['adapt'], 'summary': settings.get('timelineSummaryEnabled') is not False,
-            'summary_model': settings.get('summaryModel')}
+            'summary_model': settings.get('summaryModel'), 'final_only': settings.get('timelineSpeechFinalOnly') is not False}
+
+
+def _read_range(request, boundary, after_id=0):
+    """Capture one complete, scoped range using the feed's existing filtered querysets."""
+    high_water = latest_event_id() or 0
+    events = {}
+    for rows in _page_querysets(request._replace(before=None, after_id=None)):
+        rows = rows.filter(id__gt=after_id, id__lte=high_water,
+                           occurred_at__gt=timezone.datetime.fromisoformat(boundary))
+        for event in rows.iterator(chunk_size=100):
+            events[event.id] = event
+    ordered = sorted(events.values(), key=lambda event: (event.occurred_at, event.id))
+    return {'events': [serialize_event(event, include_ui_messages=True) for event in ordered],
+            'latest_id': high_water, 'sessions': build_sessions_table(cited_session_ids(ordered)),
+            'truncated': False}
+
+
+def _shown_boundaries(session_ids):
+    return {row['session_id']: row['last_id'] for row in TimelineEvent.objects.filter(
+        session_id__in=session_ids, kind='hidden.ended').values('session_id').annotate(last_id=Max('id'))}
 
 
 class TimelineListener:
@@ -84,9 +108,12 @@ class TimelineListener:
         self.session, self.clock = session, clock
         self.active = None
         self.pending, self.seen = [], set()
-        self.boundaries, self.shown = {}, {}
+        self.boundaries, self.final_boundaries, self.shown = {}, {}, {}
         self.cursor, self.watermark, self.context = 0, None, None
         self.selected = None
+        self.finals, self.final_entries, self.consumed = {}, {}, set()
+        self._final_dirty = set()
+        self._final_only = True
         self.preparations = {}
         self._summary_policy = None
         self._selections = {}
@@ -118,6 +145,8 @@ class TimelineListener:
             await self.disable()
             if command.get('fresh'):
                 command = {**command, 'boundary': format_occurred_at(self.clock())}
+                for key in ('final_boundary', 'ending_cursor', 'ordinary_after_id', 'pending_final_ending_ids', 'excluded_event_ids'):
+                    command.pop(key, None)
             self._activate(command)
             # Only explicit user activations carry an epoch. Android recovery
             # and notification resume issue listen too, without this field.
@@ -174,6 +203,9 @@ class TimelineListener:
                 event_id, task = selection
                 task.cancel()
                 self.pending = [event for event in self.pending if event['id'] != event_id]
+                self.consumed.add(event_id)
+                if event_id in self.final_entries:
+                    self._drop_final(self.final_entries[event_id]['ending_id'])
                 await self._release_preparation(event_id)
                 await self._offer()
 
@@ -183,13 +215,23 @@ class TimelineListener:
             self._caught_up = False
             self._epoch += 1
             self.session._candidate = None
+            self._final_dirty.update(self.finals)
             await self.invalidate({'type': 'timeline_changed'})
 
     def _activate(self, activation):
         self.active = {key: activation[key] for key in ('activation_id', 'page_id', 'scope', 'boundary', 'include_muted')}
+        self.active.update(final_boundary=activation.get('final_boundary', activation['boundary']),
+                           ending_cursor=activation.get('ending_cursor', 0),
+                           ordinary_after_id=activation.get('ordinary_after_id', 0))
+        self.finals = dict.fromkeys(activation.get('pending_final_ending_ids', []))
+        self.final_entries = {}
+        self._final_dirty = set(self.finals)
+        self.consumed = set(activation.get('excluded_event_ids', []))
+        self.active.update(pending_final_ending_ids=sorted(self.finals), excluded_event_ids=sorted(self.consumed))
         self.session.listening = self.active.copy()
         self.session.error = None
         self.pending, self.seen, self.boundaries, self.shown = [], set(activation.get('excluded_event_ids', [])), {}, {}
+        self.final_boundaries = {}
         self.cursor, self.watermark, self.context = 0, None, None
         self._caught_up = False
         self._epoch += 1
@@ -212,13 +254,10 @@ class TimelineListener:
                 await self._stop('scope_unavailable', ui_message_text('Timeline reading stopped. Choose another timeline.', 'backend.tts.scopeUnavailable'))
                 return
             self.boundaries = {member: active['boundary'] for member in members}
+            self.final_boundaries = {member: active['final_boundary'] for member in members}
             active['label'] = label
-            body = await sync_to_async(fetch_click_boundary)(self._request(), active['boundary'])
-            if self.active is not active:
-                return
-            self.cursor = body['latest_id'] or 0
-            self._consume(body)
-            await self._reconcile_policy()
+            # Refresh owns the first captured range. No preparation precedes catch-up.
+            self.cursor = 0
         # Include arrivals committed during bootstrap, before any offer.
         if self.active is active:
             await self.refresh()
@@ -270,6 +309,9 @@ class TimelineListener:
                 if (descriptor.get('source_key') == payload.get('source_key')
                         and descriptor.get('source_hash') == payload.get('source_hash')):
                     self._invalidated_summaries.add(event_id)
+        if payload['type'] in ('resync_required', 'session_updated', 'project_updated', 'workspaces_updated'):
+            self._final_dirty.update(self.finals)
+        self._final_dirty.update(set(payload.get('finalized_ending_ids', [])) & self.finals.keys())
         self._dirty = True
         if self._refresh_task is None or self._refresh_task.done():
             self._refresh_task = self._spawn(self._refresh_loop())
@@ -279,28 +321,84 @@ class TimelineListener:
             self._dirty = False
             await self.refresh()
 
+    def _speech_key(self, event):
+        final = self.final_entries.get(event['id'])
+        return (final['speech_time'], final['ending_id']) if final else (event['occurred_at'], event['id'])
+
+    def _drop_final(self, ending_id):
+        event = self.finals.pop(ending_id, None)
+        self._final_dirty.discard(ending_id)
+        if event is not None:
+            self.final_entries.pop(event['id'], None)
+            self.pending = [item for item in self.pending if item['id'] != event['id']]
+
     def _consume(self, body):
-        events = body['events']
-        # Show boundaries apply to the whole batch, including older messages first.
-        for event in events:
+        for event in body['events']:
             if event['kind'] == 'hidden.ended':
                 self.shown[event['session_id']] = max(event['id'], self.shown.get(event['session_id'], 0))
-        for event in events:
+        for event in body['events']:
             if event['id'] in self.seen:
                 continue
             self.seen.add(event['id'])
             session = body['sessions'].get(event['session_id'], {})
             boundary = self.boundaries.get(event['project_id'])
-            if (event['kind'] != 'assistant_message.sent' or not isinstance(event['data'].get('text'), str)
-                    or not event['data']['text'].strip() or boundary is None or event['occurred_at'] <= boundary
-                    or event['id'] <= self.shown.get(event['session_id'], 0)
-                    or session.get('hidden') or (not self.active['include_muted'] and session.get('mute_on_user_turn'))):
+            visible = (boundary is not None and not session.get('hidden')
+                       and (self.active['include_muted'] or not session.get('mute_on_user_turn'))
+                       and event['id'] > self.shown.get(event['session_id'], 0))
+            if (self._final_only and event['kind'] == 'turn.ended' and event.get('actor') == 'agent'
+                    and isinstance(event['data'].get('final_message'), dict) and visible
+                    and event['occurred_at'] > self.active['final_boundary']
+                    and event['occurred_at'] > self.final_boundaries.get(event['project_id'], self.active['final_boundary'])):
+                self.finals.setdefault(event['id'], None)
+                self._final_dirty.add(event['id'])
+            if (self._final_only or event['id'] in self.consumed
+                    or event['id'] <= self.active['ordinary_after_id'] or not visible
+                    or event['kind'] != 'assistant_message.sent' or not isinstance(event['data'].get('text'), str)
+                    or not event['data']['text'].strip() or event['occurred_at'] <= boundary):
                 continue
             occurred = timezone.datetime.fromisoformat(event['occurred_at'])
             if self.watermark is not None and occurred < self.watermark - timedelta(seconds=5):
+                self.consumed.add(event['id'])
                 continue
-            self.pending.append(event)
-        self.pending.sort(key=lambda e: (e['occurred_at'], e['id']))
+            if event['id'] not in {item['id'] for item in self.pending}:
+                self.pending.append(event)
+        self.pending.sort(key=self._speech_key)
+
+    async def _resolve_finals(self, active, epoch):
+        # Remove the captured dirty IDs before awaiting. A concurrent signal stays dirty.
+        ids = sorted(self._final_dirty & self.finals.keys())
+        self._final_dirty.difference_update(ids)
+        try:
+            for offset in range(0, len(ids), 100):
+                batch = ids[offset:offset + 100]
+                result = await sync_to_async(resolve_final_messages)(batch,
+                    project_ids=tuple(self.boundaries), include_muted=active['include_muted'])
+                shown = await sync_to_async(_shown_boundaries)({item['message']['session_id']
+                    for item in result['items'] if item['state'] == 'ready'})
+                if self.active is not active or epoch != self._epoch:
+                    self._final_dirty.update(ids)
+                    return
+                for session_id, last_id in shown.items():
+                    self.shown[session_id] = max(last_id, self.shown.get(session_id, 0))
+                for item in result['items']:
+                    ending_id = item['ending_id']
+                    if ending_id not in self.finals:
+                        continue
+                    if item['state'] in ('none', 'unavailable'):
+                        self._drop_final(ending_id)
+                    elif item['state'] == 'ready':
+                        event = item['message']
+                        if (event['id'] in self.consumed or ending_id <= self.shown.get(event['session_id'], 0)):
+                            self._drop_final(ending_id)
+                            continue
+                        self.finals[ending_id] = event
+                        self.final_entries[event['id']] = {'ending_id': ending_id, 'speech_time': item['occurred_at']}
+                        if event['id'] not in {entry['id'] for entry in self.pending}:
+                            self.pending.append(event)
+        except Exception:
+            self._final_dirty.update(ids)
+            raise
+        self.pending.sort(key=self._speech_key)
 
     async def refresh(self):
         async with self._lock:
@@ -316,40 +414,67 @@ class TimelineListener:
                 return
             now = format_occurred_at(self.clock())
             self.boundaries = {member: self.boundaries.get(member, now) for member in members}
+            self.final_boundaries = {member: self.final_boundaries.get(member, now) for member in members}
             active['label'] = label
-            body = await sync_to_async(fetch_feed)(self._request(), with_turns_below=False)
-            if self.active is not active:
+            policy = await sync_to_async(_read_policy)()
+            if self.active is not active or epoch != self._epoch:
                 return
-            if body['truncated']:
-                # The HTTP incremental cap does not limit native recovery. Bootstrap
-                # reads the complete activation range through one captured high-water ID.
-                body = await sync_to_async(fetch_click_boundary)(self._request(), min(self.boundaries.values()))
-                if self.active is not active:
-                    return
-            self.cursor = max(self.cursor, body['latest_id'] or 0)
+            self._final_only = policy.get('final_only', True)
+            if self._final_only:
+                for event in list(self.pending):
+                    if event['id'] not in self.final_entries:
+                        self.pending.remove(event)
+                request = self._request()._replace(filter=TimelineFilter(families=('turns', 'organization')))
+                body = await sync_to_async(_read_range)(request, active['final_boundary'], active['ending_cursor'])
+            else:
+                request = self._request()._replace(after_id=max(self.cursor, active['ordinary_after_id']))
+                body = await sync_to_async(fetch_feed)(request, with_turns_below=False)
+                if self.cursor == 0 or body['truncated']:
+                    body = await sync_to_async(_read_range)(request, min(self.boundaries.values()),
+                                                           max(self.cursor, active['ordinary_after_id']))
+            if self.active is not active or epoch != self._epoch:
+                return
             self._consume(body)
-            table = await sync_to_async(build_sessions_table)({e['session_id'] for e in self.pending})
-            if self.active is not active:
+            self.cursor = max(self.cursor, body['latest_id'] or 0)
+            # Cursor and obligations publish together, after the whole captured range.
+            active['ending_cursor'] = max(active['ending_cursor'], self.cursor)
+            if self._final_only:
+                active['ordinary_after_id'] = max(active['ordinary_after_id'], self.cursor)
+            await self._resolve_finals(active, epoch)
+            if self.active is not active or epoch != self._epoch:
                 return
-            self.pending = [e for e in self.pending if e['project_id'] in self.boundaries
-                            and not table.get(e['session_id'], {}).get('hidden')
-                            and e['id'] > self.shown.get(e['session_id'], 0)
-                            and (active['include_muted'] or not table.get(e['session_id'], {}).get('mute_on_user_turn'))]
-            await self._reconcile_policy()
+            table = await sync_to_async(build_sessions_table)({e['session_id'] for e in self.pending})
+            if self.active is not active or epoch != self._epoch:
+                return
+            for event in list(self.pending):
+                final = self.final_entries.get(event['id'])
+                cutoff_id = final['ending_id'] if final else event['id']
+                if (event['project_id'] not in self.boundaries or table.get(event['session_id'], {}).get('hidden')
+                        or cutoff_id <= self.shown.get(event['session_id'], 0)
+                        or (not active['include_muted'] and table.get(event['session_id'], {}).get('mute_on_user_turn'))):
+                    self.consumed.add(event['id'])
+                    if final:
+                        self._drop_final(final['ending_id'])
+                    else:
+                        self.pending.remove(event)
+            self._caught_up = True
+            await self._reconcile_policy(policy)
             if self.active is active and epoch == self._epoch:
-                self._caught_up = True
                 await self._offer()
 
     async def _reconcile_policy(self, policy=None):
         active = self.active
         if policy is None:
             policy = await sync_to_async(_read_policy)()
-        if self.active is not active:
+        if self.active is not active or not self._caught_up:
             return
         self.session.configuration_available = policy['entry'] is not None
         if policy['entry'] is None:
             await self._stop('tts_unavailable', ui_message_text('Text-to-speech is unavailable. Check the active configuration.', 'backend.tts.configurationUnavailable'))
             return
+        if policy.get('final_only', True):
+            active['ordinary_after_id'] = max(active['ordinary_after_id'], self.cursor)
+            self.pending = [event for event in self.pending if event['id'] in self.final_entries]
         summary_policy = (policy['summary'], policy.get('summary_model'))
         pending_ids = {e['id'] for e in self.pending}
         for event_id in list(self.preparations):
@@ -365,6 +490,14 @@ class TimelineListener:
         self._publish()
 
     async def _prepare_summaries(self, active):
+        epoch = self._epoch
+        if self.active is not active or not self._caught_up:
+            return
+        current = await sync_to_async(_read_policy)()
+        if self.active is not active or epoch != self._epoch or not self._caught_up or not current['summary']:
+            return
+        if current.get('final_only', True):
+            self.pending = [event for event in self.pending if event['id'] in self.final_entries]
         missing = [e for e in self.pending if e['id'] not in self.preparations]
         for event in missing:
             source = None
@@ -372,7 +505,7 @@ class TimelineListener:
                 source, descriptor = await summaries.resolve_timeline_summary(event['id'])
             except ValueError as error:
                 descriptor = {'error': str(error), **({'ui_message': error.ui_message} if getattr(error, 'ui_message', None) else {})}
-            if self.active is not active:
+            if self.active is not active or epoch != self._epoch or not self._caught_up:
                 return
             self.preparations[event['id']] = {
                 'descriptor': descriptor, 'source': source, 'handle': None, 'watcher': None,
@@ -394,7 +527,7 @@ class TimelineListener:
                     usage_origin='timeline',
                 )
                 handle.claim()
-                if self.active is not active:
+                if self.active is not active or epoch != self._epoch or not self._caught_up:
                     await summaries.release_summary(handle.id)
                     return
                 preparation['handle'] = handle
@@ -423,6 +556,8 @@ class TimelineListener:
 
     def _publish(self):
         self.session.pending_count = len(self.pending)
+        if self.active:
+            self.active.update(pending_final_ending_ids=sorted(self.finals), excluded_event_ids=sorted(self.consumed))
         self.session.listening = self.active.copy() if self.active else None
         self.session.publish_state()
 
@@ -442,7 +577,10 @@ class TimelineListener:
                     if descriptor.get('eligible') and not descriptor.get('error') else None)
         await self.session.offer_candidate({'activation_id': self.active['activation_id'], 'event_id': event['id'],
                                             'identity': identity, 'text': event['data']['text'],
-                                            'occurred_at': event['occurred_at']})
+                                            'occurred_at': event['occurred_at'],
+                                            **({'final_ending_id': self.final_entries[event['id']]['ending_id'],
+                                                'final_occurred_at': self.final_entries[event['id']]['speech_time']}
+                                               if event['id'] in self.final_entries else {})})
 
     async def select(self, event_id: int, reading_id: str, generation: int, *, silence_reset=False):
         completed = False
@@ -471,8 +609,14 @@ class TimelineListener:
             if entry is None:
                 await self._stop('tts_unavailable', ui_message_text('Text-to-speech is unavailable. Check the active configuration.', 'backend.tts.configurationUnavailable'))
                 return
-            await self._reconcile_policy(policy)
-            if self.active is not active:
+            final = self.final_entries.get(event_id)
+            if final:
+                self._final_dirty.add(final['ending_id'])
+                await self._resolve_finals(active, epoch)
+            if self.active is not active or epoch != self._epoch:
+                return
+            if not self.pending or self.pending[0]['id'] != event_id:
+                await self._offer()
                 return
             event = self.pending[0]
             table = await sync_to_async(build_sessions_table)({event['session_id']})
@@ -486,9 +630,16 @@ class TimelineListener:
             if (event['project_id'] not in members or visibility.get('hidden')
                     or (not active['include_muted'] and visibility.get('mute_on_user_turn'))):
                 self.pending.pop(0)
+                self.consumed.add(event_id)
+                if event_id in self.final_entries:
+                    self._drop_final(self.final_entries[event_id]['ending_id'])
                 await self._release_preparation(event_id)
                 # Reconcile the remaining queue before offering its next event.
                 await self.reconnect()
+                return
+            await self._reconcile_policy(policy)
+            if (self.active is not active or epoch != self._epoch or not self._caught_up
+                    or not self.pending or self.pending[0]['id'] != event_id):
                 return
             names = []
             project = projects.get(event['project_id'])
@@ -509,6 +660,9 @@ class TimelineListener:
             descriptor = preparation['descriptor'] if preparation else {}
             if descriptor.get('error'):
                 self.pending.pop(0)
+                self.consumed.add(event_id)
+                if event_id in self.final_entries:
+                    self._drop_final(self.final_entries[event_id]['ending_id'])
                 await self._release_preparation(event_id)
                 self.context = None
                 await self.session.fail('summary_unavailable', descriptor['error'], reading_id=reading_id, generation=generation,
@@ -531,8 +685,12 @@ class TimelineListener:
             command = {'reading_id': reading_id, 'generation': generation}
             if await self.session.select_reading(command, request, metadata, policy=policy):
                 self.pending.pop(0)
+                self.consumed.add(event_id)
+                final = self.final_entries.get(event_id)
+                if final:
+                    self._drop_final(final['ending_id'])
                 self.selected = {'event': event, 'reading_id': reading_id, 'generation': generation,
-                                 'spoken_project_id': spoken_id}
+                                 'spoken_project_id': spoken_id, 'final': bool(final)}
                 self._publish()
 
     async def started(self, reading: dict | str):
@@ -546,7 +704,8 @@ class TimelineListener:
         if self.selected and reading['reading_id'] == self.selected['reading_id']:
             event = self.selected['event']
             occurred = timezone.datetime.fromisoformat(event['occurred_at'])
-            self.watermark = max(self.watermark, occurred) if self.watermark else occurred
+            if not self.selected.get('final'):
+                self.watermark = max(self.watermark, occurred) if self.watermark else occurred
             self.context = (self.selected.get('spoken_project_id', event['project_id']), event['session_id'])
 
     async def finished(self, reading: dict | str, outcome: str):

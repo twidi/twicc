@@ -17,7 +17,7 @@ _COMMON = {'protocol', 'type', 'seq'}
 _FIELDS = {
     'open': {'client_id'},
     'resume': {'session_id', 'resume_secret', 'ack_seq', 'commands', 'current'},
-    'listen': {'activation_id', 'scope', 'page_id', 'include_muted', 'boundary', 'fresh', 'notice', 'excluded_event_ids', 'telemetry_epoch'},
+    'listen': {'activation_id', 'scope', 'page_id', 'include_muted', 'boundary', 'fresh', 'notice', 'excluded_event_ids', 'telemetry_epoch', 'final_boundary', 'ending_cursor', 'ordinary_after_id', 'pending_final_ending_ids'},
     'set_muted': {'activation_id', 'include_muted'},
     'disable': {'activation_id'},
     'manual': {'reading_id', 'generation', 'request'},
@@ -46,6 +46,15 @@ def _uuid(value, label):
             raise ValueError
     except ValueError:
         raise ValueError(f'{label} must be a canonical UUID') from None
+
+
+def _timestamp(value, label):
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z', value):
+        raise ValueError(f'{label} must be UTC with six fractional digits')
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f'Invalid {label} timestamp') from None
 
 
 def _reading(value):
@@ -178,13 +187,18 @@ def parse_native_command(data: object) -> dict:
                 raise ValueError('Invalid recovery notice')
             _reading(notice)
             _string(notice['text'], 'notice text', 4096)
+        for key in ('ending_cursor', 'ordinary_after_id'):
+            if key in data:
+                _integer(data[key], key, 0)
+        endings = data.get('pending_final_ending_ids', [])
+        if not isinstance(endings, list):
+            raise ValueError('pending_final_ending_ids must be an array')
+        for ending_id in endings:
+            _integer(ending_id, 'pending final ending id')
+        if 'final_boundary' in data:
+            _timestamp(data['final_boundary'], 'final_boundary')
         boundary = data.get('boundary')
-        if not isinstance(boundary, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z', boundary):
-            raise ValueError('boundary must be UTC with six fractional digits')
-        try:
-            datetime.fromisoformat(boundary)
-        except ValueError:
-            raise ValueError('Invalid boundary timestamp') from None
+        _timestamp(boundary, 'boundary')
     elif kind == 'select':
         _integer(data.get('event_id'), 'event_id')
         if 'silence_reset' in data and type(data['silence_reset']) is not bool:
