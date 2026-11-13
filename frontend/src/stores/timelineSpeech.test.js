@@ -1344,3 +1344,47 @@ test('coalesced final read waits for successful reconnect when the socket closes
     h.replies.push(page()); h.status.value = 'OPEN'; await settle()
     assert.deepEqual(h.opens.map(body => body.text), ['Message 1'])
 })
+
+for (const outageMs of [119_999, 120_000]) {
+    test(`late final response waits for ${outageMs}ms outage recovery before preparing summaries`, async () => {
+        const h = setup(true), held = deferred(), refresh = deferred()
+        h.summariesEnabled()
+        h.finalReplies.push(() => held.promise)
+        cleanups.push(() => { held.resolve({ items: [], sessions: {} }); refresh.resolve(page()) })
+        await h.enable([ending(10)])
+        h.status.value = 'CLOSED'
+        h.now(CLICK + outageMs)
+        h.replies.push(() => refresh.promise)
+        h.status.value = 'OPEN'; await settle()
+        h.finals.set(10, finalResult(10))
+        held.resolve({ items: [finalResult(10)], sessions: {} }); await settle()
+        assert.deepEqual(h.summaryCalls, [], 'catch-up must decide eligibility before summary preparation')
+        assert.deepEqual(h.opens, [])
+        refresh.resolve(page()); await settle()
+        if (outageMs === 120_000) {
+            assert.deepEqual(h.summaryCalls, [])
+            assert.deepEqual(h.opens, [])
+            assert.equal(h.infos.length, 1)
+            assert.equal(h.finalRequests.length, 1)
+        } else {
+            assert.deepEqual(h.summaryCalls, [1])
+            assert.deepEqual(h.opens.map(body => body.summary_id), ['summary-1'])
+            assert.deepEqual(h.finalRequests.map(request => request.endingIds), [[10], [10]])
+            assert.equal(h.infos.length, 0)
+        }
+    })
+}
+
+test('final response from an old connection is revalidated when short catch-up finishes first', async () => {
+    const h = setup(true), held = deferred()
+    h.summariesEnabled()
+    h.finalReplies.push(() => held.promise)
+    await h.enable([ending(10)])
+    h.status.value = 'CLOSED'; h.now(CLICK + 1_000)
+    h.finals.set(10, finalResult(10, null, 10, 'unavailable'))
+    h.replies.push(page()); h.status.value = 'OPEN'; await settle()
+    held.resolve({ items: [finalResult(10)], sessions: {} }); await settle()
+    assert.deepEqual(h.summaryCalls, [])
+    assert.deepEqual(h.opens, [])
+    assert.deepEqual(h.finalRequests.map(request => request.endingIds), [[10], [10]])
+})

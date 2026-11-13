@@ -369,6 +369,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 const endingIds = [...activation.finalDirty].filter(id => activation.finals.has(id)).slice(0, 100)
                 for (const id of endingIds) activation.finalDirty.delete(id)
                 if (!endingIds.length) break
+                const connectionEpoch = activation.connectionEpoch
                 let body
                 try {
                     body = await store._fetchFinalMessages({ endingIds, projectIds: scopeOf().projectIds,
@@ -381,6 +382,12 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                     continue
                 }
                 if (!current(activation) || store.suspended || activation.finalEpoch !== epoch) return
+                if (activation.connectionEpoch !== connectionEpoch || !activation.caughtUp
+                    || connectionStatus.value !== 'OPEN') {
+                    // Catch-up decides whether these obligations survive before summaries can start.
+                    for (const id of endingIds) if (activation.finals.has(id)) activation.finalDirty.add(id)
+                    continue
+                }
                 Object.assign(activation.feed.state.sessions, body.sessions)
                 for (const result of body.items) {
                     const obligation = activation.finals.get(result.ending_id)
