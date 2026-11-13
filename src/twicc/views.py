@@ -44,7 +44,7 @@ from twicc.core.session_availability import all_unavailable_session_ids, arefuse
 from twicc.core.text_filter import match_text_query
 from twicc.core.ui_messages import ui_error
 from twicc.core.services.project_mutation import clean_project_agent_defaults
-from twicc.core.services import timeline_feed
+from twicc.core.services import timeline_feed, timeline_final_messages
 from twicc.directory_archives import DirectoryZipReader, directory_archive_name
 from twicc.http_streams import AsyncFileResponse, prepare_download_response
 from twicc.paths import path_to_project_id
@@ -3708,6 +3708,25 @@ async def timeline(request):
     except timeline_feed.FeedError as error:
         return JsonResponse({"error": str(error), "ui_message": _exception_ui_message(error)}, status=400)
     return JsonResponse(await sync_to_async(timeline_feed.fetch_feed)(feed_request))
+
+
+async def timeline_final_message_snapshots(request):
+    """GET exact saved final messages for up to 100 official ending IDs."""
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    try:
+        ending_ids, projects, include_muted = timeline_final_messages.parse_request(request.GET)
+    except timeline_feed.FeedError as error:
+        return JsonResponse({"error": str(error), "ui_message": _exception_ui_message(error)}, status=400)
+
+    def read():
+        from twicc.projects import expand_project_ids_with_worktrees
+
+        project_ids = expand_project_ids_with_worktrees(projects) if ending_ids else ()
+        return timeline_final_messages.resolve_final_messages(
+            ending_ids, project_ids=project_ids, include_muted=include_muted)
+
+    return JsonResponse(await sync_to_async(read)())
 
 
 async def search_sessions(request):

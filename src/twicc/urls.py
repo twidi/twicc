@@ -38,6 +38,7 @@ urlpatterns = [
     path("api/home/", views.home_data),
     path("api/daily-activity/", views.daily_activity),  # Global daily activity
     path("api/timeline/", views.timeline),
+    path("api/timeline/final-messages/", views.timeline_final_message_snapshots),
     path("api/sessions/", views.all_sessions),
     # Static route must come BEFORE the <str:session_id> catch-all, otherwise
     # `bulk-archive` is consumed as a session_id and matched by session_by_id.

@@ -228,7 +228,7 @@ def _resolve_final_message(kind, *, session_id, project_id, provider, occurred_a
                 return None
         event.data = {**event.data, 'final_message': resolution}
         TimelineEvent.objects.filter(pk=event.pk).update(data=event.data)
-        timeline_signal.poke_on_commit()
+        timeline_signal.poke_on_commit(finalized_ending_ids=[event.pk])
         return event
 
 

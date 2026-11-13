@@ -1402,9 +1402,12 @@ export function useWebSocket() {
                 window.dispatchEvent(new CustomEvent('twicc:mcp-updated'))
                 break
             case 'timeline_changed':
-                // A new timeline event exists (no session, no project, no content): the Timeline pages fetch
-                // what is new themselves (utils/timeline/liveEvents.js).
-                window.dispatchEvent(new CustomEvent('twicc:timeline-changed', { detail: { latestId: msg.latest_id } }))
+                // Timeline readers fetch new events and exact final-message resolutions themselves.
+                // Resolution IDs also reach waiting readers when latest_id stays unchanged.
+                window.dispatchEvent(new CustomEvent('twicc:timeline-changed', { detail: {
+                    latestId: msg.latest_id,
+                    ...(msg.finalized_ending_ids ? { finalizedEndingIds: msg.finalized_ending_ids } : {}),
+                } }))
                 break
             case 'upload_state': {
                 // One upload's server record (spec §6.3). Lazy import: the

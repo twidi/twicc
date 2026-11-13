@@ -116,13 +116,13 @@ def test_final_link_is_one_way(live_session, accept_legacy_message_decisions, mo
     if terminal == 'ready':
         value['event_id'] = target.pk
     signals = []
-    monkeypatch.setattr(timeline_signal, 'poke_on_commit', lambda: signals.append(True))
+    monkeypatch.setattr(timeline_signal, 'poke_on_commit', lambda **kwargs: signals.append(kwargs))
     with CaptureQueriesContext(connection) as queries:
         assert resolution(event, value).pk == event.pk
         assert resolution(event, value).pk == event.pk
     updates = [q['sql'] for q in queries if q['sql'].startswith('UPDATE "core_timelineevent"')]
     assert len(updates) == 1
-    assert len(signals) == 1
+    assert signals == [{'finalized_ending_ids': [event.pk]}]
     assert not any('core_sessionitem' in q['sql'] for q in queries)
     assert resolution(event, value, state='none' if terminal == 'ready' else 'ready', event_id=target.pk) is None
     assert resolution(event, value, history_epoch=f.session.history_epoch + 1) is None

@@ -4039,6 +4039,8 @@
     "backend.timeline.cursor_conflict": "before and after_id are mutually exclusive.",
     "backend.timeline.after_range": "after_id must be between 0 and 2**63 - 1.",
     "backend.timeline.include_muted": "include_muted must be 0 or 1.",
+    "backend.timeline.ending_ids_range": "ending_ids must contain positive IDs up to 2**63 - 1.",
+    "backend.timeline.ending_ids_limit": "ending_ids must contain at most 100 distinct IDs.",
     "backend.sessions.hide_top_level": "Only top-level sessions (type=SESSION) can be hidden; got type={type}.",
     "backend.hidden.unsupported_provider": "--hidden is not supported for provider {provider}. No non-interactive permission mode is configured for it.",
     "backend.hidden.permission_mode": "--hidden requires a non-interactive permission_mode. Provider {provider} accepts: {modes}. Got: {mode}.",

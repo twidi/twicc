@@ -436,3 +436,70 @@ def test_the_server_source_starts_the_signal_before_the_orchestrators_and_stops_
     assert 0 <= outer.index("stop_timeline_signal()") < outer.index("_cancel_task(")
     assert "timeline_backfill" not in source and "_guarded_timeline_backfill" not in source
     assert "from twicc.core.services.timeline_signal import start_timeline_signal, stop_timeline_signal" in source
+
+
+# Metadata resolution does not allocate a new event ID.
+def resolution_fixture(project):
+    session = Session.objects.create(id='final-signal', project=project, provider='codex',
+        file_path='final.jsonl', storage_incarnation='source', history_epoch=0)
+    ending = record_event_sync(TimelineKind.TURN_ENDED, session_id=session.id, project_id=project.id,
+        provider='codex', actor='agent', dedupe_key='final-ending',
+        data={'final_message': {'state': 'pending', 'storage_incarnation': 'source', 'history_epoch': 0}})
+    return ending
+
+
+def resolve_ending(ending):
+    return record_event_sync(TimelineKind.TURN_ENDED, session_id=ending.session_id,
+        project_id=ending.project_id, provider=ending.provider, occurred_at=ending.occurred_at,
+        dedupe_key=ending.dedupe_key, final_message_resolution={
+            'state': 'none', 'storage_incarnation': 'source', 'history_epoch': 0})
+
+
+def test_final_resolution_signals_without_new_event_id(project, sent, short_throttle):
+    ending = resolution_fixture(project)
+
+    async def scenario():
+        assert await asyncio.to_thread(resolve_ending, ending)
+        await sent.wait()
+        assert await asyncio.to_thread(resolve_ending, ending)  # Replay stays silent.
+        await asyncio.sleep(0.1)
+
+    run_loop(scenario)
+    assert sent == [('updates', {'type': 'broadcast', 'data': {
+        'type': 'timeline_changed', 'latest_id': ending.pk, 'finalized_ending_ids': [ending.pk]}})]
+    assert TimelineEvent.objects.count() == 1
+
+
+def test_final_resolution_rollback_suppresses_invalidation(project, sent, short_throttle):
+    ending = resolution_fixture(project)
+
+    def rollback():
+        with pytest.raises(RuntimeError), transaction.atomic():
+            assert resolve_ending(ending)
+            raise RuntimeError('rollback')
+
+    async def scenario():
+        await asyncio.to_thread(rollback)
+        await asyncio.sleep(0.1)
+
+    run_loop(scenario)
+    assert sent == []
+    ending.refresh_from_db()
+    assert ending.data['final_message']['state'] == 'pending'
+
+
+def test_finalized_ids_coalesce_with_all_pokes_in_window(sent, short_throttle):
+    latest = make_event()
+
+    async def scenario():
+        timeline_signal.poke(finalized_ending_ids=[8, 3])
+        timeline_signal.poke()
+        timeline_signal.poke(finalized_ending_ids=[8, 5])
+        await sent.wait()
+        timeline_signal.poke()
+        await sent.wait(2)
+
+    run_loop(scenario)
+    assert sent[0][1]['data'] == {'type': 'timeline_changed', 'latest_id': latest.pk,
+                                'finalized_ending_ids': [3, 5, 8]}
+    assert sent[1][1]['data'] == {'type': 'timeline_changed', 'latest_id': latest.pk}
