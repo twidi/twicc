@@ -1472,3 +1472,59 @@ async def test_selection_mode_change_persists_ignored_progress_cutoff_before_rep
     await replace_native(h, recovery)
     assert [e['id'] for e in h.listener.pending] == [unread.id]
     await h.registry.shutdown()
+
+
+@pytest.mark.parametrize('projects', [(), ('p',), ('p', 'q'), ('wt',)])
+async def test_native_incremental_range_traverses_primary_key_with_real_scope_indexes(harness, monkeypatch, projects):
+    from django.db import connection
+    from twicc.core.services.timeline_feed import FeedRequest
+    from twicc.core.services.timeline_filters import TimelineFilter
+
+    monkeypatch.setattr(native_timeline, 'latest_event_id', lambda: 900010)
+    request = FeedRequest(projects, 100, None, 900000,
+                          TimelineFilter(families=('turns', 'organization')), True)
+    def read_and_explain():
+        plans = []
+        def capture(execute, sql, params, many, context):
+            if sql.startswith('SELECT') and '"core_timelineevent"' in sql:
+                with connection.cursor() as cursor:
+                    cursor.execute('EXPLAIN QUERY PLAN ' + sql, params)
+                    plans.append([row[-1] for row in cursor.fetchall()])
+            return execute(sql, params, many, context)
+        with connection.execute_wrapper(capture):
+            body = native_timeline._read_range(request, '2026-11-04T10:30:00.000000Z', 900000)
+        return body, plans
+    body, plans = await sync_to_async(read_and_explain)()
+    assert body['latest_id'] == 900010
+    assert plans
+    for plan in plans:
+        assert any('SEARCH core_timelineevent USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)' in step
+                   for step in plan), plan
+        assert not any('SEARCH core_timelineevent USING INDEX idx_timeline_project' in step
+                       or 'SEARCH core_timelineevent USING INDEX idx_timeline_session' in step for step in plan), plan
+    await harness.registry.shutdown()
+
+
+async def test_summary_time_mode_change_persists_cutoff_before_off_replacement(harness, fake_summaries, monkeypatch):
+    h = harness
+    await h.listener.enable(activation())
+    progress = await event(1)
+    h.policy['summary'] = True
+    reads = 0
+    def changing_policy():
+        nonlocal reads
+        reads += 1
+        return {**h.policy, 'final_only': reads >= 2}
+    monkeypatch.setattr(native_timeline, '_read_policy', changing_policy)
+    await h.listener.refresh()
+    assert reads == 2
+    assert h.listener.pending == []
+    assert fake_summaries.acquired == []
+    recovery = h.session.listening.copy()
+    assert recovery['ordinary_after_id'] == progress.id
+    monkeypatch.setattr(native_timeline, '_read_policy', lambda: h.policy.copy())
+    h.policy['summary'] = False
+    unread = await event(2)
+    await replace_native(h, recovery)
+    assert [e['id'] for e in h.listener.pending] == [unread.id]
+    await h.registry.shutdown()

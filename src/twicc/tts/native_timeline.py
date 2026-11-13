@@ -15,11 +15,11 @@ from django.utils import timezone
 
 from twicc.core.models import Project, TimelineEvent
 from twicc.core.services.timeline_feed import (
-    FeedRequest, _page_querysets, build_sessions_table, cited_session_ids, fetch_feed, format_occurred_at,
-    latest_event_id, serialize_event,
+    FeedRequest, _after_scope, _page_querysets, build_sessions_table, cited_session_ids, fetch_feed, format_occurred_at,
+    latest_event_id, serialize_event, visible_sessions_q,
 )
 from twicc.core.services.timeline_final_messages import resolve_final_messages
-from twicc.core.services.timeline_filters import TimelineFilter
+from twicc.core.services.timeline_filters import TimelineFilter, match_q
 from twicc.projects import expand_project_ids_with_worktrees, project_scope_ids
 from twicc.summaries import service as summaries
 from twicc.synced_settings import read_synced_settings
@@ -85,11 +85,27 @@ def _read_range(request, boundary, after_id=0):
     """Capture one complete, scoped range using the feed's existing filtered querysets."""
     high_water = latest_event_id() or 0
     events = {}
-    for rows in _page_querysets(request._replace(before=None, after_id=None)):
-        rows = rows.filter(id__gt=after_id, id__lte=high_water,
-                           occurred_at__gt=timezone.datetime.fromisoformat(boundary))
-        for event in rows.iterator(chunk_size=100):
-            events[event.id] = event
+    if high_water > after_id:
+        occurred_after = timezone.datetime.fromisoformat(boundary)
+        if after_id:
+            # Only the primary key drives incremental traversal. Scoped page
+            # indexes would revisit activation history on each invalidation.
+            rows = TimelineEvent.objects.filter(id__gt=after_id, id__lte=high_water)
+            scope = _after_scope(request)
+            if scope is not None:
+                rows = rows.filter(scope)
+            match = match_q(request.filter)
+            if match is not None:
+                rows = rows.filter(match)
+            queries = [rows.filter(visible_sessions_q(include_muted=request.include_muted)).order_by('id')]
+        else:
+            # The activation date bounds bootstrap once, before a cursor exists.
+            queries = [rows.filter(id__lte=high_water, occurred_at__gt=occurred_after)
+                       for rows in _page_querysets(request._replace(before=None, after_id=None))]
+        for rows in queries:
+            for event in rows.iterator(chunk_size=100):
+                if event.occurred_at > occurred_after:
+                    events[event.id] = event
     ordered = sorted(events.values(), key=lambda event: (event.occurred_at, event.id))
     return {'events': [serialize_event(event, include_ui_messages=True) for event in ordered],
             'latest_id': high_water, 'sessions': build_sessions_table(cited_session_ids(ordered)),
@@ -497,6 +513,7 @@ class TimelineListener:
         if self.active is not active or epoch != self._epoch or not self._caught_up or not current['summary']:
             return
         if current.get('final_only', True):
+            active['ordinary_after_id'] = max(active['ordinary_after_id'], self.cursor)
             self.pending = [event for event in self.pending if event['id'] in self.final_entries]
         missing = [e for e in self.pending if e['id'] not in self.preparations]
         for event in missing:
