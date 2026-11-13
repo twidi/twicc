@@ -20,7 +20,7 @@ from twicc.core.services.timeline_decisions import (
     accept_fallback, admit_decision, apply_accepted_ending, fulfill_final_message_obligation,
 )
 
-__all__ = ['live_session', 'accept_legacy_message_decisions']
+__all__ = ['accept_legacy_message_decisions', 'live_session']
 pytestmark = pytest.mark.django_db
 
 

@@ -955,14 +955,13 @@ test('scrolled within the top room (the room row is the anchor), a live insertio
     assert.deepEqual(restores[0][1], { key: 'event-3', index: 2, offset: 7 - 60 })
 })
 
-test('source pins: the live events and the active prop are wired, useWebSocket dispatches them', () => {
+test('source pins: live events, active prop and reconnect events are wired', () => {
     const panel = readFileSync(new URL('./TimelinePanel.vue', import.meta.url), 'utf8')
     assert.match(panel, /bindTimelineEvents\(window, feed\)/)
     // The order that keeps the view still: capture BEFORE the DOM moves (pre-flush watcher), restore after it.
     assert.match(panel, /watch\(items, async \(next\) => \{\s*const snapshot = scrollKeeper\.capture\(\)\s*if \(!snapshot\) return\s*await nextTick\(\)\s*scrollKeeper\.restore\(snapshot, [^\n]*\)\s*\}, \{ flush: 'pre' \}\)/)
     const socket = readFileSync(new URL('../../composables/useWebSocket.js', import.meta.url), 'utf8')
-    const changed = socket.slice(socket.indexOf("case 'timeline_changed':"))
-    assert.ok(changed.slice(0, 600).includes("window.dispatchEvent(new CustomEvent('twicc:timeline-changed', { detail: { latestId: msg.latest_id } }))"))
+    // websocketTimeline.test.js executes the dispatcher and checks both detail shapes.
     const reconnect = socket.slice(socket.indexOf("window.dispatchEvent(new CustomEvent('twicc:ws-reconnected'))"))
     assert.match(reconnect.slice(0, 500), /\} else \{[^}]*window\.dispatchEvent\(new CustomEvent\('twicc:ws-first-open'\)\)[^}]*\}\s*wasConnected = true/)
     const detail = readFileSync(new URL('../project/ProjectDetailPanel.vue', import.meta.url), 'utf8')

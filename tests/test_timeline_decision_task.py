@@ -18,6 +18,128 @@ __all__ = ['bridge', 'content_row_factory', 'decision_fixture', 'live_session']
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
+@pytest.mark.parametrize('already_published', [False, True])
+def test_final_read_requires_accepted_ending_after_shell_rejection(
+    bridge, live_session, monkeypatch, already_published,
+):
+    """A rejected progress ending cannot authorize its message for final speech."""
+    from datetime import timedelta
+
+    from tests.test_completion_integration import drain
+    from twicc import timeline_decision_task as runtime
+    from twicc.agent.completion_types import NativeMessageRef
+    from twicc.agent.states import AgentState
+    from twicc.core.enums import Provider
+    from twicc.core.models import LogicalTurn, TimelineEvent
+    from twicc.core.services.timeline_final_messages import resolve_final_messages
+
+    manager, agent = bridge
+    f = live_session
+    f.append(f.message('user', 'Implement the fix and run the tests.', user=True),
+             f.message('progress', 'The tests are still running.'))
+    f.session.refresh_from_db()
+    agent.session_id, agent.project_id = f.session.pk, f.session.project_id
+    agent.provider = manager.provider = Provider(f.provider)
+    agent.process_run.session_id, agent.process_run.provider = f.session.pk, f.provider
+    agent.process_run.save(update_fields=['session_id', 'provider'])
+    manager._agents = {f.session.pk: agent}
+    agent._completion_storage_incarnation = f.session.storage_incarnation
+    agent._completion_history_epoch = f.session.history_epoch
+    shells = [({'key': 'tests', 'owner': 'root', 'command': 'uv run pytest',
+        'description': 'Run the tests.', 'started_at': None, 'start_line': None,
+        'owner_ref': 'root', 'generation': 1, 'output_path': None, 'tool_id': 'tests'},)]
+    agent.completion_shell_snapshot = lambda: shells[0]
+    current = [timezone.now() + timedelta(seconds=6)]
+    monkeypatch.setattr(runtime.timezone, 'now', lambda: current[0])
+    monkeypatch.setattr(runtime, '_live_ending', lambda row: (manager, agent)
+        if agent._completion_pending_ending is not None
+        and agent._completion_pending_ending.id == str(row.pk) else None)
+
+    async def classify(request, **kwargs):
+        if request.kind == 'ending':
+            assert request.payload['previous_messages'][-1]['text'] == 'The tests are still running.'
+            return Classification('NO', 'The test result is still required.'), 'provider'
+        return Classification('YES', 'The message addresses the request.'), 'provider'
+
+    monkeypatch.setattr(runtime, 'classify', classify)
+
+    def native(identity):
+        return NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item',
+                                identity, None if f.provider == 'claude_code' else 'native-turn')
+
+    async def scenario():
+        clock = [0.0]
+        monkeypatch.setattr(asyncio.get_running_loop(), 'time', lambda: clock[0])
+        worker = runtime.DecisionRuntime()
+        try:
+            # Exercise real message classification and publication for Claude.
+            row, _ = await runtime._claim_ready(current[0], set(), ())
+            if row is not None:
+                await worker.worker(row)
+            progress = await asyncio.to_thread(TimelineEvent.objects.get,
+                kind='assistant_message.sent', session_id=f.session.pk)
+            open_candidate(manager, agent)
+            agent.completion_controller.provider_ended(0, final_ref=native('progress'))
+            ticket = agent.completion_controller.candidate()
+            clock[0] = ticket.deadline
+            await manager._confirm_completion(agent, ticket)
+            context = agent._completion_pending_ending
+            pending = await asyncio.to_thread(TimelineDecision.objects.get, pk=context.id)
+            assert pending.status == 'pending'
+            assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind='turn.ended').exists())
+            assert (await asyncio.to_thread(resolve_final_messages, [progress.pk]))['items'][0]['message'] is None
+
+            row, _ = await runtime._claim_ready(current[0], set(), ())
+            assert row is not None and row.kind == 'ending'
+            await worker.worker(row)
+            await asyncio.to_thread(pending.refresh_from_db)
+            assert pending.status == 'rejected'
+            assert agent.state == AgentState.ASSISTANT_TURN
+            turn = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+            assert turn.outcome is None
+            assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind='turn.ended').exists())
+
+            # The same logical turn continues after NO. The exact final can
+            # already exist in the feed, or publication can wait for acceptance.
+            agent.completion_controller.activity(clock[0])
+            await drain(agent)
+            await asyncio.to_thread(f.append, f.message('final', '**All tests pass.**'), capture=already_published)
+            current[0] += timedelta(seconds=6)
+            row, _ = await runtime._claim_ready(current[0], set(), ())
+            if row is not None:
+                assert row.kind == 'message'
+                await worker.worker(row)
+            published = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
+                session_id=f.session.pk, kind='assistant_message.sent').order_by('pk')))
+            assert len(published) == (2 if already_published else 1)
+            final_id = published[-1].pk if already_published else None
+            shells[0] = ()
+            agent.completion_controller.provider_ended(clock[0], final_ref=native('final'))
+            ticket = agent.completion_controller.candidate()
+            clock[0] = ticket.deadline
+            await manager._confirm_completion(agent, ticket)
+            await drain(agent)
+            assert agent.state == AgentState.USER_TURN
+            await asyncio.to_thread(turn.refresh_from_db)
+            assert turn.outcome == 'normal'
+            assert await asyncio.to_thread(lambda: LogicalTurn.objects.filter(session_id=f.session.pk).count()) == 1
+            ending = await asyncio.to_thread(TimelineEvent.objects.get, kind='turn.ended')
+            result = (await asyncio.to_thread(resolve_final_messages, [progress.pk, ending.pk]))['items']
+            assert result[0]['state'] == 'unavailable' and result[0]['message'] is None
+            assert result[1]['state'] == 'ready'
+            assert result[1]['message']['data']['text'] == '**All tests pass.**'
+            assert result[1]['message']['id'] != progress.pk
+            if final_id is not None:
+                assert result[1]['message']['id'] == final_id
+            assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(
+                session_id=f.session.pk, kind='assistant_message.sent').count()) == 2
+        finally:
+            await worker.stop()
+            agent._cancel_completion_timer()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('admission_delay', [0, 60])
 @pytest.mark.parametrize('model_timeout', [False, True])
 def test_shell_decision_waits_for_indexing_before_starting_inference_deadline(
@@ -426,7 +548,7 @@ def test_runtime_releases_agent_callbacks_after_owned_work(bridge, monkeypatch, 
             assert agent in worker.callbacks
             assert agent._completion_cancel_inference == worker.cancel_call
             # Message work for the same session does not release ending work.
-            message = await asyncio.to_thread(TimelineDecision.objects.create,
+            message = await runtime._admitted(TimelineDecision.objects.create,
                 id=uuid4(), session_id=agent.session_id, provider=agent.provider.value, kind='message', identity_key='concurrent',
                 occurred_at=row.occurred_at, not_before=row.not_before, expires_at=row.expires_at, payload={})
             await worker.apply(message, classification=Classification('NO', 'routine'), route='provider')
