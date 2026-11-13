@@ -2,6 +2,13 @@ Mit der **Lautsprecher-Schaltfläche neben Zeitachse** liest TwiCC neue Assisten
 automatisch vor. Dafür ist eine verfügbare Sprachausgabe-Konfiguration erforderlich. Die gedrückte
 Schaltfläche bedeutet, dass diese Zeitachse auf neue Nachrichten lauscht.
 
+**Nur Nachrichten am Zugende vorlesen** ist standardmäßig eingeschaltet. Der Schalter erscheint unter
+der Überschrift, solange diese Zeitachse lauscht, auch bei pausiertem Lauschen. Die Einstellung bleibt
+nach dem Neuladen und erneutem Aktivieren erhalten. TwiCC liest die genaue letzte Nachricht nach einem
+offiziellen Zugende vor. Sichtbare Fortschrittsmeldungen können stumm bleiben. Das Zugende muss strikt
+nach dem Start des Lauschens liegen. Schalte die Option aus, um auch Zwischennachrichten vorzulesen.
+Manuelles Vorlesen bleibt in beiden Modi verfügbar.
+
 - Das Lauschen nutzt den Geltungsbereich der Zeitachse: alle Projekte, ein Arbeitsbereich, ein
   Projekt oder ein einzelner Worktree. Stummgeschaltete Sitzungen sind standardmäßig ausgeblendet und
   werden übersprungen. Wähle **Filter → Stummgeschaltete Sitzungen anzeigen**, um sie in dieser
@@ -16,9 +23,9 @@ Schaltfläche bedeutet, dass diese Zeitachse auf neue Nachrichten lauscht.
 - Die Zeitachsen-Schaltfläche in der Leiste zeigt einen kleinen Lautsprecher, solange das Lauschen
   aktiviert ist. Ihre Bezeichnung nennt die lauschende Zeitachse. Ein Klick öffnet diese Zeitachse,
   ohne das Lauschen zu ändern.
-- Nachrichten müssen ein natives Nachrichtendatum haben, das **strikt nach dem Klick auf die
+- Bei ausgeschalteter Option müssen Nachrichten ein natives Nachrichtendatum haben, das **strikt nach dem Klick auf die
   Aktivierung** liegt. Der vorhandene Verlauf wird nicht abgespielt, wenn du das Lauschen aktivierst.
-- Nachzügler bleiben bis zu **fünf Sekunden** hinter der neuesten Nachricht zulässig, deren Vorlesen
+- Bei ausgeschalteter Option bleiben Nachzügler bis zu **fünf Sekunden** hinter der neuesten Nachricht zulässig, deren Vorlesen
   beginnt. Genau fünf Sekunden sind noch zulässig. Akzeptierte Nachrichten warten in der Warteschlange
   auf ihren Durchgang.
 - Manuelles Vorlesen hat Vorrang. Das automatische Vorlesen wartet, solange eine manuelle Anfrage

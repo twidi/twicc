@@ -138,3 +138,32 @@ def test_summary_settings_use_the_ordinary_merge_and_broadcast(monkeypatch, tmp_
         }
     finally:
         synced._cache.clear()
+
+
+def test_timeline_final_only_uses_ordinary_merge_and_broadcast(monkeypatch, tmp_path):
+    import twicc.synced_settings as synced
+
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(synced, "get_synced_settings_path", lambda: path)
+    synced._cache.clear()
+    path.write_text('{"disabledProviders":[]}')
+    frames = []
+
+    class Layer:
+        async def group_send(self, group, frame):
+            assert group == "updates"
+            frames.append(frame["data"])
+
+    monkeypatch.setattr(settings_mutation, "get_channel_layer", lambda: Layer())
+    try:
+        assert synced.read_synced_settings()["timelineSpeechFinalOnly"] is True
+        result = async_to_sync(settings_mutation.update_synced_settings)({"timelineSpeechFinalOnly": False})
+        assert result.status == "accepted"
+        assert synced.read_synced_settings()["timelineSpeechFinalOnly"] is False
+        assert frames[-1] == {
+            "type": "synced_settings_updated",
+            "settings": {"timelineSpeechFinalOnly": False},
+            "version": result.version,
+        }
+    finally:
+        synced._cache.clear()

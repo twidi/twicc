@@ -15,6 +15,7 @@ const { t, n, locale } = useI18n()
 
 import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 import { useTimelineFiltersStore } from '../../stores/timelineFilters'
+import { useSettingsStore } from '../../stores/settings'
 import { useTimelineSpeechStore } from '../../stores/timelineSpeech'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { getProviderHelpers } from '../../providers'
@@ -38,6 +39,7 @@ const props = defineProps({
 })
 
 const store = useTimelineFiltersStore()
+const settings = useSettingsStore()
 const speech = useTimelineSpeechStore()
 const tts = useTextToSpeechStore()
 const listening = computed(() => speech.activePageId === props.pageId)
@@ -391,6 +393,13 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                 </wa-popover>
             </div>
         </div>
+        <wa-switch
+            v-if="listening"
+            class="timeline-speech-final-only"
+            size="small"
+            :checked="settings.timelineSpeechFinalOnly !== false"
+            @change="settings.setTimelineSpeechFinalOnly($event.target.checked)"
+        >{{ $t('timeline.speech.finalOnly') }}</wa-switch>
         <div v-if="pills.length" class="timeline-filter-pills">
             <span v-for="pill in pills" :key="pill.group" class="timeline-filter-pill" :title="pill.title">
                 <span class="timeline-filter-pill-name">{{ pill.label }}:</span>
@@ -455,6 +464,11 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
     flex: none;
     align-items: center;
     gap: var(--wa-space-xs);
+}
+
+.timeline-speech-final-only {
+    display: block;
+    margin-block-start: var(--wa-space-xs);
 }
 
 .timeline-speech-toggle {

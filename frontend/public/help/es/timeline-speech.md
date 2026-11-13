@@ -2,6 +2,13 @@ Usa el **botón de altavoz junto a Cronología** para leer automáticamente los 
 mensajes del asistente. Se requiere una configuración de texto a voz disponible. El botón
 presionado significa que esta cronología escucha los mensajes nuevos.
 
+**Leer solo mensajes de fin de turno** está activado de forma predeterminada. El interruptor aparece
+debajo del encabezado mientras esta cronología escucha, incluso durante una pausa. La preferencia se
+conserva tras recargar y volver a activar la escucha. TwiCC lee el mensaje final exacto después de un
+fin de turno oficial. Los mensajes de progreso visibles pueden permanecer en silencio. El fin del
+turno debe ser estrictamente posterior al inicio de la escucha. Desactiva la opción para leer también
+mensajes intermedios. La lectura manual sigue disponible en ambos modos.
+
 - La escucha usa el alcance de la cronología: todos los proyectos, un espacio de trabajo, un proyecto
   o un solo worktree. Las sesiones silenciadas se ocultan y se omiten de forma predeterminada. Selecciona
   **Filtros → Mostrar sesiones silenciadas** para mostrarlas y leerlas en esa cronología.
@@ -15,9 +22,9 @@ presionado significa que esta cronología escucha los mensajes nuevos.
 - El botón de la cronología en el riel muestra un pequeño altavoz mientras la escucha
   está activada. Su etiqueta identifica la cronología que escucha. Haz clic en él para abrir
   esa cronología sin cambiar la escucha.
-- Los mensajes deben tener una fecha de mensaje nativa **estrictamente posterior al clic
+- Con la opción desactivada, los mensajes deben tener una fecha de mensaje nativa **estrictamente posterior al clic
   de activación**. El historial existente no se reproduce cuando activas la escucha.
-- Las llegadas tardías siguen siendo elegibles hasta **cinco segundos** por detrás del último
+- Con la opción desactivada, las llegadas tardías siguen siendo elegibles hasta **cinco segundos** por detrás del último
   mensaje cuya lectura empieza. Exactamente cinco segundos sigue siendo elegible.
   Los mensajes aceptados permanecen en cola hasta su turno.
 - La lectura manual tiene prioridad. La lectura automática espera mientras se ejecuta una solicitud

@@ -2,6 +2,13 @@ Use o **botão de alto-falante ao lado de Linha do tempo** para ler automaticame
 do assistente. É necessária uma configuração de leitura em voz alta disponível. O botão pressionado
 indica que essa linha do tempo monitora novas mensagens.
 
+**Ler apenas mensagens de fim de turno** fica ativado por padrão. O botão aparece abaixo do título
+enquanto essa linha do tempo monitora mensagens, inclusive durante uma pausa. A preferência permanece
+ao recarregar e ativar a escuta novamente. TwiCC lê a mensagem final exata após um fim de turno oficial.
+Mensagens de progresso visíveis podem permanecer em silêncio. O fim do turno precisa ser estritamente
+posterior ao início da escuta. Desative a opção para ler também mensagens intermediárias.
+A leitura manual continua disponível nos dois modos.
+
 - A escuta usa o escopo da linha do tempo: todos os projetos, um espaço de trabalho, um projeto
   ou um worktree. As sessões silenciadas ficam ocultas e são ignoradas por padrão. Selecione
   **Filtros → Mostrar sessões silenciadas** para mostrá-las e lê-las nessa linha do tempo.
@@ -15,9 +22,9 @@ indica que essa linha do tempo monitora novas mensagens.
 - O botão da linha do tempo na barra de ícones mostra um pequeno alto-falante enquanto a escuta está
   ativada. Seu rótulo identifica a linha do tempo monitorada. Clique nele para abrir
   essa linha do tempo sem alterar a escuta.
-- As mensagens precisam ter uma data nativa **estritamente posterior ao clique de
+- Com a opção desativada, as mensagens precisam ter uma data nativa **estritamente posterior ao clique de
   ativação**. O histórico existente não é reproduzido quando você ativa a escuta.
-- Mensagens que chegam com atraso continuam elegíveis até **cinco segundos** antes da última
+- Com a opção desativada, mensagens que chegam com atraso continuam elegíveis até **cinco segundos** antes da última
   mensagem cuja leitura começa. Uma mensagem com atraso de exatamente cinco segundos ainda é elegível.
   As mensagens aceitas ficam na fila até chegar a vez delas.
 - A leitura manual tem prioridade. A leitura automática espera enquanto uma solicitação

@@ -3582,6 +3582,7 @@
     "timeline.projectNotFound": "Project not found",
     "timeline.session.pinned": "Pinned",
     "timeline.session.unread": "New content to read",
+    "timeline.speech.finalOnly": "Read only end-of-turn messages",
     "timeline.speech.paused": "Timeline reading paused. Stop timeline listening",
     "timeline.speech.readNew": "Read new assistant messages aloud",
     "timeline.speech.stopReading": "Stop reading new assistant messages aloud",

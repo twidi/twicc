@@ -6,6 +6,13 @@ Use the **speaker button beside Timeline** to read new assistant messages
 automatically. An available text-to-speech config is required. The pressed
 button means that this timeline listens for new messages.
 
+**Read only end-of-turn messages** is on by default. The switch appears below the
+heading while this timeline listens, including when listening is paused. It saves
+one preference across reloads and listening activations. TwiCC reads the exact final
+message after an official turn ending. Visible progress messages can remain silent.
+The ending must be strictly after listening starts. Turn the switch off to read
+intermediate messages too. Manual reading stays available in either mode.
+
 - Listening uses the timeline's scope: all projects, a workspace, a project,
   or one worktree. Muted sessions are hidden and skipped by default. Select
   **Filters → Show muted sessions** to display and read them in that timeline.
@@ -19,9 +26,9 @@ button means that this timeline listens for new messages.
 - The timeline button in the rail shows a small speaker while listening is
   enabled. Its label identifies the listening timeline. Click it to open
   that timeline without changing listening.
-- Messages must have a native message date **strictly after the activation
+- With the switch off, messages must have a native message date **strictly after the activation
   click**. Existing history does not play when you enable listening.
-- Late arrivals remain eligible up to **five seconds** behind the latest
+- With the switch off, late arrivals remain eligible up to **five seconds** behind the latest
   message whose reading starts. Exactly five seconds remains eligible.
   Accepted messages stay queued until their turn.
 - Manual reading has priority. Automatic reading waits while a manual request

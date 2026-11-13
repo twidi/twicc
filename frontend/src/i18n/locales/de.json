@@ -3582,6 +3582,7 @@
     "timeline.projectNotFound": "Projekt nicht gefunden",
     "timeline.session.pinned": "Angeheftet",
     "timeline.session.unread": "Neuer Inhalt zum Lesen",
+    "timeline.speech.finalOnly": "Nur Nachrichten am Zugende vorlesen",
     "timeline.speech.paused": "Vorlesen der Zeitachse pausiert. Zuhören bei der Zeitachse stoppen",
     "timeline.speech.readNew": "Neue Assistenten-Nachrichten vorlesen",
     "timeline.speech.stopReading": "Vorlesen neuer Assistenten-Nachrichten stoppen",

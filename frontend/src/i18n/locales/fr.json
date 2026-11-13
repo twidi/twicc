@@ -3582,6 +3582,7 @@
     "timeline.projectNotFound": "Projet introuvable",
     "timeline.session.pinned": "Épinglée",
     "timeline.session.unread": "Nouveau contenu à lire",
+    "timeline.speech.finalOnly": "Lire seulement les messages de fin de tour",
     "timeline.speech.paused": "Lecture de la chronologie en pause. Arrêter l'écoute de la chronologie",
     "timeline.speech.readNew": "Lire à voix haute les nouveaux messages de l'assistant",
     "timeline.speech.stopReading": "Arrêter la lecture à voix haute des nouveaux messages de l'assistant",

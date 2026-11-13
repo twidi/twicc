@@ -21,6 +21,7 @@ NOTIFICATION_KEYS = frozenset({"externalNotificationTargets"})
 # never drifts out of sync.
 GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
     "summaryModel": "Model used for message summaries: auto, haiku, luna, or openrouter. Invalid values use auto.",
+    "timelineSpeechFinalOnly": "Read only end-of-turn messages automatically in timeline speech; manual reading remains available.",
     "timelineSummaryEnabled": "Summarize eligible timeline messages automatically before speech; manual summaries remain available.",
     "titleGenerationEnabled": "Enable title suggestions and automatic title generation.",
     "titleAutoApply": "Generate first titles and update automatic titles in the backend (requires titleGenerationEnabled).",

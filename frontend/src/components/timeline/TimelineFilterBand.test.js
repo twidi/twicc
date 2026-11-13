@@ -149,6 +149,10 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     const store = useTimelineFiltersStore(pinia)
     const actions = []
     const speechActions = []
+    const settingsActions = []
+    const settings = Vue.reactive({ timelineSpeechFinalOnly: null,
+        setTimelineSpeechFinalOnly(value) { settingsActions.push(['setTimelineSpeechFinalOnly', value]); this.timelineSpeechFinalOnly = value },
+    })
     const tts = Vue.reactive({ available })
     const speech = Vue.reactive({ activePageId,
         enable(...args) { speechActions.push(['enable', ...args]); this.activePageId = args[0] },
@@ -158,6 +162,7 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     store.$onAction(({ name, args }) => { if (name !== 'filtersFor' && name !== 'ensure') actions.push([name, ...args]) })
     const Band = compileComponent(new URL('./TimelineFilterBand.vue', import.meta.url), {
         '../../stores/timelineFilters': { useTimelineFiltersStore: () => store },
+        '../../stores/settings': { useSettingsStore: () => settings },
         '../../stores/textToSpeech': { useTextToSpeechStore: () => tts },
         '../../stores/timelineSpeech': { useTimelineSpeechStore: () => speech },
         '../../providers': providers,
@@ -238,7 +243,7 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     }
     const setShown = async (value) => { shown.value = value; await flush() }
     const unmount = () => { app.unmount(); mounted = false }
-    return { root, store, actions, tts, speech, speechActions, focusLog, blurLog, props, bandRefs, observers, resize, view, levelLog, frames, runFrames, setShown, unmount }
+    return { root, store, actions, tts, speech, speechActions, settings, settingsActions, focusLog, blurLog, props, bandRefs, observers, resize, view, levelLog, frames, runFrames, setShown, unmount }
 }
 
 const popoverOf = (root) => descendants(root, (node) => node.type === 'wa-popover')[0]
@@ -999,4 +1004,46 @@ test('suspended web listening has a translated explicit resume action beside Sto
     assert.deepEqual(speechActions, [['resume']])
     await flush()
     assert.equal(byClass(root, 'timeline-speech-resume').length, 0)
+})
+
+
+test('the saved final-only switch appears below the heading only for the listening page, including pause', async (t) => {
+    const { root, speech } = await mount(t)
+    const switches = () => descendants(root, node => node.type === 'wa-switch')
+    assert.equal(switches().length, 0)
+    speech.activePageId = 'p1'
+    await flush()
+    assert.equal(switches().length, 1)
+    const control = switches()[0]
+    assert.equal(textOf(control), 'Read only end-of-turn messages')
+    assert.equal(control.props.checked, true, 'uninitialized preference means on')
+    assert.equal(control.props.size, 'small')
+    const band = byClass(root, 'timeline-filter-band')[0]
+    assertSame(elementsOf(band)[1], control, 'the switch is below the heading row')
+    speech.paused = true
+    await flush()
+    assertSame(switches()[0], control)
+    speech.activePageId = 'p2'
+    await flush()
+    assert.equal(switches().length, 0, 'another page owns listening')
+    speech.activePageId = null
+    await flush()
+    assert.equal(switches().length, 0)
+})
+
+test('the final-only switch updates the global preference without changing listening or filters', async (t) => {
+    const { root, speech, speechActions, actions, settings, settingsActions } = await mount(t, { activePageId: 'p1' })
+    settings.timelineSpeechFinalOnly = true
+    speech.paused = true
+    await flush()
+    const control = descendants(root, node => node.type === 'wa-switch')[0]
+    assert.ok(control, 'the listening timeline has the final-only control')
+    control.props.onChange({ target: { checked: false } })
+    await flush()
+    assert.equal(control.props.checked, false)
+    assert.deepEqual(settingsActions, [['setTimelineSpeechFinalOnly', false]])
+    assert.deepEqual(speechActions, [])
+    assert.deepEqual(actions, [])
+    assert.equal(speech.activePageId, 'p1')
+    assert.equal(speech.paused, true)
 })

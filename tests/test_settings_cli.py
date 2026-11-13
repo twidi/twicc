@@ -830,3 +830,18 @@ def test_info_settings_all_entries_have_required_fields():
         assert "default" in entry, f"Missing 'default' in {entry!r}"
         assert "owner" in entry, f"Missing 'owner' in {entry!r}"
         assert "hint" in entry, f"Missing 'hint' in {entry!r}"
+
+
+def test_timeline_final_only_setting_defaults_on_and_persists_off(temp_settings):
+    from twicc.cli.settings._keys import classify_key, parse_value
+    from twicc.cli.settings.command import build_settings_dump
+
+    temp_settings.write_text('{"titleGenerationEnabled":true}')
+    assert ss.read_synced_settings()["timelineSpeechFinalOnly"] is True
+    assert temp_settings.read_text() == '{"titleGenerationEnabled":true}'
+    assert classify_key("timelineSpeechFinalOnly") == "generic"
+    assert parse_value("timelineSpeechFinalOnly", "false") is False
+    ss.write_synced_settings({"timelineSpeechFinalOnly": False})
+    ss._cache.clear()
+    assert ss.read_synced_settings()["timelineSpeechFinalOnly"] is False
+    assert build_settings_dump()["timelineSpeechFinalOnly"] is False

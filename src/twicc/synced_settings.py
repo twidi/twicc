@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     "summaryModel": "auto",
     "timelineSummaryEnabled": True,
+    "timelineSpeechFinalOnly": True,
     "defaultProvider": Provider.CLAUDE_CODE.value,
     # Global default dockable layout for new sessions: the id of a named layout
     # from layouts.json, or the synthetic "single-pane" (no docks). Resolved at

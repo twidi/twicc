@@ -2,6 +2,13 @@ Utilisez le **bouton haut-parleur à côté de Chronologie** pour lire automatiq
 messages de l'assistant. Une configuration de synthèse vocale disponible est nécessaire. Le bouton
 enfoncé signifie que cette chronologie écoute les nouveaux messages.
 
+**Lire seulement les messages de fin de tour** est activé par défaut. Le switch apparaît sous le titre
+quand cette chronologie écoute, y compris pendant une pause. TwiCC conserve ce paramètre après un rechargement
+ou une nouvelle activation. TwiCC lit le message final exact après une fin de tour officielle.
+Les messages de progression restent visibles et peuvent rester silencieux. La fin de tour doit suivre
+strictement le début de l’écoute. Désactivez le switch pour lire aussi les messages intermédiaires.
+La lecture manuelle reste disponible dans les deux modes.
+
 - L'écoute utilise la portée de la chronologie : tous les projets, un espace de travail, un projet
   ou un worktree. Les sessions en sourdine sont masquées et ignorées par défaut. Sélectionnez
   **Filtres → Afficher les sessions en sourdine** pour les afficher et les lire dans cette chronologie.
@@ -15,9 +22,9 @@ enfoncé signifie que cette chronologie écoute les nouveaux messages.
 - Le bouton de la chronologie dans le rail affiche un petit haut-parleur tant que l'écoute est
   activée. Son libellé identifie la chronologie qui écoute. Cliquez dessus pour ouvrir
   cette chronologie sans modifier l'écoute.
-- Les messages doivent avoir une date de message native **strictement postérieure au clic
+- Avec le switch désactivé, les messages doivent avoir une date de message native **strictement postérieure au clic
   d'activation**. L'historique existant n'est pas lu quand vous activez l'écoute.
-- Les messages arrivés en retard restent éligibles jusqu'à **cinq secondes** derrière le dernier
+- Avec le switch désactivé, les messages arrivés en retard restent éligibles jusqu'à **cinq secondes** derrière le dernier
   message dont la lecture démarre. Exactement cinq secondes reste éligible.
   Les messages acceptés restent en file d'attente jusqu'à leur tour.
 - La lecture manuelle est prioritaire. La lecture automatique attend pendant qu'une requête

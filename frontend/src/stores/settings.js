@@ -103,6 +103,7 @@ export const SETTINGS_SCHEMA = {
     titleSuggestionModel: null,
     summaryModel: null,
     timelineSummaryEnabled: null,
+    timelineSpeechFinalOnly: null,
     titleSystemPrompt: null,
     autoUnpinOnArchive: null,
     worktreeDirectoryTemplate: null,
@@ -166,6 +167,7 @@ const SETTINGS_VALIDATORS = {
     titleSuggestionModel: (v) => resolveTitleSuggestionModel(v) === v,
     summaryModel: (v) => ['auto', 'haiku', 'luna', 'openrouter'].includes(v),
     timelineSummaryEnabled: (v) => typeof v === 'boolean',
+    timelineSpeechFinalOnly: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     showCosts: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
@@ -500,6 +502,9 @@ export const useSettingsStore = defineStore('settings', {
     actions: {
         setSummaryModel(value) {
             if (SETTINGS_VALIDATORS.summaryModel(value)) this.summaryModel = value
+        },
+        setTimelineSpeechFinalOnly(value) {
+            if (SETTINGS_VALIDATORS.timelineSpeechFinalOnly(value)) this.timelineSpeechFinalOnly = value
         },
         setTimelineSummaryEnabled(value) {
             if (SETTINGS_VALIDATORS.timelineSummaryEnabled(value)) this.timelineSummaryEnabled = value
@@ -1315,6 +1320,7 @@ export function initSettings() {
             titleSuggestionModel: store.getTitleSuggestionModel,
             summaryModel: store.summaryModel,
             timelineSummaryEnabled: store.timelineSummaryEnabled,
+            timelineSpeechFinalOnly: store.timelineSpeechFinalOnly,
             titleSystemPrompt: store.titleSystemPrompt,
             showCosts: store.showCosts,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
