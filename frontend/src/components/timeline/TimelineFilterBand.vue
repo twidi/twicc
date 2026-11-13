@@ -43,6 +43,7 @@ const settings = useSettingsStore()
 const speech = useTimelineSpeechStore()
 const tts = useTextToSpeechStore()
 const listening = computed(() => speech.activePageId === props.pageId)
+const showFinalOnly = computed(() => tts.available && listening.value)
 const speechLabel = computed(() => !listening.value ? t('timeline.speech.readNew')
     : speech.paused ? t('timeline.speech.paused') : t('timeline.speech.stopReading'))
 const filters = computed(() => store.filtersFor(props.pageId))
@@ -247,6 +248,10 @@ function measure() {
     const controls = controlsRef.value
     if (!settled || !line || !controls) return
     if (layout.value === 'line') {
+        if (showFinalOnly.value) {
+            setLayout('stacked')
+            return
+        }
         if (overflows(line)) {
             records.line = line.scrollWidth
             setLayout('stacked')
@@ -257,7 +262,7 @@ function measure() {
         if (overflows(controls)) {
             records.stacked = controls.scrollWidth
             setLayout('compact')
-        } else if (records.line !== null && line.clientWidth >= records.line) {
+        } else if (!showFinalOnly.value && records.line !== null && line.clientWidth >= records.line) {
             setLayout('line')
         }
         return
@@ -272,7 +277,7 @@ watch(layout, () => {
 
 // The count appearing or disappearing changes the content, not the line box: a recorded width would be stale, so
 // measure again from the first level.
-watch([count, locale, () => speech.suspended], () => {
+watch([count, locale, showFinalOnly, () => speech.suspended], () => {
     if (layout.value === 'line') measure()
     else setLayout('line')
 }, { flush: 'post' })
@@ -312,7 +317,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 <template>
     <div ref="rootRef" class="timeline-filter-band">
         <div ref="lineRef" :class="['timeline-filter-line', `timeline-filter-line--${layout}`]">
-            <div ref="headingRef" class="timeline-filter-heading">
+            <div ref="headingRef" class="timeline-filter-heading" :class="{ 'timeline-filter-heading--listening': showFinalOnly }">
                 <span class="timeline-filter-title">{{ $t('timeline.title') }}</span>
                 <button
                     type="button"
@@ -323,6 +328,13 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                     :disabled="!tts.available && !listening"
                     @click="toggleSpeech"
                 ><wa-icon name="volume-up" aria-hidden="true"></wa-icon></button>
+                <wa-switch
+                    v-if="showFinalOnly"
+                    class="timeline-speech-final-only"
+                    size="small"
+                    :checked="settings.timelineSpeechFinalOnly !== false"
+                    @change="settings.setTimelineSpeechFinalOnly($event.target.checked)"
+                >{{ $t('timeline.speech.finalOnly') }}</wa-switch>
                 <HelpIconButton help-key="timeline-speech" :label="$t('help.timelineSpeech')" />
                 <button
                     v-if="listening && speech.suspended"
@@ -393,13 +405,6 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                 </wa-popover>
             </div>
         </div>
-        <wa-switch
-            v-if="listening"
-            class="timeline-speech-final-only"
-            size="small"
-            :checked="settings.timelineSpeechFinalOnly !== false"
-            @change="settings.setTimelineSpeechFinalOnly($event.target.checked)"
-        >{{ $t('timeline.speech.finalOnly') }}</wa-switch>
         <div v-if="pills.length" class="timeline-filter-pills">
             <span v-for="pill in pills" :key="pill.group" class="timeline-filter-pill" :title="pill.title">
                 <span class="timeline-filter-pill-name">{{ pill.label }}:</span>
@@ -467,8 +472,13 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 }
 
 .timeline-speech-final-only {
-    display: block;
-    margin-block-start: var(--wa-space-xs);
+    min-width: 0;
+}
+
+/* Keep the switch before help on narrow screens; its label can wrap within the row. */
+.timeline-filter-heading--listening {
+    flex-wrap: nowrap;
+    min-width: 0;
 }
 
 .timeline-speech-toggle {

@@ -6,8 +6,8 @@ Use the **speaker button beside Timeline** to read new assistant messages
 automatically. An available text-to-speech config is required. The pressed
 button means that this timeline listens for new messages.
 
-**Read only end-of-turn messages** is on by default. The switch appears below the
-heading while this timeline listens, including when listening is paused. It saves
+**Read only end-of-turn messages** is on by default. The switch appears before the
+help button when text-to-speech is available and this timeline listens, including when listening is paused. It saves
 one preference across reloads and listening activations. TwiCC reads the exact final
 message after an official turn ending. Visible progress messages can remain silent.
 The ending must be strictly after listening starts. Turn the switch off to read

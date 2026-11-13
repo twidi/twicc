@@ -2,8 +2,8 @@ Use o **botão de alto-falante ao lado de Linha do tempo** para ler automaticame
 do assistente. É necessária uma configuração de leitura em voz alta disponível. O botão pressionado
 indica que essa linha do tempo monitora novas mensagens.
 
-**Ler apenas mensagens de fim de turno** fica ativado por padrão. O botão aparece abaixo do título
-enquanto essa linha do tempo monitora mensagens, inclusive durante uma pausa. A preferência permanece
+**Ler apenas mensagens de fim de turno** fica ativado por padrão. O botão aparece antes do botão de ajuda
+quando a leitura em voz alta está disponível e essa linha do tempo monitora mensagens, inclusive durante uma pausa. A preferência permanece
 ao recarregar e ativar a escuta novamente. TwiCC lê a mensagem final exata após um fim de turno oficial.
 Mensagens de progresso visíveis podem permanecer em silêncio. O fim do turno precisa ser estritamente
 posterior ao início da escuta. Desative a opção para ler também mensagens intermediárias.

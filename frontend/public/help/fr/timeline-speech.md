@@ -2,8 +2,8 @@ Utilisez le **bouton haut-parleur à côté de Chronologie** pour lire automatiq
 messages de l'assistant. Une configuration de synthèse vocale disponible est nécessaire. Le bouton
 enfoncé signifie que cette chronologie écoute les nouveaux messages.
 
-**Lire seulement les messages de fin de tour** est activé par défaut. Le switch apparaît sous le titre
-quand cette chronologie écoute, y compris pendant une pause. TwiCC conserve ce paramètre après un rechargement
+**Lire seulement les messages de fin de tour** est activé par défaut. Le switch apparaît avant le bouton d’aide
+quand la synthèse vocale est disponible et que cette chronologie écoute, y compris pendant une pause. TwiCC conserve ce paramètre après un rechargement
 ou une nouvelle activation. TwiCC lit le message final exact après une fin de tour officielle.
 Les messages de progression restent visibles et peuvent rester silencieux. La fin de tour doit suivre
 strictement le début de l’écoute. Désactivez le switch pour lire aussi les messages intermédiaires.

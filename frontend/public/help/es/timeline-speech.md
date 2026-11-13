@@ -3,7 +3,7 @@ mensajes del asistente. Se requiere una configuración de texto a voz disponible
 presionado significa que esta cronología escucha los mensajes nuevos.
 
 **Leer solo mensajes de fin de turno** está activado de forma predeterminada. El interruptor aparece
-debajo del encabezado mientras esta cronología escucha, incluso durante una pausa. La preferencia se
+antes del botón de ayuda cuando la función de texto a voz está disponible y esta cronología escucha, incluso durante una pausa. La preferencia se
 conserva tras recargar y volver a activar la escucha. TwiCC lee el mensaje final exacto después de un
 fin de turno oficial. Los mensajes de progreso visibles pueden permanecer en silencio. El fin del
 turno debe ser estrictamente posterior al inicio de la escucha. Desactiva la opción para leer también

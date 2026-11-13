@@ -2,8 +2,8 @@ Mit der **Lautsprecher-Schaltfläche neben Zeitachse** liest TwiCC neue Assisten
 automatisch vor. Dafür ist eine verfügbare Sprachausgabe-Konfiguration erforderlich. Die gedrückte
 Schaltfläche bedeutet, dass diese Zeitachse auf neue Nachrichten lauscht.
 
-**Nur Nachrichten am Zugende vorlesen** ist standardmäßig eingeschaltet. Der Schalter erscheint unter
-der Überschrift, solange diese Zeitachse lauscht, auch bei pausiertem Lauschen. Die Einstellung bleibt
+**Nur Nachrichten am Zugende vorlesen** ist standardmäßig eingeschaltet. Der Schalter erscheint vor
+der Hilfeschaltfläche, wenn die Sprachausgabe verfügbar ist und diese Zeitachse lauscht, auch bei pausiertem Lauschen. Die Einstellung bleibt
 nach dem Neuladen und erneutem Aktivieren erhalten. TwiCC liest die genaue letzte Nachricht nach einem
 offiziellen Zugende vor. Sichtbare Fortschrittsmeldungen können stumm bleiben. Das Zugende muss strikt
 nach dem Start des Lauschens liegen. Schalte die Option aus, um auch Zwischennachrichten vorzulesen.

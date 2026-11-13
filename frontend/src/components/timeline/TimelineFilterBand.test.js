@@ -1007,10 +1007,11 @@ test('suspended web listening has a translated explicit resume action beside Sto
 })
 
 
-test('the saved final-only switch appears below the heading only for the listening page, including pause', async (t) => {
-    const { root, speech } = await mount(t)
+test('available listening places the final-only switch before help and filters on their own row, including pause', async (t) => {
+    const { root, speech, tts, resize } = await mount(t, { resizeObserver: true })
     const switches = () => descendants(root, node => node.type === 'wa-switch')
     assert.equal(switches().length, 0)
+    assert.equal(levelOf(root), 'line')
     speech.activePageId = 'p1'
     await flush()
     assert.equal(switches().length, 1)
@@ -1018,14 +1019,29 @@ test('the saved final-only switch appears below the heading only for the listeni
     assert.equal(textOf(control), 'Read only end-of-turn messages')
     assert.equal(control.props.checked, true, 'uninitialized preference means on')
     assert.equal(control.props.size, 'small')
-    const band = byClass(root, 'timeline-filter-band')[0]
-    assertSame(elementsOf(band)[1], control, 'the switch is below the heading row')
+    const heading = byClass(root, 'timeline-filter-heading')[0]
+    const help = byClass(root, 'help-icon-button')[0]
+    assertSame(control.parent, heading, 'the switch shares the heading row')
+    assertSame(elementsOf(heading)[elementsOf(heading).indexOf(control) + 1], help, 'help follows the switch')
+    assert.equal(levelOf(root), 'stacked', 'filters have their own row even on a wide screen')
+    await resize(300)
+    assert.equal(levelOf(root), 'compact', 'narrow filter controls still use compact labels')
+    await resize(1000)
+    assert.equal(levelOf(root), 'stacked')
     speech.paused = true
     await flush()
     assertSame(switches()[0], control)
+    tts.available = false
+    await flush()
+    assert.equal(switches().length, 0)
+    assert.equal(levelOf(root), 'line', 'unavailable TTS restores the ordinary layout')
+    tts.available = true
+    await flush()
+    assert.equal(switches().length, 1)
     speech.activePageId = 'p2'
     await flush()
     assert.equal(switches().length, 0, 'another page owns listening')
+    assert.equal(levelOf(root), 'line')
     speech.activePageId = null
     await flush()
     assert.equal(switches().length, 0)
