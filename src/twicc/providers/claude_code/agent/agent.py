@@ -1310,6 +1310,10 @@ class ClaudeCodeAgent(BaseAgent):
             # entries: skip the small-model request that generates them (the
             # hybrid mode gets the same through ``-n``).
             env_option["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] = "1"
+            # Claude Code writes a periodic progress summary for each running
+            # subagent, at the price of extra model requests. TwiCC does not show
+            # them: skip the summaries and the requests that write them.
+            env_option["CLAUDE_CODE_DISABLE_AGENT_PROGRESS_SUMMARIES"] = "1"
             # Configured provider homes (CLAUDE_CONFIG_DIR & co): explicit even
             # though os.environ inheritance would carry them — the invariant
             # that a launched process never touches another home must not

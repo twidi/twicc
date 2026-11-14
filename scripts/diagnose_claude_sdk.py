@@ -246,10 +246,18 @@ def check_process(report: Report, check_id: str, session_id: str, label: str) ->
         problems.append(f"BASH_MAX_TIMEOUT_MS={env.get('BASH_MAX_TIMEOUT_MS')!r}")
     if env.get("CLAUDE_CODE_ENABLE_TODO_TOOLS") != "1":
         problems.append(f"CLAUDE_CODE_ENABLE_TODO_TOOLS={env.get('CLAUDE_CODE_ENABLE_TODO_TOOLS')!r}")
+    if env.get("CLAUDE_CODE_DISABLE_AGENT_PROGRESS_SUMMARIES") != "1":
+        problems.append(
+            f"CLAUDE_CODE_DISABLE_AGENT_PROGRESS_SUMMARIES={env.get('CLAUDE_CODE_DISABLE_AGENT_PROGRESS_SUMMARIES')!r}"
+        )
     if problems:
         report.add(check_id, FAIL, f"pid {pid} ({label}): " + "; ".join(problems))
     else:
-        report.add(check_id, PASS, f"pid {pid} ({label}): idleCompaction off, long Bash ceiling and todo tools on")
+        report.add(
+            check_id, PASS,
+            f"pid {pid} ({label}): idleCompaction off, long Bash ceiling, todo tools on, "
+            "agent progress summaries off",
+        )
 
 
 def reply_of(result: subprocess.CompletedProcess) -> tuple[str | None, str | None, str | None]:
