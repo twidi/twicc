@@ -109,9 +109,9 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
     content: "";
     position: absolute;
     inset-block: 0;
-    inset-inline-start: calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) / 2 - 1px);
-    /* The border of the band or the block card around it (styles/surfaces.css), in both schemes. */
-    border-inline-start: 2px solid var(--block-card-border);
+    inset-inline-start: calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) / 2 - var(--timeline-rail-width, 1px) / 2);
+    /* Match the turn rail, including in chat where the rail variables are not set. */
+    border-inline-start: var(--timeline-rail-width, 1px) solid var(--timeline-rail-color, color-mix(in srgb, var(--wa-color-text-quiet) 55%, transparent));
 }
 
 .timeline-event-line--run-first::before {
