@@ -810,17 +810,23 @@ test('an author run: the label once, under its last row; a rule joins the rows; 
     assert.deepEqual(runs, ['first', 'last', null])
 })
 
-test('the author run rule CSS: in the gap between the icons and the text, from the first row down to the author line', () => {
+test('the author link CSS: segments between the text lines of a run, an elbow into the author label', () => {
     const line = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
     const style = line.slice(line.indexOf('<style'))
-    const rule = declarationsOf(style, '.timeline-event-line--run-first::before,\n.timeline-event-line--run-middle::before,\n.timeline-event-line--run-last::before')
-    assert.equal(rule.get('inset-inline-start'), 'calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) / 2 - 1px)')
-    assert.equal(rule.get('inset-block'), '0')
-    assert.equal(rule.get('border-inline-start'), '2px solid var(--block-card-border)')
-    // The last row's own rule comes after the shared one, whose selector list ends with the same selector.
-    const own = style.slice(style.indexOf('\n.timeline-event-line--run-first::before {'))
-    assert.equal(declarationsOf(own, '.timeline-event-line--run-last::before').get('inset-block-end'), 'calc(var(--wa-space-2xs) + var(--timeline-author-height))')
-    // The height the last row's rule leaves for the author line is the line's own height.
+    // Under the first letter of the text, drawn in the turn rail's width and color.
+    const vars = declarationsOf(style, '.timeline-event-line--run-first,\n.timeline-event-line--run-middle,\n.timeline-event-line--by')
+    assert.equal(vars.get('--timeline-run-x'), 'calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) + 0.3rem)')
+    assert.match(vars.get('--timeline-run-border'), /var\(--timeline-rail-width, 1px\) solid var\(--timeline-rail-color/)
+    // The part above the text (middle, last rows) and below it (first, middle rows).
+    // The shared rule comes first; the rules of the parts follow it.
+    const parts = style.slice(style.indexOf('/* Above the text'))
+    assert.equal(declarationsOf(parts, '.timeline-event-line--run-middle::before,\n.timeline-event-line--run-last::before').get('inset-block-start'), '0')
+    assert.equal(declarationsOf(parts, '.timeline-event-line--run-first::after,\n.timeline-event-line--run-middle::after').get('inset-block-end'), '0')
+    // The elbow belongs to every row that shows the label, a lone event included, and the label is moved after it.
+    const elbow = declarationsOf(style, '.timeline-event-line--by::after')
+    assert.equal(elbow.get('border-end-start-radius'), 'var(--timeline-run-elbow-radius)')
+    assert.ok(declarationsOf(style, '.timeline-event-line--by .timeline-author').get('margin-inline-start'))
+    // The elbow ends on the author line: its height is the line's own height.
     assert.equal(declarationsOf(style, '.timeline-author').get('line-height'), '1.5')
     assert.equal(declarationsOf(style, '.timeline-event-line').get('--timeline-author-height'), 'calc(var(--wa-font-size-xs) * 1.5)')
 })

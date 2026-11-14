@@ -43,7 +43,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
 </script>
 
 <template>
-    <div class="timeline-event-line" :class="[`timeline-event-line--${vm.severity}`, { 'timeline-event-line--indented': indented, 'timeline-event-line--instance': instance }, runClass]">
+    <div class="timeline-event-line" :class="[`timeline-event-line--${vm.severity}`, { 'timeline-event-line--by': showAuthor, 'timeline-event-line--indented': indented, 'timeline-event-line--instance': instance }, runClass]">
         <wa-icon :name="vm.icon" class="timeline-row-icon" auto-width :title="vm.tooltip"></wa-icon>
         <div class="timeline-row-main">
             <!-- The parts of utils/timeline/parts.js. The tags are inline content of the wording, glued to its last
@@ -101,29 +101,67 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
     padding-inline-start: var(--timeline-line-indent);
 }
 
-/* The rule that joins the rows of an author run, in the gap between the icons and the text: from the first row's
-   text down to the last row's author line, drawn in parts across the rows (each row is one scroller item). */
-.timeline-event-line--run-first::before,
+/* The link of an author run: a vertical line BETWEEN the text lines, under the first letter of each (as the turn rail
+   runs between the icons), ending in a rounded elbow into the "by ..." label of the last row. It is drawn in parts
+   across the rows (each row is one scroller item): the part above the text (middle, last), the part below it (first,
+   middle) and the elbow (last). The parts leave a small gap around the text and join at the row edges. */
+.timeline-event-line--run-first,
+.timeline-event-line--run-middle,
+.timeline-event-line--by {
+    /* Under the first letter of the text; the width of the elbow; the gap left around the text. */
+    --timeline-run-x: calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) + 0.3rem);
+    --timeline-run-elbow-width: 0.6rem;
+    /* The elbow's horizontal part sits this much under the middle of the author line, and its curve is gentle. */
+    --timeline-run-elbow-drop: 0.12rem;
+    --timeline-run-elbow-radius: 0.3rem;
+    --timeline-run-gap: 0.08rem;
+    /* Match the turn rail, including in chat where the rail variables are not set. */
+    --timeline-run-border: var(--timeline-rail-width, 1px) solid var(--timeline-rail-color, color-mix(in srgb, var(--wa-color-text-quiet) 55%, transparent));
+}
+
 .timeline-event-line--run-middle::before,
-.timeline-event-line--run-last::before {
+.timeline-event-line--run-last::before,
+.timeline-event-line--run-first::after,
+.timeline-event-line--run-middle::after {
     content: "";
     position: absolute;
-    inset-block: 0;
-    inset-inline-start: calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) / 2 - var(--timeline-rail-width, 1px) / 2);
-    /* Match the turn rail, including in chat where the rail variables are not set. */
-    border-inline-start: var(--timeline-rail-width, 1px) solid var(--timeline-rail-color, color-mix(in srgb, var(--wa-color-text-quiet) 55%, transparent));
+    inset-inline-start: var(--timeline-run-x);
+    border-inline-start: var(--timeline-run-border);
+    pointer-events: none;
 }
 
-.timeline-event-line--run-first::before {
-    inset-block-start: var(--wa-space-xs);
-    border-start-start-radius: 2px;
-    border-start-end-radius: 2px;
-}
-
+/* Above the text: from the row top down to the text, minus the gap. */
+.timeline-event-line--run-middle::before,
 .timeline-event-line--run-last::before {
-    inset-block-end: calc(var(--wa-space-2xs) + var(--timeline-author-height));
-    border-end-start-radius: 2px;
-    border-end-end-radius: 2px;
+    inset-block-start: 0;
+    height: calc(var(--wa-space-2xs) - var(--timeline-run-gap));
+}
+
+/* Below the text: from the text, plus the gap, down to the row bottom. */
+.timeline-event-line--run-first::after,
+.timeline-event-line--run-middle::after {
+    inset-block-end: 0;
+    height: calc(var(--wa-space-2xs) - var(--timeline-run-gap));
+}
+
+/* The elbow, on every row that shows the author label (the last row of a run, or a lone event): from under the text to the middle of its author line, then to the right. */
+.timeline-event-line--by::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: var(--timeline-run-x);
+    inset-block-end: calc(var(--wa-space-2xs) + var(--timeline-author-height) / 2 - var(--timeline-run-elbow-drop));
+    height: calc(var(--timeline-author-height) / 2 + var(--timeline-run-elbow-drop) - var(--timeline-run-gap));
+    width: var(--timeline-run-elbow-width);
+    box-sizing: border-box;
+    border-inline-start: var(--timeline-run-border);
+    border-block-end: var(--timeline-run-border);
+    border-end-start-radius: var(--timeline-run-elbow-radius);
+    pointer-events: none;
+}
+
+/* The label sits at the end of the elbow. */
+.timeline-event-line--by .timeline-author {
+    margin-inline-start: calc(var(--timeline-run-elbow-width) + 0.6rem);
 }
 
 /* Baseline-aligned with the first line of the text (the grid default), so whatever makes that line taller (a badge)
