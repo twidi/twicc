@@ -31,6 +31,8 @@ function onActivate() {
 .help-icon-button {
     display: inline-flex;
     align-items: center;
+    /* A native <button> has the form-control height: without this, the icon makes its line taller. */
+    height: auto;
     padding: 0;
     border: none;
     background: none;

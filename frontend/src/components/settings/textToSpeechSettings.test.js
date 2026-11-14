@@ -111,14 +111,16 @@ test('a File path script card offers to delete the returned file', () => {
     )
 })
 
-test('the intro names both kinds and the key callout speaks of what needs OpenRouter only', () => {
-    assert.match(flatSource, /<i18n-t tag="p" class="setting-group-hint" keypath="settings\.textToSpeech\.intro" scope="global">/)
-    assert.equal(t('settings.textToSpeech.intro', { guide: 'GUIDE', models: 'MODELS' }), "Read the chat messages aloud with OpenRouter, or with your own script. See the GUIDE and the MODELS. Prices are OpenRouter's list prices: the real cost can differ.")
+test('the intro names both kinds and the key callout points to the help page', () => {
+    assert.match(flatSource, /<i18n-t tag="p" class="setting-group-hint tts-intro" keypath="settings\.textToSpeech\.intro" scope="global">/)
+    assert.equal(t('settings.textToSpeech.intro', { guide: 'GUIDE', models: 'MODELS', help: 'HELP' }), 'Read the chat messages aloud with OpenRouter, or with your own script. See the GUIDE and the MODELS. HELP')
+    // One warning, only while the key is missing; no path, no variable name: the help page says how.
     assert.match(
         flatSource,
-        /<wa-callout v-else variant="warning" size="small"> <wa-icon slot="icon" name="triangle-exclamation"><\/wa-icon> <i18n-t keypath="settings\.textToSpeech\.keyMissing" scope="global">[\s\S]*?<template #apiKey><code>TWICC_OPENROUTER_API_KEY<\/code><\/template> <template #path><code>\{\{ store\.envPath \}\}<\/code><\/template> <\/i18n-t> <\/wa-callout>/,
+        /<wa-callout v-if="!store\.keyPresent" variant="warning" size="small"> <wa-icon slot="icon" name="triangle-exclamation"><\/wa-icon> \{\{ \$t\('settings\.textToSpeech\.keyMissing'\) \}\} <HelpFeatureLink help-key="openrouter" :label="\$t\('help\.openrouter'\)" \/> <\/wa-callout>/,
     )
-    assert.equal(t('settings.textToSpeech.keyMissing', { apiKey: 'KEY', path: 'PATH' }), 'Add KEY to PATH, then restart TwiCC. Testing OpenRouter configs and the OpenRouter adaptation are disabled until then.')
+    assert.equal(t('settings.textToSpeech.keyMissing'), 'The OpenRouter key is not set. OpenRouter configs and the OpenRouter adaptation are disabled until then.')
+    assert.doesNotMatch(flatSource, /keyLoaded|store\.envPath/)
 })
 
 test('two new-config buttons add an OpenRouter config and a script config', () => {
@@ -186,7 +188,7 @@ test('the text adaptation choice sits after the introduction, before the test te
     assert.match(settingsSource, /@container \(max-width: 26rem\) \{\s*\.tts-format-row > \.segmented-control \{/)
     assert.match(
         flatSource,
-        /<div class="tts-format-row"> <SegmentedControl :label="\$t\('settings\.textToSpeech\.adapt'\)" :model-value="adaptChoice" :options="adaptChoices" @update:model-value="store\.setAdapt\(\$event\)" \/>/,
+        /<div class="tts-format-row"> <SegmentedControl fit :label="\$t\('settings\.textToSpeech\.adapt'\)" :model-value="adaptChoice" :options="adaptChoices" @update:model-value="store\.setAdapt\(\$event\)" \/>/,
     )
 })
 
@@ -198,28 +200,24 @@ test('the adaptation control shows what really runs, from the enabled providers 
     assert.doesNotMatch(settingsSource, /noAdaptProvider/)
 })
 
-test('the adaptation hint or the no-provider hint instead, then the OpenRouter note whenever the key is set', () => {
+test('the adaptation hint or the no-provider hint instead, and a help icon for OpenRouter', () => {
     assert.match(
         flatSource,
-        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.noProvider'\) \}\}<\/span> <span v-else class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.adaptHint'\) \}\}<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.openRouterAdaptHint', \{ model: \$t\(OPENROUTER_MODEL_DESCRIPTION_KEY\) \}\) \}\}<\/span>/,
+        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.noProvider'\) \}\}<\/span> <span v-else class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.adaptHint'\) \}\}<\/span>/,
     )
-    // One OpenRouter note only, and never bound to OpenRouter being the effective choice.
-    assert.equal(settingsSource.match(/\$t\('settings\.textToSpeech\.openRouterAdaptHint'/g)?.length, 1)
-    // The model words come from the one constant, never written here.
-    assert.match(settingsSource, /import \{ OPENROUTER_MODEL_DESCRIPTION_KEY \} from '\.\.\/\.\.\/constants'/)
+    // The help page says which model OpenRouter uses and where the text goes.
+    assert.match(flatSource, /\{\{ \$t\('settings\.textToSpeech\.adaptHint'\) \}\}<\/span> <HelpFeatureLink help-key="openrouter" :label="\$t\('help\.openrouter'\)" \/>/)
+    assert.doesNotMatch(settingsSource, /openRouterAdaptHint|OPENROUTER_MODEL_DESCRIPTION_KEY/)
     assert.doesNotMatch(settingsSource, /Qwen|Cerebras/)
     assert.doesNotMatch(settingsSource, /adaptHintKind/)
 })
 
-test('the four adaptation segments wrap onto a second line in a narrow adaptation group only', () => {
+test('the adaptation segments shrink to fit a narrow adaptation group, the config cards keep their one row', () => {
     // The format controls of the config cards keep their one row of segments.
     assert.match(settingsSource, /\.tts-format-row :deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: nowrap;\s*\}/)
-    // The adaptation group only: its segments wrap when the row overflows, at any width.
-    assert.match(
-        settingsSource,
-        /\n\.tts-adapt-group \.tts-format-row :deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: wrap;\s*\}/,
-    )
-    assert.doesNotMatch(settingsSource, /@container \(max-width: 40rem\)/)
+    // The adaptation control uses the fit mode of the segmented control: no wrapping rule of its own.
+    assert.match(flatSource, /<SegmentedControl fit :label="\$t\('settings\.textToSpeech\.adapt'\)"/)
+    assert.doesNotMatch(settingsSource, /\.tts-adapt-group \.tts-format-row :deep|grid-template-columns: 1fr 1fr/)
 })
 
 test('the last test run shows the adaptation facts and the folded adapted text', () => {

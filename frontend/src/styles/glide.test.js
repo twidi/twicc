@@ -320,7 +320,7 @@ test('SegmentedControl: button radios, ink, not-ready fill, change guard, value 
     assert.ok(!script.includes("getAttribute('value')"), 'the property, not the attribute')
     assert.match(script, /container: frameRef,\s*flushTarget: inkRef,/)
     assert.match(script, /getItems: \(\) => \[\.\.\.\(frameRef\.value\?\.querySelectorAll\('wa-radio'\) \?\? \[\]\)\]/)
-    assert.match(script, /sources: \[\(\) => props\.modelValue, \(\) => props\.options\]/)
+    assert.match(script, /sources: \[\(\) => props\.modelValue, \(\) => props\.options, compact\]/)
 
     const rules = parseCss(styleOf(sfc))
     const frame = rule(rules, ['.segmented-control'])

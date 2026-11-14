@@ -18,6 +18,9 @@ const CONTENT_METADATA = {
         "model-effort-score": {
             "titleKey": "help.entries.modelEffortScore.title"
         },
+        "openrouter": {
+            "titleKey": "help.entries.openrouter.title"
+        },
         "peers": {
             "titleKey": "help.entries.peers.title"
         },

@@ -24,7 +24,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
-import { OPENROUTER_MODEL_DESCRIPTION_KEY } from '../../constants'
 import {
     DEFAULT_TEST_TEXT,
     adaptHint,
@@ -58,6 +57,7 @@ import {
     ttsStreamingNote,
 } from '../../utils/ttsConfig'
 import HelpFeatureLink from '../help/HelpFeatureLink.vue'
+import HelpIconButton from '../help/HelpIconButton.vue'
 import FilterableSelect from '../ui/FilterableSelect.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
@@ -395,32 +395,23 @@ function answerNo(id) {
             <HelpFeatureLink help-key="text-to-speech" :label="$t('settings.textToSpeech.help')" />
         </div>
 
-        <i18n-t tag="p" class="setting-group-hint" keypath="settings.textToSpeech.intro" scope="global">
+        <i18n-t tag="p" class="setting-group-hint tts-intro" keypath="settings.textToSpeech.intro" scope="global">
             <template #guide><a href="https://openrouter.ai/docs/guides/overview/multimodal/tts" target="_blank" rel="noopener">{{ $t('settings.textToSpeech.guide') }}</a></template>
             <template #models><a href="https://openrouter.ai/models?output_modalities=speech" target="_blank" rel="noopener">{{ $t('settings.textToSpeech.models') }}</a></template>
+            <template #help><HelpIconButton help-key="openrouter" :label="$t('help.openrouter')" /></template>
         </i18n-t>
 
-        <wa-callout v-if="store.keyPresent" variant="success" size="small">
-            <wa-icon slot="icon" name="circle-check"></wa-icon>
-            <i18n-t keypath="settings.textToSpeech.keyLoaded" scope="global">
-                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- Environment variable names are technical identifiers. -->
-                <template #apiKey><code>TWICC_OPENROUTER_API_KEY</code></template>
-                <template #path><code>{{ store.envPath }}</code></template>
-            </i18n-t>
-        </wa-callout>
-        <wa-callout v-else variant="warning" size="small">
+        <wa-callout v-if="!store.keyPresent" variant="warning" size="small">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-            <i18n-t keypath="settings.textToSpeech.keyMissing" scope="global">
-                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- Environment variable names are technical identifiers. -->
-                <template #apiKey><code>TWICC_OPENROUTER_API_KEY</code></template>
-                <template #path><code>{{ store.envPath }}</code></template>
-            </i18n-t>
+            {{ $t('settings.textToSpeech.keyMissing') }}
+            <HelpFeatureLink help-key="openrouter" :label="$t('help.openrouter')" />
         </wa-callout>
 
         <div class="setting-group tts-adapt-group">
             <span class="setting-group-label">{{ $t('settings.textToSpeech.adapt') }}</span>
             <div class="tts-format-row">
                 <SegmentedControl
+                    fit
                     :label="$t('settings.textToSpeech.adapt')"
                     :model-value="adaptChoice"
                     :options="adaptChoices"
@@ -429,7 +420,7 @@ function answerNo(id) {
             </div>
             <span v-if="adaptHints.noProvider" class="setting-group-hint">{{ $t('settings.textToSpeech.noProvider') }}</span>
             <span v-else class="setting-group-hint">{{ $t('settings.textToSpeech.adaptHint') }}</span>
-            <span v-if="adaptHints.openrouter" class="setting-group-hint">{{ $t('settings.textToSpeech.openRouterAdaptHint', { model: $t(OPENROUTER_MODEL_DESCRIPTION_KEY) }) }}</span>
+            <HelpFeatureLink help-key="openrouter" :label="$t('help.openrouter')" />
         </div>
 
         <div class="setting-group">
@@ -871,6 +862,11 @@ function answerNo(id) {
     container-type: inline-size;
 }
 
+/* The section already spaces its blocks: the paragraph keeps no margin of its own. */
+.settings-section :deep(.tts-intro) {
+    margin-block: 0;
+}
+
 /* Its own container: on a phone the adaptation segments tighten as a card's do, then wrap. */
 .tts-adapt-group {
     container-type: inline-size;
@@ -967,12 +963,6 @@ function answerNo(id) {
     .tts-format-row > .segmented-control {
         --wa-form-control-padding-inline: 0.5em;
     }
-}
-
-/* The four full labels of the adaptation do not fit one row on a narrow screen: its segments wrap
-   onto a second row when the row overflows (the format controls of a card keep their one row). */
-.tts-adapt-group .tts-format-row :deep(wa-radio-group::part(form-control-input)) {
-    flex-wrap: wrap;
 }
 
 .tts-test-row {

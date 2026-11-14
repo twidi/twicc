@@ -4,7 +4,7 @@ an den Nachrichten eine Lautsprecher-Schaltfläche.
 
 Es gibt zwei Arten von Konfigurationen:
 
-- **OpenRouter**: ein Sprachmodell von OpenRouter mit seinen Stimmen.
+- **OpenRouter**: ein Sprachmodell von [OpenRouter](help/openrouter) mit seinen Stimmen.
 - **Skript**: ein eigener Shell-Befehl, der den Text in Audio umwandelt.
 
 ## Neue Zeitachsen-Nachrichten vorlesen
@@ -46,8 +46,7 @@ Wähle unter **Einstellungen → Zusammenfassungen** zwischen **Auto**, **Claude
 **GPT-6 Luna** und **OpenRouter**. Auto wählt einen aktivierten laufenden Agenten, zuerst Claude,
 dann Codex. Ist der gewählte Agent nicht verfügbar, weicht TwiCC auf den anderen Agenten aus.
 
-OpenRouter nutzt das vorhandene OpenRouter-Textmodell und den vorhandenen Schlüssel. Die Aufrufe
-werden über dein OpenRouter-Konto bezahlt. Ohne Schlüssel oder über **60.000 Quellzeichen** wählt
+OpenRouter braucht seinen Schlüssel: siehe [OpenRouter](help/openrouter). Ohne Schlüssel oder über **60.000 Quellzeichen** wählt
 TwiCC einen aktivierten Agenten. Dabei bleibt die vollständige Quelle erhalten.
 Schlägt OpenRouter fehl, bevor die Zusammenfassungs-Sprachausgabe festgelegt ist, kann ein
 aktivierter Agent den vorläufigen Text ersetzen. Ohne verfügbares Modell zeigt das Zusammenfassen
@@ -64,8 +63,7 @@ Konfiguration ihre Validierung: Teste sie erneut.
 
 ## OpenRouter-Konfigurationen
 
-Sie benötigen einen OpenRouter-Schlüssel: Füge `TWICC_OPENROUTER_API_KEY` zur Datei `.env` in deinem
-TwiCC-Datenverzeichnis hinzu und starte TwiCC dann neu. Der Schlüssel verlässt den Server nie.
+Sie benötigen einen OpenRouter-Schlüssel. [OpenRouter](help/openrouter) erklärt, wie du ihn festlegst.
 
 Die angezeigten Preise sind die Listenpreise von OpenRouter. Nach einem Test zeigt die Konfiguration,
 was die Sprachausgabe des Tests tatsächlich gekostet hat.
@@ -123,10 +121,9 @@ Codex-Modell, dessen Anbieter deaktiviert ist, wird durch den anderen Agenten er
 kehrt zurück, sobald du den Anbieter wieder aktivierst.
 
 Claude Haiku 5.5 und GPT-6 Luna laufen über dein Claude- oder Codex-Abonnement. **OpenRouter** ruft
-ein schnelles Modell bei OpenRouter auf: derzeit Qwen3.8 27B, bereitgestellt von Cerebras. Es braucht
-den OpenRouter-Schlüssel, genau wie die OpenRouter-Konfigurationen. Es sendet den Text an OpenRouter
-und wird über dein OpenRouter-Konto bezahlt. Ist der Schlüssel gesetzt, passt es den Text auch dann
-an, wenn kein Anbieter läuft.
+ein schnelles Modell bei [OpenRouter](help/openrouter) auf. Es braucht
+den OpenRouter-Schlüssel, genau wie die OpenRouter-Konfigurationen. Ist der Schlüssel gesetzt, passt es
+den Text auch dann an, wenn kein Anbieter läuft.
 Ohne Schlüssel ersetzt die Standardeinstellung es, und deine Wahl kehrt zurück, sobald der Schlüssel
 gesetzt und TwiCC neu gestartet ist.
 

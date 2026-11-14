@@ -16,7 +16,7 @@
  *   <SegmentedControl label="Favor" v-model="favor"
  *       :options="[{ value: 'cost', label: 'Cost' }, { value: 'speed', label: 'Speed', icon: 'bolt' }]" />
  */
-import { ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useGlideInk } from '../../composables/useGlideInk'
 
 const props = defineProps({
@@ -27,12 +27,48 @@ const props = defineProps({
     options: { type: Array, required: true },
     label: { type: String, required: true }, // accessible name of the radiogroup (not shown)
     size: { type: String, default: 'small' },
+    // Shrink to fit: when the segments do not fit the width they have (a phone), the control takes the full
+    // width instead and the segments share it equally, their labels wrapping if need be. One row, whatever
+    // the number of segments.
+    fit: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['update:modelValue'])
 
 const frameRef = ref(null)
 const inkRef = ref(null)
+const compact = ref(false)
+
+// Compact mode: set when the segments, each on one line, need more width than the parent offers. The natural
+// width is measured with the compact mode off and the frame at its content width. The segments would also
+// shrink by themselves (their labels wrapping, unevenly): that is the layout compact mode replaces.
+// Measured again whenever the space around the control changes, so it also goes back to the natural layout.
+let resizeObserver = null
+let measuring = false
+let measureAgain = false
+async function measureFit() {
+    const frame = frameRef.value
+    const parent = frame?.parentElement
+    if (!frame || !parent) return
+    // A change during a measure: measured again right after it, never dropped.
+    if (measuring) { measureAgain = true; return }
+    measuring = true
+    compact.value = false
+    await nextTick()
+    frame.classList.add('is-measuring')
+    const natural = frame.offsetWidth
+    frame.classList.remove('is-measuring')
+    compact.value = natural > parent.clientWidth
+    measuring = false
+    if (measureAgain) { measureAgain = false; measureFit() }
+}
+onMounted(() => {
+    if (!props.fit || !frameRef.value?.parentElement) return
+    resizeObserver = new ResizeObserver(() => { measureFit() })
+    resizeObserver.observe(frameRef.value.parentElement)
+    measureFit()
+})
+onBeforeUnmount(() => resizeObserver?.disconnect())
 
 function onChange(event) {
     // A radio's own change bubbles here too: only the group's counts.
@@ -48,12 +84,12 @@ useGlideInk({
     getActive: () => [...(frameRef.value?.querySelectorAll('wa-radio') ?? [])]
         .find((radio) => radio.value === props.modelValue) ?? null,
     getItems: () => [...(frameRef.value?.querySelectorAll('wa-radio') ?? [])],
-    sources: [() => props.modelValue, () => props.options],
+    sources: [() => props.modelValue, () => props.options, compact],
 })
 </script>
 
 <template>
-    <div ref="frameRef" class="segmented-control">
+    <div ref="frameRef" class="segmented-control" :class="{ 'is-fit': fit, 'is-compact': compact }">
         <span ref="inkRef" class="glide-ink" aria-hidden="true"></span>
         <wa-radio-group
             :label="label"
@@ -134,6 +170,54 @@ wa-radio[appearance='button']:state(checked) {
     wa-radio[appearance='button']:hover:not(:state(checked), :state(disabled)) {
         background-color: var(--glass-item-hover);
     }
+}
+
+/* fit: one row, never wrapping, so that an overflow is measurable; the frame never grows past its parent. */
+.segmented-control.is-fit {
+    max-width: 100%;
+}
+
+.segmented-control.is-fit wa-radio-group::part(form-control-input) {
+    flex-wrap: nowrap;
+}
+
+/* Measuring only: the frame at the width its segments need on one line. */
+.segmented-control.is-measuring {
+    /* !important: a caller's width rules on the control must not shape the measure. */
+    width: max-content !important;
+    max-width: none !important;
+}
+
+.segmented-control.is-measuring wa-radio[appearance='button'] {
+    flex: none !important;
+}
+
+/* The compact mode: the segments share the full width equally. */
+.segmented-control.is-compact {
+    display: flex;
+    width: 100%;
+}
+
+.segmented-control.is-compact wa-radio-group {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.segmented-control.is-compact wa-radio-group::part(form-control-input) {
+    width: 100%;
+}
+
+.segmented-control.is-compact wa-radio[appearance='button'] {
+    flex: 1 1 0;
+    min-width: 0;
+    --wa-form-control-padding-inline: 0.25em;
+    font-size: 0.85em;
+    justify-content: center;
+}
+
+.segmented-control.is-compact .segmented-label {
+    display: block;
+    text-align: center;
 }
 
 .segmented-icon {

@@ -8,7 +8,7 @@ button then shows on the messages.
 
 There are two kinds of configs:
 
-- **OpenRouter**: a speech model of OpenRouter, with its voices.
+- **OpenRouter**: a speech model of [OpenRouter](help/openrouter), with its voices.
 - **Script**: a shell command of your own, which turns the text into audio.
 
 ## Read new timeline messages
@@ -49,8 +49,7 @@ Choose **Auto**, **Claude Haiku 5.5**, **GPT-6 Luna**, or **OpenRouter** in
 **Settings → Summaries**. Auto selects an enabled running agent, Claude first,
 then Codex. An unavailable selected agent gives way to the other agent.
 
-OpenRouter uses the existing OpenRouter text model and key. Its calls are paid
-on your OpenRouter account. Without the key, or above **60,000 source
+OpenRouter needs its key: see [OpenRouter](help/openrouter). Without the key, or above **60,000 source
 characters**, TwiCC selects an enabled agent. It keeps the full source.
 If OpenRouter fails before summary speech commits, an enabled agent can replace
 its provisional text. Without an available model, summarization shows an error.
@@ -67,9 +66,7 @@ drops the validation: test the config again.
 
 ## OpenRouter configs
 
-They need an OpenRouter key: add `TWICC_OPENROUTER_API_KEY` to the `.env`
-file of your TwiCC data directory, then restart TwiCC. The key never leaves
-the server.
+They need an OpenRouter key. [OpenRouter](help/openrouter) says how to set it.
 
 The prices shown are OpenRouter's list prices. After a test, the config shows
 what the speech of the test really cost.
@@ -132,10 +129,9 @@ replaced by the other agent, and your choice comes back when you enable its
 provider again.
 
 Claude Haiku 5.5 and GPT-6 Luna run on your Claude or Codex subscription.
-**OpenRouter** calls a fast model on OpenRouter: today, Qwen3.8 27B served by
-Cerebras. It needs the OpenRouter key, as the OpenRouter configs do. It sends
-the text to OpenRouter, and it is paid on your OpenRouter account. With the
-key set, it adapts the text even when no provider runs.
+**OpenRouter** calls a fast model on [OpenRouter](help/openrouter). It needs
+the OpenRouter key, as the OpenRouter configs do. With the key set, it adapts
+the text even when no provider runs.
 Without the key, the default replaces it, and your choice comes back once the
 key is set and TwiCC restarted.
 

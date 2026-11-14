@@ -26,7 +26,6 @@ import {
     COLOR_SCHEME,
     SESSION_TIME_FORMAT,
     DEFAULT_MAX_CACHED_SESSIONS,
-    OPENROUTER_MODEL_DESCRIPTION_KEY,
     SPONSOR_URL,
     TITLE_SUGGESTION_MODEL,
     TITLE_SUGGESTION_MODEL_LABELS,
@@ -41,6 +40,7 @@ import HelpIconButton from '../help/HelpIconButton.vue'
 import PeerHelpLink from '../peer/PeerHelpLink.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
 import HelpFeatureLink from '../help/HelpFeatureLink.vue'
+import SegmentedControl from '../ui/SegmentedControl.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import BrandLogo from '../ui/BrandLogo.vue'
 import ChangelogDialog from './ChangelogDialog.vue'
@@ -543,14 +543,24 @@ const disabledTitleSuggestionModels = computed(() => {
         if (enabledProviders.value.has(provider)) continue
         disabled[model] = t('settings.titles.model.providerDisabled', { provider: getProviderLabel(provider) })
     }
-    // Say what to do, as the Text to Speech settings do: the key lives in the `.env` of the data directory.
+    // The help page tells how to set the key.
     if (!openrouterKeySet.value) {
-        disabled[TITLE_SUGGESTION_MODEL.OPENROUTER] = textToSpeechStore.envPath
-            ? t('settings.titles.model.addKeyToPath', { path: textToSpeechStore.envPath })
-            : t('settings.titles.model.addKey')
+        disabled[TITLE_SUGGESTION_MODEL.OPENROUTER] = t('settings.titles.model.keyMissing')
     }
     return disabled
 })
+
+/** The Titles segments: the model labels, a model that cannot run shown disabled with the reason as tooltip. */
+const titleModelOptions = computed(() => [
+    { value: TITLE_SUGGESTION_MODEL.PROVIDER, label: t('settings.titles.model.followProvider') },
+    ...[TITLE_SUGGESTION_MODEL.HAIKU, TITLE_SUGGESTION_MODEL.LUNA, TITLE_SUGGESTION_MODEL.OPENROUTER].map(model => ({
+        value: model,
+        label: TITLE_SUGGESTION_MODEL_LABELS[model],
+        ...(disabledTitleSuggestionModels.value[model]
+            ? { disabled: true, title: `${TITLE_SUGGESTION_MODEL_LABELS[model]}: ${disabledTitleSuggestionModels.value[model]}` }
+            : {}),
+    })),
+].map(option => titleGenerationEnabled.value ? option : { ...option, disabled: true }))
 
 // The user's stored choice is not the one running: a disabled provider, or a
 // missing OpenRouter key, moved the selection. Gates the sentence promising
@@ -2023,55 +2033,23 @@ function onChangelogClose() {
                                 @change="onTitleAutoApplyChange"
                                 size="small"
                             >{{ $t('settings.titles.automaticTitles') }}</wa-switch>
-                            <wa-radio-group
+                            <label class="setting-group-label">{{ $t('common.labels.model') }}</label>
+                            <SegmentedControl
+                                fit
                                 :label="$t('common.labels.model')"
-                                name="title-suggestion-model"
-                                size="small"
-                                :value="titleSuggestionModel"
-                                :disabled="!titleGenerationEnabled"
-                                @change="onTitleSuggestionModelChange"
+                                :model-value="titleSuggestionModel"
+                                :options="titleModelOptions"
+                                @update:model-value="store.setTitleSuggestionModel($event)"
                                 @click="onTitleSuggestionModelClick"
                                 @keydown="onTitleSuggestionModelKeydown"
-                            >
-                                <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
-                                    {{ $t('settings.titles.model.matchProvider', { claudeModel: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU], codexModel: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }) }}
-                                </wa-radio>
-                                <wa-radio
-                                    :value="TITLE_SUGGESTION_MODEL.HAIKU"
-                                    :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
-                                >
-                                    {{ $t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }) }}
-                                    <span
-                                        v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
-                                        class="radio-note"
-                                    >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU] }}</span>
-                                </wa-radio>
-                                <wa-radio
-                                    :value="TITLE_SUGGESTION_MODEL.LUNA"
-                                    :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
-                                >
-                                    {{ $t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }) }}
-                                    <span
-                                        v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
-                                        class="radio-note"
-                                    >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA] }}</span>
-                                </wa-radio>
-                                <wa-radio
-                                    :value="TITLE_SUGGESTION_MODEL.OPENROUTER"
-                                    :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.OPENROUTER]"
-                                >
-                                    {{ $t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.OPENROUTER] }) }}
-                                    <span
-                                        v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.OPENROUTER]"
-                                        class="radio-note"
-                                    >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.OPENROUTER] }}</span>
-                                    <!-- Where the text goes and who pays, before the user picks it. -->
-                                    <span
-                                        v-else
-                                        class="radio-note"
-                                    >{{ $t('settings.titles.model.openRouterHint', { model: $t(OPENROUTER_MODEL_DESCRIPTION_KEY) }) }}</span>
-                                </wa-radio>
-                            </wa-radio-group>
+                            />
+                            <!-- Why a model is not selectable (the tooltip of its segment is not reachable on a phone). -->
+                            <span
+                                v-for="(reason, model) in disabledTitleSuggestionModels"
+                                :key="model"
+                                class="setting-group-hint"
+                            >{{ $t('settings.titles.model.unavailable', { model: TITLE_SUGGESTION_MODEL_LABELS[model], reason }) }}</span>
+                            <HelpFeatureLink help-key="openrouter" :label="$t('help.openrouter')" />
                             <span v-if="titleGenerationEnabled" class="setting-group-hint">
                                 {{ $t('settings.titles.model.fallbackHint') }}
                                 <template v-if="titleSuggestionModelIsDisplaced">
@@ -3182,13 +3160,6 @@ wa-popover > wa-divider {
 /* Inline icon inside a hint (e.g. the layout-menu chevron) — keep it on the text baseline. */
 .settings-sections .setting-group-hint .inline-hint-icon {
     vertical-align: -0.1em;
-}
-
-/* Why a radio option is not selectable (e.g. a title model whose provider is
-   disabled). Slotted into the wa-radio label, so it stays on its line. */
-.settings-sections .radio-note {
-    color: var(--wa-color-text-quiet);
-    font-style: italic;
 }
 
 .usage-file-input-row {

@@ -50,7 +50,7 @@ for (const stage of ['start', 'ending']) {
             '../../stores/textToSpeech': { useTextToSpeechStore: () => store },
             '../../stores/settings': { useSettingsStore: () => ({ enabledProviders: [] }) },
             '../../i18n/uiMessages.js': messages, '../../constants': constants, '../../utils/ttsConfig': configUtils,
-            '../help/HelpFeatureLink.vue': stub, '../ui/FilterableSelect.vue': stub, '../ui/SegmentedControl.vue': stub,
+            '../help/HelpFeatureLink.vue': stub, '../help/HelpIconButton.vue': stub, '../ui/FilterableSelect.vue': stub, '../ui/SegmentedControl.vue': stub,
         })
         const { renderer, root } = makeRenderer()
         const app = renderer.createApp(Settings)

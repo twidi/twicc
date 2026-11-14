@@ -10,7 +10,9 @@ import { requestTitleSuggestion } from '../../../composables/useWebSocket'
 import { getProviderLabel } from '../../../providers'
 import { buildSessionTitlePatch, showAutomaticTitleHint } from '../../../utils/sessionTitle.js'
 import { isFallbackEntry, suggestionModel } from '../../../utils/titleSuggestion.js'
+import HelpIconButton from '../../help/HelpIconButton.vue'
 import {
+    TITLE_SUGGESTION_MODEL,
     TITLE_SUGGESTION_MODEL_LABELS,
     resolveSessionTitleModel,
     titleModelAlternatives,
@@ -388,15 +390,16 @@ defineExpose({
                          pushed to the right of the header line, wrapping under it
                          (still right-aligned) when the dialog is narrow. -->
                     <span v-if="alternativeTitleModels.length" class="suggestion-tries">
-                        <a
-                            v-for="model in alternativeTitleModels"
-                            :key="model"
-                            href="#"
-                            class="suggestion-try"
-                            :class="{ 'is-disabled': isLoadingSuggestion }"
-                            :aria-disabled="isLoadingSuggestion ? 'true' : null"
-                            @click.prevent="trySuggestionWith(model)"
-                        >{{ $t('session.rename.tryModel', { model: TITLE_SUGGESTION_MODEL_LABELS[model] }) }}</a>
+                        <span v-for="model in alternativeTitleModels" :key="model" class="suggestion-try-group">
+                            <a
+                                href="#"
+                                class="suggestion-try"
+                                :class="{ 'is-disabled': isLoadingSuggestion }"
+                                :aria-disabled="isLoadingSuggestion ? 'true' : null"
+                                @click.prevent="trySuggestionWith(model)"
+                            >{{ $t('session.rename.tryModel', { model: TITLE_SUGGESTION_MODEL_LABELS[model] }) }}</a>
+                            <HelpIconButton v-if="model === TITLE_SUGGESTION_MODEL.OPENROUTER" help-key="openrouter" :label="$t('help.openrouter')" />
+                        </span>
                     </span>
                 </div>
                 <div v-if="isLoadingSuggestion" class="suggestion-loading">
@@ -534,6 +537,12 @@ defineExpose({
     justify-content: flex-end;
     gap: var(--wa-space-xs);
     margin-inline-start: auto;
+}
+
+.suggestion-try-group {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
 }
 
 .suggestion-try {

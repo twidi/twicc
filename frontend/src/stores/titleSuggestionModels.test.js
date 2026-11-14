@@ -13,42 +13,29 @@ const renameSource = readFileSync(
 /** The source with every whitespace run collapsed: template sentences wrap over lines. */
 const flat = source => source.replace(/\s+/g, ' ')
 
-/** The `<wa-radio …>…</wa-radio>` element whose value is `value`. */
-function radioFor(value) {
-    const start = popoverSource.indexOf(`:value="${value}"`)
-    assert.ok(start !== -1, `a radio has the value ${value}`)
-    const open = popoverSource.lastIndexOf('<wa-radio', start)
-    const end = popoverSource.indexOf('</wa-radio>', start)
-    return popoverSource.slice(open, end)
-}
-
 test('the Titles setting offers OpenRouter, disabled while the OpenRouter key is not set', () => {
-    const radio = radioFor('TITLE_SUGGESTION_MODEL.OPENROUTER')
-    assert.match(radio, /:disabled="!!disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\]"/)
-    assert.ok(flat(radio).includes("$t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.OPENROUTER] })"))
-    assert.equal(en['settings.titles.model.everySession'], '{model} for every session')
+    // The segments: the session provider, then the three models; one that cannot run is disabled, its reason is the tooltip.
+    assert.match(popoverSource, /const titleModelOptions = computed\(\(\) => \[\s*\{ value: TITLE_SUGGESTION_MODEL\.PROVIDER, label: t\('settings\.titles\.model\.followProvider'\) \},\s*\.\.\.\[TITLE_SUGGESTION_MODEL\.HAIKU, TITLE_SUGGESTION_MODEL\.LUNA, TITLE_SUGGESTION_MODEL\.OPENROUTER\]/)
+    assert.match(popoverSource, /disabled: true, title: `\$\{TITLE_SUGGESTION_MODEL_LABELS\[model\]\}: \$\{disabledTitleSuggestionModels\.value\[model\]\}`/)
+    assert.equal(en['settings.titles.model.followProvider'], 'Follow session provider')
     // The disabled map holds OpenRouter exactly when the key is absent.
     assert.match(popoverSource, /if \(!openrouterKeySet\.value\) \{\s*disabled\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] =/)
-    // The note says what to do (the variable, where, and the restart), not only that the key is missing.
-    assert.match(popoverSource, /t\('settings.titles.model.addKeyToPath', \{ path: textToSpeechStore\.envPath \}\)/)
-    assert.match(en['settings.titles.model.addKeyToPath'], /Add TWICC_OPENROUTER_API_KEY to \{path\}, then restart TwiCC\./)
-    assert.match(en['settings.titles.model.addKey'], /Add TWICC_OPENROUTER_API_KEY to the \.env file of your TwiCC data directory, then restart TwiCC\./)
+    // The note only says the key is missing: the help page says how to set it.
+    assert.match(popoverSource, /disabled\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] = t\('settings\.titles\.model\.keyMissing'\)/)
+    assert.equal(en['settings.titles.model.keyMissing'], 'OpenRouter key not set')
     assert.doesNotMatch(popoverSource, /'The OpenRouter key is not set\.'/)
     assert.match(popoverSource, /const openrouterKeySet = computed\(\(\) => textToSpeechStore\.keyPresent\)/)
 })
 
-test('the OpenRouter radio says where the text goes and who pays, unless the key is missing', () => {
-    const radio = flat(radioFor('TITLE_SUGGESTION_MODEL.OPENROUTER'))
-    // The disabled note comes first; the privacy and cost note replaces it while the key is set.
-    assert.match(
-        radio,
-        /<span v-if="disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\]" class="radio-note" >— \{\{ disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] \}\}<\/span>/,
-    )
-    assert.match(
-        radio,
-        /<span v-else class="radio-note" >\{\{ \$t\('settings\.titles\.model\.openRouterHint', \{ model: \$t\(OPENROUTER_MODEL_DESCRIPTION_KEY\) \}\) \}\}<\/span>/,
-    )
-    assert.equal(en['settings.titles.model.openRouterHint'], '— much faster: a title in under a second instead of several; uses {model}; sends the user messages to OpenRouter, paid on your OpenRouter account')
+test('the Titles model is a segmented control with the reasons and the OpenRouter help link under it', () => {
+    const source = flat(popoverSource)
+    assert.match(source, /<SegmentedControl fit :label="\$t\('common\.labels\.model'\)" :model-value="titleSuggestionModel" :options="titleModelOptions" @update:model-value="store\.setTitleSuggestionModel\(\$event\)" @click="onTitleSuggestionModelClick" @keydown="onTitleSuggestionModelKeydown" \/>/)
+    assert.match(source, /v-for="\(reason, model\) in disabledTitleSuggestionModels"[^>]*class="setting-group-hint" >\{\{ \$t\('settings\.titles\.model\.unavailable', \{ model: TITLE_SUGGESTION_MODEL_LABELS\[model\], reason \}\) \}\}<\/span> <HelpFeatureLink help-key="openrouter" :label="\$t\('help\.openrouter'\)" \/>/)
+    // No radio, no per-model detail text any more.
+    assert.doesNotMatch(popoverSource, /name="title-suggestion-model"/)
+    assert.equal(en['settings.titles.model.everySession'], undefined)
+    assert.equal(en['settings.titles.model.matchProvider'], undefined)
+    assert.equal(en['settings.titles.model.openRouterHint'], undefined)
 })
 
 test('the Titles hints hold for every model', () => {
@@ -56,9 +43,6 @@ test('the Titles hints hold for every model', () => {
     assert.ok(source.includes("$t('settings.titles.model.fallbackHint')"))
     assert.match(en['settings.titles.model.fallbackHint'], /TwiCC generates the title with another model/)
     assert.doesNotMatch(en['settings.titles.model.fallbackHint'], /generates the title with the other provider/)
-    // The radio note says where the text goes: the hint does not say it twice.
-    assert.equal(source.match(/\$t\('settings\.titles\.model\.openRouterHint'/g)?.length, 1)
-    assert.equal(en['settings.titles.model.openRouterHint'].match(/paid on your OpenRouter account/g)?.length, 1)
     assert.doesNotMatch(en['settings.titles.model.fallbackHint'], /paid on your OpenRouter account/)
     // The model words come from the one constant, never written in the component.
     assert.doesNotMatch(source, /Qwen|Cerebras/)

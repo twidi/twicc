@@ -4,7 +4,7 @@ de altavoz en los mensajes.
 
 Hay dos tipos de configuración:
 
-- **OpenRouter**: un modelo de voz de OpenRouter, con sus voces.
+- **OpenRouter**: un modelo de voz de [OpenRouter](help/openrouter), con sus voces.
 - **Script**: un comando de shell propio, que convierte el texto en audio.
 
 ## Leer los mensajes nuevos de la cronología
@@ -45,8 +45,7 @@ Elige **Auto**, **Claude Haiku 5.5**, **GPT-6 Luna** u **OpenRouter** en
 **Configuración → Resúmenes**. Auto selecciona un agente activado en ejecución, primero Claude
 y luego Codex. Si el agente seleccionado no está disponible, cede el paso al otro agente.
 
-OpenRouter usa el modelo de texto y la clave de OpenRouter existentes. Sus llamadas se pagan
-en tu cuenta de OpenRouter. Sin la clave, o por encima de **60 000 caracteres
+OpenRouter necesita su clave: consulta [OpenRouter](help/openrouter). Sin la clave, o por encima de **60 000 caracteres
 de origen**, TwiCC selecciona un agente activado. Conserva el origen completo.
 Si OpenRouter falla antes de que se confirme la voz del resumen, un agente activado puede reemplazar
 su texto provisional. Sin un modelo disponible, el resumen muestra un error.
@@ -63,9 +62,7 @@ elimina la validación: vuelve a probar la configuración.
 
 ## Configuraciones de OpenRouter
 
-Necesitan una clave de OpenRouter: añade `TWICC_OPENROUTER_API_KEY` al archivo `.env`
-del directorio de datos de TwiCC y luego reinicia TwiCC. La clave nunca sale
-del servidor.
+Necesitan una clave de OpenRouter. [OpenRouter](help/openrouter) explica cómo definirla.
 
 Los precios mostrados son los precios de lista de OpenRouter. Después de una prueba, la configuración muestra
 cuánto costó realmente la voz de la prueba.
@@ -128,9 +125,8 @@ reemplaza por el otro agente, y tu elección vuelve cuando activas de nuevo su
 proveedor.
 
 Claude Haiku 5.5 y GPT-6 Luna se ejecutan con tu suscripción de Claude o Codex.
-**OpenRouter** llama a un modelo rápido en OpenRouter: actualmente, Qwen3.8 27B servido por
-Cerebras. Necesita la clave de OpenRouter, igual que las configuraciones de OpenRouter. Envía
-el texto a OpenRouter y se paga en tu cuenta de OpenRouter. Con la
+**OpenRouter** llama a un modelo rápido en [OpenRouter](help/openrouter). Necesita
+la clave de OpenRouter, igual que las configuraciones de OpenRouter. Con la
 clave definida, adapta el texto incluso cuando no se ejecuta ningún proveedor.
 Sin la clave, lo reemplaza el valor predeterminado, y tu elección vuelve una vez que la
 clave está definida y TwiCC se ha reiniciado.

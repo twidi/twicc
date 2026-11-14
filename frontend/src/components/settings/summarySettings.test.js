@@ -13,6 +13,7 @@ function mount(settings, tts) {
         '../../stores/textToSpeech': { useTextToSpeechStore: () => tts },
         '../../utils/ttsConfig': ttsConfig, '../../constants': constants,
         '../ui/SegmentedControl.vue': SegmentedControl,
+        '../help/HelpFeatureLink.vue': { render: () => null },
     })
     const { renderer, root } = makeRenderer(); const app = renderer.createApp(Component); app.mount(root)
     return { app, root }

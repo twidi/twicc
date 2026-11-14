@@ -7,6 +7,7 @@ import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { adaptOptions, effectiveAdapt, adaptHint } from '../../utils/ttsConfig'
 import { OPENROUTER_MODEL_DESCRIPTION_KEY, TITLE_SUGGESTION_MODEL_LABELS } from '../../constants'
 import SegmentedControl from '../ui/SegmentedControl.vue'
+import HelpFeatureLink from '../help/HelpFeatureLink.vue'
 
 const settings = useSettingsStore()
 const speech = useTextToSpeechStore()
@@ -30,14 +31,14 @@ const displacedPreference = computed(() => settings.summaryModel !== 'auto' && s
         <p>{{ $t('settings.summaries.hint') }}</p>
         <label>{{ $t('settings.summaries.model') }}</label>
         <div class="summary-model-row">
-            <SegmentedControl :model-value="choice" :options="choices" :label="$t('settings.summaries.model')" @update:model-value="settings.setSummaryModel($event)" />
+            <SegmentedControl fit :model-value="choice" :options="choices" :label="$t('settings.summaries.model')" @update:model-value="settings.setSummaryModel($event)" />
         </div>
+        <HelpFeatureLink help-key="openrouter" :label="$t('help.openrouter')" />
         <small v-if="displacedPreference">
             {{ $t('settings.summaries.storedPreference', { preference: displacedPreference.label, reason: displacedPreference.title, engine: TITLE_SUGGESTION_MODEL_LABELS[effective] || $t('settings.summaries.unavailable') }) }}
         </small>
         <small v-if="hints.noProvider">{{ $t('settings.summaries.noProvider') }}</small>
         <small v-if="!speech.keyPresent">{{ $t('settings.summaries.noKey') }}</small>
-        <small v-if="hints.openrouter">{{ $t('settings.summaries.openrouterHint', { model: $t(OPENROUTER_MODEL_DESCRIPTION_KEY) }) }}</small>
         <wa-switch :checked="settings.timelineSummaryEnabled" @change="settings.setTimelineSummaryEnabled($event.target.checked)">
             {{ $t('settings.summaries.timelineSpeech') }}
         </wa-switch>
@@ -48,9 +49,9 @@ const displacedPreference = computed(() => settings.summaryModel !== 'auto' && s
 <style scoped>
 .summary-settings { display: flex; flex-direction: column; gap: var(--wa-space-s); }
 /* The segmented control keeps its content width and its one row of segments, as in the speech settings. */
+.summary-settings > .help-feature-link { align-self: flex-start; }
 .summary-model-row { display: flex; flex-wrap: wrap; align-items: center; }
 .summary-model-row > .segmented-control { flex: none; max-width: 100%; }
-.summary-model-row :deep(wa-radio-group::part(form-control-input)) { flex-wrap: wrap; }
 p { margin: 0; }
 small { color: var(--wa-color-text-quiet); }
 </style>
