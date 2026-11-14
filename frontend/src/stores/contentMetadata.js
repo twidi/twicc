@@ -80,14 +80,23 @@ const CONTENT_METADATA = {
         "default-worktree-directory": {
             "titleKey": "tips.entries.defaultWorktreeDirectory.title"
         },
+        "detach-session": {
+            "titleKey": "tips.entries.detachSession.title"
+        },
         "display-modes": {
             "titleKey": "tips.entries.displayModes.title"
         },
         "dockable-layouts": {
             "titleKey": "tips.entries.dockableLayouts.title"
         },
+        "download-folder": {
+            "titleKey": "tips.entries.downloadFolder.title"
+        },
         "draft-sessions": {
             "titleKey": "tips.entries.draftSessions.title"
+        },
+        "element-comments": {
+            "titleKey": "tips.entries.elementComments.title"
         },
         "emergency-stop": {
             "titleKey": "tips.entries.emergencyStop.title"
@@ -124,6 +133,9 @@ const CONTENT_METADATA = {
         },
         "message-snippets": {
             "titleKey": "tips.entries.messageSnippets.title"
+        },
+        "message-summaries": {
+            "titleKey": "tips.entries.messageSummaries.title"
         },
         "mobile-session-header": {
             "titleKey": "tips.entries.mobileSessionHeader.title"
@@ -164,6 +176,9 @@ const CONTENT_METADATA = {
         "session-compact-view": {
             "titleKey": "tips.entries.sessionCompactView.title"
         },
+        "session-links": {
+            "titleKey": "tips.entries.sessionLinks.title"
+        },
         "session-multi-select": {
             "titleKey": "tips.entries.sessionMultiSelect.title"
         },
@@ -172,6 +187,9 @@ const CONTENT_METADATA = {
         },
         "session-switcher": {
             "titleKey": "tips.entries.sessionSwitcher.title"
+        },
+        "sharing": {
+            "titleKey": "tips.entries.sharing.title"
         },
         "start-session-from-selection": {
             "titleKey": "tips.entries.startSessionFromSelection.title"
@@ -191,6 +209,15 @@ const CONTENT_METADATA = {
         "terminal-tabs": {
             "titleKey": "tips.entries.terminalTabs.title"
         },
+        "text-to-speech": {
+            "titleKey": "tips.entries.textToSpeech.title"
+        },
+        "timeline": {
+            "titleKey": "tips.entries.timeline.title"
+        },
+        "timeline-speech": {
+            "titleKey": "tips.entries.timelineSpeech.title"
+        },
         "tips-list": {
             "titleKey": "tips.entries.tipsList.title"
         },
@@ -199,6 +226,9 @@ const CONTENT_METADATA = {
         },
         "twicc-skills": {
             "titleKey": "tips.entries.twiccSkills.title"
+        },
+        "upload-files": {
+            "titleKey": "tips.entries.uploadFiles.title"
         },
         "usage-quotas": {
             "titleKey": "tips.entries.usageQuotas.title"
