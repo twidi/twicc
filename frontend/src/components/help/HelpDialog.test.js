@@ -109,3 +109,15 @@ test('opens retained help after mount, switches its body live, and preserves dis
         delete globalThis.__helpDialogTestStore
     }
 })
+
+test('a click in the help never reaches the document, so the popover it was opened from stays open', () => {
+    const source = readFileSync(sourceUrl, 'utf8')
+    // `.stop` on the root wa-dialog: Close, backdrop and links are all inside it.
+    assert.match(source, /<wa-dialog\s+ref="dialogRef"[^>]*@click\.stop[^>]*>/)
+})
+
+test('the Settings help list opens the help without closing the Settings popover', () => {
+    const list = readFileSync(new URL('../settings/HelpSettings.vue', import.meta.url), 'utf8')
+    assert.doesNotMatch(list, /close-settings-popover/)
+    assert.match(list, /function onClickHelp\(key\) \{[^}]*showHelp\(key, \{ showDontShowAgain: false \}\)/)
+})

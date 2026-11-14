@@ -10,6 +10,11 @@
 // it shows by default. When shown, leaving it on at close marks the page
 // seen (it won't auto-open again) and turning it off keeps it in rotation;
 // when hidden, the seen-state is left untouched.
+//
+// The root wa-dialog has `@click.stop`: a click in the help (Close, backdrop, a
+// link) must not reach the document, or the popover the help was opened from
+// (Settings, agent settings…) would take it for a click outside and close. The
+// user comes back to exactly what was open, scroll included.
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useHelpStore } from '../../stores/help'
@@ -71,6 +76,7 @@ function onAfterHide(event) {
         ref="dialogRef"
         :label="title"
         class="help-dialog"
+        @click.stop
         @wa-after-hide="onAfterHide"
     >
         <div v-if="loading" class="help-loading">{{ $t('help.dialog.loading') }}</div>

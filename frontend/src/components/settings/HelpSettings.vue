@@ -25,12 +25,9 @@ const availableHelp = computed(() => {
 })
 
 function onClickHelp(key) {
-    // Close the Settings popover before opening the dialog, like the tips
-    // list does — SettingsPopover.vue listens for this event and hides.
-    window.dispatchEvent(new CustomEvent('twicc:close-settings-popover'))
-    // Opened from the list for re-reading — never with the dismiss switch.
-    // Defer one tick so the popover starts closing before the dialog opens.
-    setTimeout(() => showHelp(key, { showDontShowAgain: false }), 0)
+    // Opened from the list for re-reading — never with the dismiss switch. The Settings popover stays open:
+    // closing the help brings the user back to this list.
+    showHelp(key, { showDontShowAgain: false })
 }
 </script>
 
