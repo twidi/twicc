@@ -1,5 +1,7 @@
-Pide al agente que construya algo visual: un playground interactivo, una demo puntual, una página de documentación HTML (u otros documentos: Markdown, SVG, Mermaid…). Ábrelo en la pestaña **Artefactos** para verlo renderizado e interactuar con él.
+Pide al agente: «Crea una herramienta interactiva para comparar estas opciones».
 
-Añade un artefacto a favoritos para volver a él en cualquier momento, sin tener que buscar la sesión que lo creó. Los favoritos tienen su propia lista en la barra lateral: cambia a ella con el botón **Artefactos** de la barra de iconos.
+Los artefactos HTML pueden aparecer **dentro de la conversación**. Ábrelos a pantalla completa o en la pestaña **Artefactos**.
 
-¿Nuevo con los artefactos? Consulta [¿Qué son los artefactos?](help/what-are-artifacts).
+Añade un artefacto útil a favoritos para encontrarlo desde el botón **Artefactos** de la barra lateral.
+
+Consulta [¿Qué son los artefactos?](help/what-are-artifacts).

@@ -1,5 +1,5 @@
-La selección múltiple te permite archivar, fijar o detener varias sesiones de una vez.
+Archiva, fija o detén **varias sesiones** a la vez.
 
-Actívala desde el botón a la izquierda del campo **Filtrar sesiones** y luego haz clic con Shift
-o Cmd/Ctrl para elegir sesiones. Más rápido: con una sesión abierta, haz clic con Shift en
-otra para seleccionar un rango y activarla automáticamente.
+En el ordenador, activa la selección múltiple junto a **Filtrar sesiones**. Usa Shift-click para un rango o Cmd/Ctrl-click para sesiones individuales.
+
+En pantallas táctiles, **mantén pulsada** una sesión y suelta sin arrastrar. Toca otras sesiones para seleccionarlas o deseleccionarlas.

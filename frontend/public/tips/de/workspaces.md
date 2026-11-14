@@ -1,9 +1,5 @@
-Ein Arbeitsbereich fasst zusammengehörige Projekte zu einer Gruppe zusammen – etwa
-ein **Backend**- und ein **Frontend**-Repository unter einem
-Produkt-Arbeitsbereich –, sodass du sie gemeinsam durchsuchen und filtern kannst.
+Fasse zusammengehörige Projekte in einem **Arbeitsbereich** zusammen, um ihre Sitzungen gemeinsam zu durchsuchen und zu filtern.
 
-Öffne die Projektauswahl und wähle **Arbeitsbereiche verwalten…**, um einen zu
-erstellen. Du kannst sogar Muster zum automatischen Hinzufügen festlegen, damit
-passende Projekte dem Arbeitsbereich automatisch beitreten.
+Öffne die Projektauswahl und wähle **Arbeitsbereiche verwalten…**, um einen zu erstellen.
 
-Mehr im Hilfedialog: [Mit Arbeitsbereichen arbeiten](help/workspaces).
+Unter [Mit Arbeitsbereichen arbeiten](help/workspaces) erfährst du, wie du Projekte manuell oder automatisch hinzufügst.

@@ -2,6 +2,6 @@
 title: "Comment on selected text"
 ---
 
-Select text in Chat, Files, Git or Terminal to copy it or add a comment.
+Select text in Chat, Files, Git or Terminal and add a comment.
 
-Click **Add to message** to insert the selection and your note into the message input, preformatted and ready to send.
+Use **Add to message** to prepare the selection and your note in the message input. Use **Send to Agent**, when available, to send them directly.

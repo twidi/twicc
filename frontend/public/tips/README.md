@@ -53,6 +53,17 @@ images, tables — anything the existing chat-message markdown pipeline
 supports.
 ```
 
+## Keep tips short
+
+Aim for **30–60 words** in the English body. Keep it below **80 words**.
+Keep translations equally concise; do not pad short tips to reach the target.
+
+- Explain one useful action, where to find it, and its result.
+- Use short sentences and at most three short paragraphs, plus an optional help link.
+- Keep only limitations needed to use the action correctly.
+- Put configuration details, timing rules and edge cases in help pages, not tips.
+- Review all translated bodies when changing the English source.
+
 ## Line wrapping
 
 Wrap the body however reads best in your editor — tips render with standard
@@ -183,6 +194,6 @@ opens it in the same toast as the automatic flow.
 - [ ] Any present constraint is an array (even with a single value).
 - [ ] Images referenced from the markdown actually exist in this folder.
 - [ ] The body reads well at the toast's roughly 480 px width.
-- [ ] The tip is not too long — `max-height: 60vh` scrolls but a giant
-      tip is unfriendly. Aim for a few short paragraphs.
+- [ ] The English body targets 30–60 words and stays below 80 words.
+      Translations stay concise, with short sentences and paragraphs.
 - [ ] The tip shows up in Settings → Tips (in dev, within 10 s).

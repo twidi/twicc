@@ -1,7 +1,5 @@
-Mit der Mehrfachauswahl kannst du mehrere Sitzungen in einem Zug archivieren,
-anheften oder stoppen.
+Archiviere, hefte an oder stoppe **mehrere Sitzungen** gleichzeitig.
 
-Aktiviere sie über die Schaltfläche links neben dem Feld **Sitzungen filtern** und
-klicke dann mit Shift oder Cmd/Ctrl auf Sitzungen, um sie auszuwählen. Schneller:
-Klicke bei einer geöffneten Sitzung mit Shift auf eine andere, um einen Bereich
-auszuwählen und die Mehrfachauswahl automatisch zu aktivieren.
+Aktiviere am Desktop die Mehrfachauswahl neben **Sitzungen filtern**. Nutze Shift-click für einen Bereich oder Cmd/Ctrl-click für einzelne Sitzungen.
+
+**Halte** auf Touchscreens eine Sitzung **gedrückt** und lasse ohne Ziehen los. Tippe auf weitere Sitzungen, um sie aus- oder abzuwählen.

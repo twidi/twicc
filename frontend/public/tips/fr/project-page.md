@@ -1,8 +1,5 @@
-Chaque projet possède sa propre page — un onglet **Chronologie** qui liste ce qui s'est passé
-(sessions créées, tours, approbations, renommages...) au fur et à mesure, un onglet
-**Statistiques** riche en informations sur l'activité (et le coût, lorsque le paramètre
-**Afficher les coûts** est activé), ainsi que des onglets **Fichiers**, **Git** et **Terminal**
-au niveau du projet, qui ne sont liés à aucune session en particulier.
+Cliquez sur le **nom du projet** en haut à droite de l'en-tête d'une session pour ouvrir sa page.
 
-Pour y accéder depuis une session, cliquez sur le **nom du projet** en **haut à droite de
-l'en-tête**. Depuis l'écran d'accueil, cliquez simplement sur un projet.
+Suivez l'activité dans **Chronologie** et consultez l'utilisation dans **Statistiques**. Les onglets **Fichiers**, **Git** et **Terminal** fonctionnent indépendamment des sessions.
+
+Vous pouvez aussi ouvrir un projet depuis l'écran d'accueil.

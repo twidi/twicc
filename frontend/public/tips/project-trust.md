@@ -2,11 +2,8 @@
 title: "Trust your projects"
 ---
 
-Claude Code and Codex each have their own *trusted project* flag. TwiCC
-manages it in one place: the first session in a new project asks once, saves
-the decision to both providers, and can apply it to sub-folders and worktrees.
+The first session in a new project asks whether you **trust the project**. TwiCC saves your decision for Claude Code and Codex.
 
-Projects start untrusted, which keeps the full-access modes off (Claude's
-bypass, Codex's Yolo). You can set the permission mode used on untrusted
-projects — read-only, say — in your provider settings; full access unlocks
-once you trust the project.
+Untrusted projects keep full-access modes off. Trust a project to unlock Claude's bypass and Codex's Yolo.
+
+Choose the permission mode for untrusted projects in your provider settings.

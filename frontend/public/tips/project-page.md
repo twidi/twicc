@@ -2,10 +2,8 @@
 title: "Open a project's own page"
 ---
 
-Every project has its own page — a **Timeline** tab that lists what happened (sessions
-created, turns, approvals, renames...) as it happens, a **Stats** tab full of activity insights
-(and cost, when the **Show costs** setting is on), plus project-level **Files**, **Git**
-and **Terminal** tabs that are not tied to any single session.
+Click the **project name** at the top-right of a session header to open the project's page.
 
-To reach it from a session, click the **project name** at the **top-right of
-the header**. From the home screen, just click a project.
+Use **Timeline** to follow activity and **Stats** to review usage. Its **Files**, **Git** and **Terminal** tabs work independently of any session.
+
+You can also open a project from the home screen.

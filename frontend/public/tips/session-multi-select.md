@@ -1,10 +1,9 @@
 ---
 title: "Act on many sessions at once"
-platform: [desktop]
 ---
 
-Multi-select lets you archive, pin or stop several sessions in one go.
+Archive, pin or stop **several sessions** at once.
 
-Turn it on from the button left of the **Filter sessions** field, then Shift-
-or Cmd/Ctrl-click to pick sessions. Quicker: with one session open, Shift-click
-another to select a range and switch it on automatically.
+On desktop, enable multi-select beside **Filter sessions**, then use Shift-click for a range or Cmd/Ctrl-click for individual sessions.
+
+On touch screens, **press and hold** a session, then release without dragging. Tap other sessions to select or deselect them.

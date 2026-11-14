@@ -2,13 +2,10 @@
 title: "Artifacts"
 ---
 
-Ask the agent to build something visual — an interactive playground, a
-one-shot demo, an HTML documentation page (or other documents: Markdown, SVG,
-Mermaid…). Open it in the **Artifacts** tab to see it rendered and interact
-with it.
+Ask the agent: “Build an interactive tool to compare these options.”
 
-Bookmark an artifact to reach it again anytime, without hunting for the
-session that created it. Bookmarks get their own sidebar list — switch to it
-with the **Artifacts** button in the icon bar.
+HTML artifacts can appear **inside the conversation**. Open them full screen or in the **Artifacts** tab.
 
-New to artifacts? See [What are artifacts?](help/what-are-artifacts).
+Bookmark a useful artifact to find it again from the sidebar's **Artifacts** button.
+
+See [What are artifacts?](help/what-are-artifacts).

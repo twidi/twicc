@@ -1,3 +1,3 @@
-Wähle Text in Chat, Dateien, Git oder Terminal aus, um ihn zu kopieren oder einen Kommentar hinzuzufügen.
+Wähle Text in Chat, Dateien, Git oder Terminal aus und füge einen Kommentar hinzu.
 
-Klicke auf **Zur Nachricht hinzufügen**, um die Auswahl und deine Notiz vorformatiert und sendebereit in das Nachrichtenfeld einzufügen.
+Mit **Zur Nachricht hinzufügen** bereitest du Auswahl und Notiz im Eingabefeld vor. Mit **An Agent senden**, falls verfügbar, sendest du sie direkt.

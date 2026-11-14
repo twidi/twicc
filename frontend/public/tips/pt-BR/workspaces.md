@@ -1,9 +1,5 @@
-Um espaço de trabalho reúne projetos relacionados em um conjunto — por exemplo, repositórios de
-**backend** e **frontend** no espaço de trabalho de um produto — para você navegar e
-filtrar esses projetos juntos.
+Agrupe projetos relacionados em um **espaço de trabalho** para navegar e filtrar suas sessões em conjunto.
 
-Abra o seletor de projetos e escolha **Gerenciar espaços de trabalho...** para criar um. Você
-também pode definir padrões de adição automática para que os projetos correspondentes entrem no espaço de trabalho
-automaticamente.
+Abra o seletor de projetos e escolha **Gerenciar espaços de trabalho...** para criar um.
 
-Saiba mais no diálogo de ajuda: [Trabalhar com espaços de trabalho](help/workspaces).
+Veja [Trabalhar com espaços de trabalho](help/workspaces) para adicionar projetos de forma manual ou automática.

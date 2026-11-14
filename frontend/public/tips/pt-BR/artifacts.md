@@ -1,8 +1,7 @@
-Peça ao agente para criar algo visual: um ambiente interativo para experimentar, uma demonstração ou uma página de documentação em HTML.
-Ele também pode criar outros documentos: Markdown, SVG, Mermaid…
-Abra o resultado na aba **Artefatos** para vê-lo renderizado e interagir com ele.
+Peça ao agente: “Crie uma ferramenta interativa para comparar estas opções.”
 
-Adicione um artefato aos favoritos para acessá-lo a qualquer momento, sem procurar a sessão que o criou.
-Os favoritos têm uma lista própria na barra lateral. Acesse essa lista pelo botão **Artefatos** na barra de ícones.
+Artefatos HTML podem aparecer **dentro da conversa**. Abra-os em tela cheia ou na aba **Artefatos**.
 
-Ainda não conhece os artefatos? Veja [O que são artefatos?](help/what-are-artifacts).
+Adicione um artefato útil aos favoritos para encontrá-lo pelo botão **Artefatos** da barra lateral.
+
+Veja [O que são artefatos?](help/what-are-artifacts).

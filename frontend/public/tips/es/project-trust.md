@@ -1,8 +1,5 @@
-Claude Code y Codex tienen cada uno su propia marca de *proyecto de confianza*. TwiCC
-la gestiona en un solo lugar: la primera sesión de un proyecto nuevo pregunta una vez, guarda
-la decisión en ambos proveedores y puede aplicarla a subcarpetas y worktrees.
+La primera sesión de un proyecto nuevo pregunta si **confías en el proyecto**. TwiCC guarda tu decisión para Claude Code y Codex.
 
-Los proyectos empiezan sin confianza, lo que mantiene desactivados los modos de acceso total (el bypass
-de Claude, el Yolo de Codex). Puedes definir el modo de permisos que se usa en proyectos sin confianza
-(por ejemplo, solo lectura) en la configuración de tu proveedor; el acceso total se desbloquea cuando
-confías en el proyecto.
+Los proyectos sin confianza desactivan los modos de acceso total. Confía en un proyecto para habilitar el bypass de Claude y Yolo de Codex.
+
+Elige el modo de permisos de los proyectos sin confianza en la configuración del proveedor.

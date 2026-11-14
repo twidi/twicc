@@ -1,3 +1,3 @@
-Sélectionnez du texte dans Chat, Fichiers, Git ou Terminal pour le copier ou ajouter un commentaire.
+Sélectionnez du texte dans Chat, Fichiers, Git ou Terminal et ajoutez un commentaire.
 
-Cliquez sur **Ajouter au message** pour insérer la sélection et votre note dans la zone de saisie, préformatées et prêtes à envoyer.
+Utilisez **Ajouter au message** pour préparer la sélection et votre note dans la zone de saisie. Utilisez **Envoyer à l'agent**, si disponible, pour les envoyer directement.

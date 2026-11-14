@@ -1,5 +1,5 @@
-La sélection multiple permet d'archiver, d'épingler ou d'arrêter plusieurs sessions d'un coup.
+Archivez, épinglez ou arrêtez **plusieurs sessions** ensemble.
 
-Activez-la avec le bouton à gauche du champ **Filtrer les sessions**, puis cliquez en maintenant
-Shift, ou Cmd/Ctrl, pour choisir des sessions. Plus rapide : avec une session ouverte, cliquez sur
-une autre en maintenant Shift pour sélectionner une plage et activer automatiquement ce mode.
+Sur ordinateur, activez la sélection multiple près de **Filtrer les sessions**. Utilisez Shift-click pour une plage ou Cmd/Ctrl-click pour des sessions individuelles.
+
+Sur écran tactile, faites un **appui long** sur une session, puis relâchez sans glisser. Touchez les autres sessions pour les sélectionner ou les désélectionner.

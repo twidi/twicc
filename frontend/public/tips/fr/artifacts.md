@@ -1,10 +1,7 @@
-Demandez à l'agent de construire quelque chose de visuel : un bac à sable interactif, une démo
-ponctuelle, une page de documentation HTML (ou d'autres documents : Markdown, SVG,
-Mermaid…). Ouvrez-le dans l'onglet **Artefacts** pour le voir rendu et interagir
-avec lui.
+Demandez à l'agent : « Crée un outil interactif pour comparer ces options. »
 
-Ajoutez un artefact aux favoris pour le retrouver à tout moment, sans chercher la
-session qui l'a créé. Les favoris ont leur propre liste dans la barre latérale : accédez-y
-avec le bouton **Artefacts** de la barre d'icônes.
+Les artefacts HTML peuvent apparaître **dans la conversation**. Ouvrez-les en plein écran ou dans l'onglet **Artefacts**.
 
-Vous découvrez les artefacts ? Consultez [Qu'est-ce qu'un artefact ?](help/what-are-artifacts).
+Ajoutez un artefact utile aux favoris pour le retrouver avec le bouton **Artefacts** de la barre latérale.
+
+Consultez [Qu'est-ce qu'un artefact ?](help/what-are-artifacts).

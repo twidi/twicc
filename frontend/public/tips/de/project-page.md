@@ -1,9 +1,5 @@
-Jedes Projekt hat eine eigene Seite – einen Tab **Zeitachse**, der auflistet, was
-passiert ist (erstellte Sitzungen, Durchgänge, Genehmigungen, Umbenennungen...),
-sobald es passiert, einen Tab **Statistiken** voller Einblicke in die Aktivität
-(und die Kosten, wenn die Einstellung **Kosten anzeigen** aktiv ist) sowie
-Projekt-Tabs **Dateien**, **Git** und **Terminal**, die an keine einzelne Sitzung
-gebunden sind.
+Klicke auf den **Projektnamen** oben rechts im Sitzungskopf, um die Projektseite zu öffnen.
 
-Um sie aus einer Sitzung zu erreichen, klicke auf den **Projektnamen** **oben
-rechts in der Kopfzeile**. Auf der Startseite klickst du einfach auf ein Projekt.
+Verfolge Aktivitäten unter **Zeitachse** und prüfe die Nutzung unter **Statistiken**. Die Tabs **Dateien**, **Git** und **Terminal** funktionieren unabhängig von einzelnen Sitzungen.
+
+Du kannst ein Projekt auch auf der Startseite öffnen.
