@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). As a small deviation, each release opens with a one-line **Summary** recapping its highlights, and some entries include illustrative screenshots in nested sub-lists.
 
-## [Unreleased]
+## [1.97.0] - 2026-11-14
+
+### Summary
+
+- **v1.97.0: Fable 5.2, Terra 6.1, Timeline & TTS** — the new Claude and Codex models, a live timeline of your sessions, summaries, text to speech, and an interface translated into five languages.
 
 ### Added
 

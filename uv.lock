@@ -2156,7 +2156,7 @@ wheels = [
 
 [[package]]
 name = "twicc"
-version = "1.96.2"
+version = "1.97.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
