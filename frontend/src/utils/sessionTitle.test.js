@@ -229,7 +229,7 @@ test('dialog hint and settings label use the required automatic-title copy', () 
     assert.match(dialog, /<p v-if="automaticTitleHint" class="context-hint">\s*\{\{ \$t\('session\.rename\.automaticHint'\) \}\}\s*<\/p>/)
     const { t } = createAppI18n().global
     assert.equal(t('session.rename.automaticHint'), 'This title is automatic. Save to validate it and stop automatic updates.')
-    assert.equal(t('settings.titles.automaticTitles'), 'Automatic titles')
+    assert.equal(t('settings.titles.automaticTitles'), 'Apply and update titles automatically')
     assert.match(read('../components/app/SettingsPopover.vue'), /:checked="titleAutoApply"[\s\S]*?>\{\{ \$t\('settings\.titles\.automaticTitles'\) \}\}<\/wa-switch>/)
     const start = dialog.indexOf('function close()')
     const close = dialog.slice(start, dialog.indexOf('/**', start))

@@ -2025,14 +2025,22 @@ function onChangelogClose() {
                             <wa-switch
                                 :checked="titleGenerationEnabled"
                                 @change="onTitleGenerationChange"
+                                aria-describedby="title-generation-hint"
                                 size="small"
-                            >{{ $t('common.status.enabled') }}</wa-switch>
+                            >{{ $t('settings.titles.generation.label') }}</wa-switch>
+                            <span id="title-generation-hint" class="setting-group-hint">
+                                {{ $t('settings.titles.generation.hint') }}
+                            </span>
                             <wa-switch
                                 v-if="titleGenerationEnabled"
                                 :checked="titleAutoApply"
                                 @change="onTitleAutoApplyChange"
+                                aria-describedby="title-auto-apply-hint"
                                 size="small"
                             >{{ $t('settings.titles.automaticTitles') }}</wa-switch>
+                            <span v-if="titleGenerationEnabled" id="title-auto-apply-hint" class="setting-group-hint">
+                                {{ $t('settings.titles.automaticTitlesHint') }}
+                            </span>
                             <label class="setting-group-label">{{ $t('common.labels.model') }}</label>
                             <SegmentedControl
                                 fit
