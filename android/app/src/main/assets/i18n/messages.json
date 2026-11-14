@@ -2383,7 +2383,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Force refresh (keep login)"
+                "value": "Reload page (bypass cache)"
               }
             ],
             "parameters": []
@@ -7222,7 +7222,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Neu laden erzwingen (Anmeldung behalten)"
+                "value": "Seite neu laden (ohne Cache)"
               }
             ],
             "parameters": []
@@ -12085,7 +12085,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Forzar actualización (mantener sesión iniciada)"
+                "value": "Recargar página (sin caché)"
               }
             ],
             "parameters": []
@@ -16964,7 +16964,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Forcer l'actualisation (conserver la connexion)"
+                "value": "Recharger la page (sans cache)"
               }
             ],
             "parameters": []
@@ -21819,7 +21819,7 @@
             "tokens": [
               {
                 "type": "text",
-                "value": "Forçar atualização (manter login)"
+                "value": "Recarregar página (sem cache)"
               }
             ],
             "parameters": []

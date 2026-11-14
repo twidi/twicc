@@ -27,8 +27,8 @@ android {
         minSdk = 29
         targetSdk = 35
         ndk { abiFilters += targetAbis }
-        versionCode = 42
-        versionName = "0.5.31"
+        versionCode = 43
+        versionName = "0.5.32"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "engine"

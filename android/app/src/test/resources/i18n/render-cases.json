@@ -2385,7 +2385,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Force refresh (keep login)"
+                  "value": "Reload page (bypass cache)"
                 }
               ],
               "parameters": []
@@ -7471,7 +7471,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Neu laden erzwingen (Anmeldung behalten)"
+                  "value": "Seite neu laden (ohne Cache)"
                 }
               ],
               "parameters": []
@@ -12581,7 +12581,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Forzar actualización (mantener sesión iniciada)"
+                  "value": "Recargar página (sin caché)"
                 }
               ],
               "parameters": []
@@ -17707,7 +17707,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Forcer l'actualisation (conserver la connexion)"
+                  "value": "Recharger la page (sans cache)"
                 }
               ],
               "parameters": []
@@ -22809,7 +22809,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Forçar atualização (manter login)"
+                  "value": "Recarregar página (sem cache)"
                 }
               ],
               "parameters": []
@@ -26763,7 +26763,7 @@
         "key": "navigation.android.forceRefresh",
         "params": {}
       },
-      "expected": "Force refresh (keep login)"
+      "expected": "Reload page (bypass cache)"
     },
     {
       "locale": "en",
@@ -29433,7 +29433,7 @@
         "key": "navigation.android.forceRefresh",
         "params": {}
       },
-      "expected": "Neu laden erzwingen (Anmeldung behalten)"
+      "expected": "Seite neu laden (ohne Cache)"
     },
     {
       "locale": "de",
@@ -32103,7 +32103,7 @@
         "key": "navigation.android.forceRefresh",
         "params": {}
       },
-      "expected": "Forzar actualización (mantener sesión iniciada)"
+      "expected": "Recargar página (sin caché)"
     },
     {
       "locale": "es",
@@ -34861,7 +34861,7 @@
         "key": "navigation.android.forceRefresh",
         "params": {}
       },
-      "expected": "Forcer l'actualisation (conserver la connexion)"
+      "expected": "Recharger la page (sans cache)"
     },
     {
       "locale": "fr",
@@ -37847,7 +37847,7 @@
         "key": "navigation.android.forceRefresh",
         "params": {}
       },
-      "expected": "Forçar atualização (manter login)"
+      "expected": "Recarregar página (sem cache)"
     },
     {
       "locale": "pt-BR",

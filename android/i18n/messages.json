@@ -494,7 +494,7 @@
       "Manage instances": "navigation.android.manage",
       "TwiCC ${BuildConfig.VERSION_NAME} · ${EngineProvider.engine.displayName}": "android.browser.version",
       "Reload page": "navigation.android.reload",
-      "Force refresh (keep login)": "navigation.android.forceRefresh",
+      "Reload page (bypass cache)": "navigation.android.forceRefresh",
       "Force refresh?": "navigation.android.refreshQuestion",
       "Reload this page and bypass its resource cache. Your login and preferences stay saved. Unsaved text may be lost.": "navigation.android.refreshHint",
       "Server home": "navigation.android.serverHome",

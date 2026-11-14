@@ -1137,7 +1137,7 @@
     "media.preview.title": "Preview",
     "navigation.android.active": "Active",
     "navigation.android.browser": "Open in browser",
-    "navigation.android.forceRefresh": "Force refresh (keep login)",
+    "navigation.android.forceRefresh": "Reload page (bypass cache)",
     "navigation.android.manage": "Manage instances",
     "navigation.android.menu": "Android app menu",
     "navigation.android.refresh": "Refresh",

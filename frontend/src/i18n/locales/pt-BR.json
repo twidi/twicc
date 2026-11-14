@@ -1137,7 +1137,7 @@
     "media.preview.title": "Prévia",
     "navigation.android.active": "Ativa",
     "navigation.android.browser": "Abrir no navegador",
-    "navigation.android.forceRefresh": "Forçar atualização (manter login)",
+    "navigation.android.forceRefresh": "Recarregar página (sem cache)",
     "navigation.android.manage": "Gerenciar instâncias",
     "navigation.android.menu": "Menu do aplicativo Android",
     "navigation.android.refresh": "Atualizar",

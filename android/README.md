@@ -196,8 +196,8 @@ uv run python -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.31**,
-version code **42**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.32**,
+version code **43**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -219,9 +219,9 @@ the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.31-release.apk
+adb install -r android/dist/gecko/64/release/twicc-gecko-64-v0.5.32-release.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.31-release.apk
+adb install -r android/dist/webview/64/release/twicc-webview-64-v0.5.32-release.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to
@@ -322,7 +322,7 @@ It provides:
 - All saved instances, with an active marker and direct switching.
 - **Manage instances**, which opens the native instance manager.
 - Normal reload.
-- **Force refresh (keep login):** replace the browser view/session and bypass
+- **Reload page (bypass cache):** replace the browser view/session and bypass
   resource cache. Cookies, localStorage, and IndexedDB remain. Unsaved text can
   be lost. This does not unregister service workers; TwiCC has none currently.
 - Server home and Open in browser.
