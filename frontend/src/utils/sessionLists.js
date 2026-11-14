@@ -65,14 +65,16 @@ function createScopeList(state, { projectIds, cursorId }) {
         return retainSessionArray(previous, next)
     })
 
-    // 2. The candidates above the cursor's pagination cutoff. Reads `mtime` only.
+    // 2. The candidates above the pagination cutoff, plus running sessions in scope.
+    // A new session can have mtime 0 until the watcher ingests its rollout.
     const members = computed(previous => {
         noteStageRun('scope:members')
         const read = reader(hasActiveStartupPhase(state.startupProgress))
         const cursor = state.localState.projects[cursorId]
         const oldestMtime = cursor?.hasMoreSessions ? cursor.oldestSessionMtime : null
         const list = candidates.value
-        const next = oldestMtime == null ? list : list.filter(session => read(session).mtime >= oldestMtime)
+        const next = oldestMtime == null ? list : list.filter(session =>
+            read(session).mtime >= oldestMtime || state.processStates[read(session).id] != null)
         return retainSessionArray(previous, next)
     })
 

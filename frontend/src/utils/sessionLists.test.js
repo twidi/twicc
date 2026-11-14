@@ -335,12 +335,13 @@ test('a session crossing the cutoff joins and leaves the members', () => {
         assert.deepEqual(ids(list.ordered), expectedIds(state, scopeId), scopeId)
         assert.equal(probe.runs('scope:candidates'), 0, scopeId)
         assert.equal(probe.runs('scope:members'), 1, scopeId)
-        // The cursor moves past it: it leaves.
+        // The cursor moves past it: it leaves, but running sessions stay in scope.
         const cursor = state.localState.projects[scope.cursorId]
         cursor.oldestSessionMtime = state.sessions[sessionId].mtime + 1
         probe.flush()
         assert.ok(!ids(list.members).includes(sessionId), scopeId)
-        assert.deepEqual(ids(list.ordered), expectedIds(state, scopeId), scopeId)
+        assert.deepEqual(ids(list.ordered), scopeId === 'p2'
+            ? [] : [ID.processAssistant, ID.processShell, ID.processCron], scopeId)
         // Pagination completes: every candidate is a member.
         cursor.hasMoreSessions = false
         probe.flush()

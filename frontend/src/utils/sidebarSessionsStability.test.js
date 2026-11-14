@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { reactive } from 'vue'
-import { computeSidebarSessionBlocks } from './sidebarSessions.js'
+import { computeSidebarSessionBlocks, useSidebarSessionBlocks } from './sidebarSessions.js'
 import { createFixtureStores } from '../../tests/helpers/sidebarFixture.js'
 
 function fixture(scope) {
@@ -79,3 +79,39 @@ test('without showAsTree the same data leaves it in crossFilterPinned', () => {
     assert.ok(!blocks.natural.some(s => s.id === 'old'))
     assert.deepEqual(blocks.crossFilterPinned.map(s => s.id), ['old'])
 })
+
+for (const scope of ['__all__', 'p', 'p-work', 'ws:w']) {
+    for (const showActiveAcrossFilters of [false, true]) {
+        test(`active sessions bypass pagination within ${scope}, cross-filter option ${showActiveAcrossFilters}`, () => {
+            const { data, options } = fixture(scope)
+            options.showActiveAcrossFilters = showActiveAcrossFilters
+            data.localState.projects.__all__ = { hasMoreSessions: true, oldestSessionMtime: 50 }
+            data.localState.projects['p-work'] = { hasMoreSessions: true, oldestSessionMtime: 50 }
+            data.sessions.new = { id: 'new', project_id: 'p-work', provider: 'codex', mtime: 0 }
+            data.sessions.elsewhere = { id: 'elsewhere', project_id: 'q', mtime: 0 }
+            data.processStates.elsewhere = { state: 'starting' }
+            const { blocks } = useSidebarSessionBlocks(() => options)
+            const containsNew = () => blocks.value.natural.some(s => s.id === 'new')
+            assert.equal(containsNew(), false)
+
+            data.processStates.new = { state: 'starting' }
+            assert.equal(containsNew(), true)
+            assert.deepEqual(blocks.value.crossFilterActive.map(s => s.id),
+                scope !== '__all__' && showActiveAcrossFilters ? ['elsewhere'] : [])
+            assert.equal(data.sessions.new.mtime, 0)
+
+            // The watcher supplies the rollout timestamp. The session stays in its block.
+            data.sessions.new.mtime = 200
+            assert.equal(containsNew(), true)
+            delete data.processStates.new
+            assert.equal(containsNew(), true)
+
+            // An older resumed session leaves the natural list once its process stops.
+            data.sessions.new.mtime = 0
+            data.processStates.new = { state: 'user_turn' }
+            assert.equal(containsNew(), true)
+            delete data.processStates.new
+            assert.equal(containsNew(), false)
+        })
+    }
+}
