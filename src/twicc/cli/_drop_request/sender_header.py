@@ -80,9 +80,11 @@ def prefix_sender_header(
 
     ``caller`` is the calling agent's ``Session`` row (or ``None`` when the
     command runs outside a TwiCC agent). No header is added when there is no
-    caller, or on a self-send (a session messaging itself needs no
-    attribution).
+    caller, on a self-send, or before a slash command. Commands must remain
+    the first text so providers and the pending-context guard recognize them.
     """
+    if text.lstrip().startswith("/"):
+        return text
     from twicc.mcp.identity import external_caller
     external = external_caller.get()
     if external is not None:

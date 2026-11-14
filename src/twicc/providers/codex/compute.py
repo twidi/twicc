@@ -6,7 +6,9 @@ pass turns the wrapper into a TwiCC :class:`~twicc.core.enums.ItemKind`
 and, for tool calls, lets the inherited base orchestration build the
 ``ToolResultLink`` rows that pair a call with its result.
 
-Classification rules (any change MUST bump CODEX_COMPUTE_VERSION):
+Classification rules (normally bump CODEX_COMPUTE_VERSION when these change;
+the 0.169 goal-format extension deliberately keeps version 58 and does not
+recompute existing sessions):
 
 Codex persists chat messages and tool outcomes as canonical completed
 items — ``event_msg.item_completed`` lines whose ``payload.item.type`` is a
@@ -24,7 +26,9 @@ are migrated to the same shape). The readers live in :mod:`.canonical`.
   canonical ``UserMessage`` of text ``/goal <objective>``. Later continuation
   prompts for the same goal stay ``SYSTEM`` / ``DEBUG_ONLY`` so the command is
   not repeated between every assistant response. The original payload of the
-  visible boundary is kept under ``twiccOriginalContent``.
+  visible boundary is kept under ``twiccOriginalContent``. Since 0.169 the
+  continuation has no embedded objective: resolve it from the Goal snapshot
+  or separate ``agent.goal_objective`` context, which stays hidden.
 - A ``response_item.message`` (role=user) that is a TwiCC-injected command
   (via ``thread/inject_items`` — ``/goal clear`` and ``/compact``, for which
   Codex writes no "the user asked" rollout line of its own) is likewise
@@ -1386,7 +1390,8 @@ def _subagent_notification_text(parsed_json: dict) -> str | None:
 
 # Opening tag of the synthetic context message Codex injects to drive a goal
 # continuation. It is a ``response_item.message`` (role=user) whose first
-# ``input_text`` block wraps the objective in an ``<objective>`` tag. Matching
+# ``input_text`` block carries the control prompt. Before 0.169 it also wraps
+# the objective in an ``<objective>`` tag. Matching
 # this exact opening tag identifies the line (other ``codex_internal_context``
 # sources, if any, are left untouched).
 _GOAL_CONTEXT_MARKER = '<codex_internal_context source="goal">'
@@ -1397,6 +1402,7 @@ _GOAL_CONTEXT_MARKER = '<codex_internal_context source="goal">'
 _GOAL_OBJECTIVE_RE = re.compile(
     r"<(untrusted_objective|objective)>\s*(.*?)\s*</\1>", re.DOTALL,
 )
+_GOAL_TRUNCATION_RE = re.compile(r"(.*?)…\d+ tokens truncated…(.*)", re.DOTALL)
 
 
 def _goal_context_payload(parsed_json: dict) -> dict | None:
@@ -1432,6 +1438,49 @@ def _goal_context_payload(parsed_json: dict) -> dict | None:
     return None
 
 
+def _goal_context_text(parsed_json: dict) -> str | None:
+    """Recognize goal steering independently of its optional objective."""
+    payload = _goal_context_payload(parsed_json)
+    if payload is None:
+        return None
+    content = payload.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    first = content[0]
+    if not isinstance(first, dict) or first.get("type") != "input_text":
+        return None
+    text = first.get("text")
+    return text if isinstance(text, str) and text.lstrip().startswith(_GOAL_CONTEXT_MARKER) else None
+
+
+def _goal_objective_context(parsed_json: dict) -> str | None:
+    """Read 0.169 untrusted objective data, without XML-entity decoding."""
+    if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
+        return None
+    payload = _payload(parsed_json)
+    if payload is None:
+        return None
+    if (
+        payload.get("type") == "function_call_output"
+        and payload.get("namespace") == "agent"
+        and payload.get("name") == "goal_objective"
+        and not payload.get("call_id")
+    ):
+        output = payload.get("output")
+        return output if isinstance(output, str) and output.strip() else None
+    if payload.get("type") == "message" and payload.get("role") == "user":
+        content = payload.get("content")
+        if isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):
+            text = content[0].get("text")
+            start, end = "<external_goal_objective>", "</external_goal_objective>"
+            if content[0].get("type") == "input_text" and isinstance(text, str):
+                text = text.strip()
+                if text.startswith(start) and text.endswith(end):
+                    objective = text[len(start):-len(end)]
+                    return objective if objective.strip() else None
+    return None
+
+
 def _goal_context_objective(parsed_json: dict) -> str | None:
     """Return the objective of a Codex goal-continuation context message.
 
@@ -1452,17 +1501,8 @@ def _goal_context_objective(parsed_json: dict) -> str | None:
     budget/usage-limit steers reuse the same ``source="goal"`` + ``<objective>``
     shape; for TwiCC's budget-free ``/goal`` that case never arises.)
     """
-    payload = _goal_context_payload(parsed_json)
-    if payload is None:
-        return None
-    content = payload.get("content")
-    if not isinstance(content, list) or not content:
-        return None
-    first = content[0]
-    if not isinstance(first, dict) or first.get("type") != "input_text":
-        return None
-    text = first.get("text")
-    if not isinstance(text, str) or not text.lstrip().startswith(_GOAL_CONTEXT_MARKER):
+    text = _goal_context_text(parsed_json)
+    if text is None:
         return None
     match = _GOAL_OBJECTIVE_RE.search(text)
     if match is None:
@@ -1481,6 +1521,9 @@ def _goal_snapshot_from_tool_result(parsed_json: dict) -> dict | None:
     ``threadId`` / ``status`` fields before treating it as lifecycle evidence.
     """
     if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
+        return None
+    # The objective is arbitrary task data, even when it looks like Goal JSON.
+    if _goal_objective_context(parsed_json) is not None:
         return None
     payload = _payload(parsed_json)
     if payload is None or payload.get("type") not in _TOOL_RESULT_PAYLOAD_TYPES:
@@ -1519,6 +1562,19 @@ def _goal_snapshot_from_tool_result(parsed_json: dict) -> dict | None:
             ):
                 return goal
     return None
+
+
+def _goal_snapshot(parsed_json: dict) -> dict | None:
+    """Read a full snapshot from a lifecycle event or successful Goal tool."""
+    payload = _payload(parsed_json)
+    if (
+        parsed_json.get("type") == _TYPE_EVENT_MSG
+        and payload is not None
+        and payload.get("type") == _PAYLOAD_THREAD_GOAL_UPDATED
+        and isinstance(payload.get("goal"), dict)
+    ):
+        return payload["goal"]
+    return _goal_snapshot_from_tool_result(parsed_json)
 
 
 # TwiCC-injected commands (via ``thread/inject_items``) for which Codex writes
@@ -1723,13 +1779,39 @@ class _GoalContextState:
     the sequential compute scan.
     """
 
-    __slots__ = ("initialized", "last_objective", "seen_context", "show_next")
+    __slots__ = (
+        "context_objective", "initialized", "last_objective",
+        "seen_context", "show_next", "snapshot_objective",
+    )
 
     def __init__(self, *, initialized: bool = False) -> None:
         self.initialized = initialized
         self.seen_context = False
         self.last_objective: str | None = None
         self.show_next = False
+        self.snapshot_objective: str | None = None
+        self.context_objective: str | None = None
+
+    @property
+    def objective(self) -> str | None:
+        if self.context_objective is None:
+            return self.snapshot_objective
+        if self.snapshot_objective is not None:
+            truncated = _GOAL_TRUNCATION_RE.fullmatch(self.context_objective)
+            if (
+                truncated is not None
+                and self.snapshot_objective.startswith(truncated[1])
+                and self.snapshot_objective.endswith(truncated[2])
+            ):
+                return self.snapshot_objective
+        return self.context_objective
+
+    def note_objective(self, goal: dict | None, context: str | None) -> None:
+        if goal is not None and isinstance(goal.get("objective"), str) and goal["objective"].strip():
+            self.snapshot_objective = goal["objective"]
+            self.context_objective = None
+        if context is not None:
+            self.context_objective = context
 
 
 def _parse_subagent_notification(parsed_json: dict) -> tuple[str, dict] | None:
@@ -3838,6 +3920,12 @@ class CodexSessionCompute(BaseSessionCompute):
             if isinstance(goal, dict):
                 self._note_goal_status(session_id, line_num, goal.get("status"))
 
+        goal = _goal_snapshot(parsed_json)
+        objective_context = _goal_objective_context(parsed_json)
+        if goal is not None or objective_context is not None:
+            state = self._goal_context_state(session_id, line_num)
+            state.note_objective(goal, objective_context)
+
         # Native turn errors are durable even when thread/inject_items silently
         # drops an error marker after a failed turn. Preserve the event wrapper
         # and payload: subagent run-end attribution still reads task_complete.
@@ -3875,6 +3963,9 @@ class CodexSessionCompute(BaseSessionCompute):
         # from an older compute pass are restored to their native response_item
         # shape here, allowing a compute-version bump to repair stored sessions.
         objective = _goal_context_objective(parsed_json)
+        if objective is None and _goal_context_text(parsed_json) is not None:
+            state = self._goal_context_state(session_id, line_num)
+            objective = state.objective
         if objective is not None:
             show = self._consume_goal_context(session_id, line_num, objective)
             if show:
@@ -4137,6 +4228,8 @@ class CodexSessionCompute(BaseSessionCompute):
         state.initialized = True
         state.seen_context = True
         state.last_objective = objective
+        state.snapshot_objective = objective
+        state.context_objective = None
         state.show_next = False
         return show
 
@@ -4145,9 +4238,9 @@ class CodexSessionCompute(BaseSessionCompute):
     ) -> _GoalContextState:
         """Seed live goal-context visibility from the latest persisted lines.
 
-        Only two facts matter: the most recent internal context (if any), and
-        whether a newer ``thread_goal_updated`` line activated another goal
-        boundary. Both scans validate indexed source pointers or stale raw pages.
+        Replay objective sources around the latest continuation. Its objective
+        is the previous boundary; later snapshots belong to the next one.
+        Both scans validate indexed source pointers or stale raw pages.
         """
         state = _GoalContextState(initialized=True)
         context_line = 0
@@ -4163,19 +4256,22 @@ class CodexSessionCompute(BaseSessionCompute):
             if not isinstance(parsed, dict):
                 continue
             objective = _goal_context_objective(parsed)
-            if objective is None:
+            if _goal_context_text(parsed) is None:
                 continue
             state.seen_context = True
-            state.last_objective = objective
+            rewritten = user_message_text(parsed)
+            state.last_objective = objective or (
+                rewritten.removeprefix("/goal ")
+                if isinstance(rewritten, str) and rewritten.startswith("/goal ") else None
+            )
             context_line = candidate.line_num
             break
 
         update_candidates = iter_resolver_items(
             session_id, HistoryFactKind.GOAL_UPDATE, "context", before_line=current_line_num,
         )
+        sources = []
         for candidate in update_candidates:
-            if candidate.line_num <= context_line:
-                break
             try:
                 load_current([candidate])
                 parsed = orjson.loads(effective_current(candidate))
@@ -4183,16 +4279,53 @@ class CodexSessionCompute(BaseSessionCompute):
                 continue
             if not isinstance(parsed, dict):
                 continue
-            if parsed.get("type") != _TYPE_EVENT_MSG:
+            objective_context = _goal_objective_context(parsed)
+            goal = _goal_snapshot(parsed)
+            if goal is None and objective_context is None:
                 continue
-            payload = _payload(parsed)
-            if payload is None or payload.get("type") != _PAYLOAD_THREAD_GOAL_UPDATED:
+            sources.append((candidate.line_num, parsed))
+            if (
+                goal is not None
+                and isinstance(goal.get("objective"), str) and goal["objective"].strip()
+                and (not context_line or candidate.line_num <= context_line)
+            ):
+                break
+        if context_line:
+            # A hidden continuation can follow an embedded edit with no Goal
+            # event. Replay that earlier boundary before resolving this one.
+            if state.last_objective is None:
+                oldest_source_line = sources[-1][0] if sources and sources[-1][0] < context_line else 0
+                for candidate in context_candidates:
+                    if candidate.line_num <= oldest_source_line:
+                        break
+                    try:
+                        load_current([candidate])
+                        parsed = orjson.loads(effective_current(candidate))
+                    except orjson.JSONDecodeError:
+                        continue
+                    if not isinstance(parsed, dict) or _goal_context_text(parsed) is None:
+                        continue
+                    rewritten = user_message_text(parsed)
+                    if _goal_context_objective(parsed) is not None or (
+                        isinstance(rewritten, str) and rewritten.startswith("/goal ")
+                    ):
+                        sources.append((candidate.line_num, parsed))
+                        break
+            sources.append((context_line, None))
+        for line_num, parsed in sorted(sources, key=lambda source: source[0]):
+            if parsed is None:
+                state.last_objective = state.last_objective or state.objective
+                state.snapshot_objective = state.last_objective
+                state.context_objective = None
+                state.seen_context = state.last_objective is not None
                 continue
-            goal = payload.get("goal")
-            if not isinstance(goal, dict):
-                continue
-            state.show_next = goal.get("status") == _GOAL_STATUS_ACTIVE
-            break
+            goal = _goal_snapshot(parsed)
+            state.note_objective(goal, _goal_objective_context(parsed))
+            if _goal_context_text(parsed) is not None:
+                state.snapshot_objective = _goal_context_objective(parsed) or user_message_text(parsed).removeprefix("/goal ")
+                state.context_objective = None
+            if parsed.get("type") == _TYPE_EVENT_MSG and goal is not None and line_num > context_line:
+                state.show_next = goal.get("status") == _GOAL_STATUS_ACTIVE
         return state
 
     def extract_tasks_payload(self, parsed_json: dict) -> dict | None:

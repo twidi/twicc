@@ -270,6 +270,8 @@ data.sqlite-shm
 
 # JSONL data files (if generated locally)
 *.jsonl
+!tests/fixtures/codex_goal_0_169_multi.jsonl
+!tests/fixtures/codex_goal_0_169_edit_clear.jsonl
 
 # SDK debug logs
 logs/

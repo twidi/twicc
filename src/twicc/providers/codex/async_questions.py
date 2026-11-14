@@ -143,7 +143,7 @@ def extract_async_question_facts(record: dict, *, line: int) -> list[QuestionFac
     semantic IDs and occurrence timestamps, never the mutable rollout line.
     """
     from .canonical import user_message_text
-    from .compute import _goal_context_objective, _goal_snapshot_from_tool_result
+    from .compute import _goal_context_text, _goal_snapshot_from_tool_result
 
     at = record.get("timestamp")
     if not isinstance(at, str):
@@ -170,7 +170,7 @@ def extract_async_question_facts(record: dict, *, line: int) -> list[QuestionFac
     goal = _goal_snapshot_from_tool_result(record)
     if payload.get("type") == "thread_goal_updated":
         goal = payload.get("goal")
-    goal_context = _goal_context_objective(record)
+    goal_context = _goal_context_text(record)
     context = None
     if isinstance(goal, dict) and isinstance(goal.get("status"), str):
         context = {"event": "goal", "status": goal["status"], "goal_id": goal.get("id")}

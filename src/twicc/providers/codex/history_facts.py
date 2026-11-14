@@ -88,7 +88,9 @@ def extract_history_facts(parsed: dict, *, line_num: int, history: HistoryFactCo
         _script_targets,
         _parse_sub_agent_activity_started,
         _turn_context_collaboration_mode,
-        _goal_context_objective,
+        _goal_context_text,
+        _goal_objective_context,
+        _goal_snapshot,
         injected_command_text,
         user_message_text,
         task_started_turn_id,
@@ -142,12 +144,12 @@ def extract_history_facts(parsed: dict, *, line_num: int, history: HistoryFactCo
         add(HistoryFactKind.TURN_CONTEXT, "context", {"source_line": line_num, "mode": mode})
     if user_message_text(parsed) == "/plan" or injected_command_text(parsed) == "/plan":
         add(HistoryFactKind.PLAN_MARKER, "context", {"source_line": line_num})
-    if _goal_context_objective(parsed) is not None:
+    if _goal_context_text(parsed) is not None:
         add(HistoryFactKind.GOAL_CONTEXT, "context", {"source_line": line_num})
+    if _goal_snapshot(parsed) is not None or _goal_objective_context(parsed) is not None:
+        add(HistoryFactKind.GOAL_UPDATE, "context", {"source_line": line_num})
     payload = _payload(parsed)
     if parsed.get("type") == "event_msg" and payload is not None:
-        if payload.get("type") == "thread_goal_updated" and isinstance(payload.get("goal"), dict):
-            add(HistoryFactKind.GOAL_UPDATE, "context", {"source_line": line_num})
         if payload.get("type") == "token_count":
             info = payload.get("info")
             total = info.get("total_token_usage") if isinstance(info, dict) else None

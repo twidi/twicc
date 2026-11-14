@@ -7,6 +7,8 @@ namespace stands in for the ``Session`` row and no DB is needed.
 
 from types import SimpleNamespace
 
+import pytest
+
 from twicc.cli._drop_request.sender_header import (
     TITLE_MAX_CHARS,
     has_sender_header,
@@ -29,6 +31,25 @@ def test_self_send_returns_text_unchanged():
     assert prefix_sender_header(
         "hello", caller, recipient_id="same-id", recipient_spawned_by_id="x",
     ) == "hello"
+
+
+@pytest.mark.parametrize("text", ["/goal Build", "  /goal clear", "\n/compact", "/custom argument"])
+@pytest.mark.parametrize("external", [False, True])
+def test_slash_commands_reach_providers_without_sender_or_context_prefix(text, external):
+    from twicc.context_injection import apply_pending_context, consume_context, inject_context
+    from twicc.mcp.identity import ExternalCaller, external_caller
+
+    token = external_caller.set(ExternalCaller("connection", "External MCP") if external else None)
+    try:
+        inject_context("slash-test", session_id="slash-test")
+        delivered = prefix_sender_header(
+            text, _caller(), recipient_id="slash-test", recipient_spawned_by_id=None,
+        )
+        assert apply_pending_context("slash-test", delivered) == text
+        assert "<twicc:context>" in apply_pending_context("slash-test", "Next message")
+    finally:
+        consume_context("slash-test")
+        external_caller.reset(token)
 
 
 def test_child_to_parent_uses_spawned_session_wording():
