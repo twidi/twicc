@@ -45,8 +45,8 @@ from twicc.core.ui_messages import ui_message_text
 
 logger = logging.getLogger(__name__)
 
-CODEX_VERSION = "0.167.0"
-CODEX_RELEASE_TAG = "rust-v0.167.0"
+CODEX_VERSION = "0.169.0"
+CODEX_RELEASE_TAG = "rust-v0.169.0"
 _RELEASE_URL = f"https://github.com/openai/codex/releases/download/{CODEX_RELEASE_TAG}"
 
 # our platform key -> (wheel filename, sha256 of the wheel)
@@ -55,19 +55,19 @@ _RELEASE_URL = f"https://github.com/openai/codex/releases/download/{CODEX_RELEAS
 _WHEELS: dict[str, tuple[str, str]] = {
     "manylinux_2_17_x86_64": (
         f"openai_codex_cli_bin-{CODEX_VERSION}-py3-none-manylinux_2_17_x86_64.whl",
-        "be588b0645c54859f2ae085db06aa7e669ec7e6ecb3f3047f2fe000213e8422e",
+        "8e0a30a55b05a44f2a8228afca04bbc5e231592be375d2f98fc99eb24bd1ebb5",
     ),
     "manylinux_2_17_aarch64": (
         f"openai_codex_cli_bin-{CODEX_VERSION}-py3-none-manylinux_2_17_aarch64.whl",
-        "91c317a33e122f5c836667a02e39401ec683cebff624057448953e0d477b17d7",
+        "23ca658c8bf6b19807ab33cfa27d0d4fec240cf4679e9e7addd5af8870e40222",
     ),
     "macosx_11_0_arm64": (
         f"openai_codex_cli_bin-{CODEX_VERSION}-py3-none-macosx_11_0_arm64.whl",
-        "b1dc0cb9997f6a69ecabd17968026d295d2d4c8f0ad3af86171401af8c1f52b8",
+        "19929a5742ba1d043855fd184ec1fbce1a563478a77b1999b126c0e08c799eeb",
     ),
     "macosx_10_9_x86_64": (
         f"openai_codex_cli_bin-{CODEX_VERSION}-py3-none-macosx_10_9_x86_64.whl",
-        "0d14545d50329d85d70f30a411eff5fa45335b48ec319b3b540ec9ce94c84778",
+        "d550485eb2d20d50f3b4a9cff03b8835cf4a9d7ddeec14bb1113169d4429576a",
     ),
 }
 

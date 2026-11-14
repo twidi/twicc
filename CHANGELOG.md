@@ -32,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Element selection** — Picking an element in the Browser tab or an HTML artifact now opens a comment card right away, and stays open while you pick another element.
 - **Provider icons** — Session lists no longer show the Claude or Codex icon by default. Turn “Show provider icons” back on in the sidebar menu to get them back.
-- **Codex runtime** — Update from v0.162.0 to v0.167.0.
+- **Codex runtime** — Update from v0.162.0 to v0.169.0.
 - **Claude Agent SDK** — Upgrade from 0.2.165 to 0.2.182 (bundled Claude Code CLI: 2.1.294 → 2.1.325)
 
 ### Fixed
