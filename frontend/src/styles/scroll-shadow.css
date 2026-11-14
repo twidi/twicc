@@ -34,11 +34,17 @@
     initial-value: 0;
 }
 
+/* A Web Awesome dropdown menu scrolls in its own part, whose pseudo-elements are the glass layer
+   (styles/glass.css). The shadows are then two real elements, the first and last children of the
+   dropdown (`data-scroll-shadow-edge`, see LazyRowMenu), sticky in the menu's flex column; the
+   dropdown carries `data-scroll-shadow-menu`. */
+
 /* The numbers live on the scroller and are inherited by its pseudo-elements; the transition
    belongs to the element that owns them. */
 wa-dialog::part(body),
 wa-drawer::part(body),
-[data-scroll-shadow] {
+[data-scroll-shadow],
+[data-scroll-shadow-menu]::part(menu) {
     transition: --scroll-edge-top 0.2s ease, --scroll-edge-bottom 0.2s ease;
 }
 
@@ -47,7 +53,8 @@ wa-dialog::part(body)::after,
 wa-drawer::part(body)::before,
 wa-drawer::part(body)::after,
 [data-scroll-shadow]::before,
-[data-scroll-shadow]::after {
+[data-scroll-shadow]::after,
+[data-scroll-shadow-edge] {
     content: '';
     display: block;
     flex-shrink: 0;
@@ -60,7 +67,8 @@ wa-drawer::part(body)::after,
 
 wa-dialog::part(body)::before,
 wa-drawer::part(body)::before,
-[data-scroll-shadow]::before {
+[data-scroll-shadow]::before,
+[data-scroll-shadow-edge='top'] {
     top: calc(-1 * var(--scroll-edge-pad-top, 0px));
     margin-block-end: calc(-1 * (var(--scroll-shadow-size) + var(--scroll-edge-gap, 0px)));
     background: radial-gradient(ellipse 75% 100% at 50% 0, var(--scroll-shadow) 20%, transparent);
@@ -69,7 +77,8 @@ wa-drawer::part(body)::before,
 
 wa-dialog::part(body)::after,
 wa-drawer::part(body)::after,
-[data-scroll-shadow]::after {
+[data-scroll-shadow]::after,
+[data-scroll-shadow-edge='bottom'] {
     bottom: calc(-1 * var(--scroll-edge-pad-bottom, 0px));
     margin-block-start: calc(-1 * (var(--scroll-shadow-size) + var(--scroll-edge-gap, 0px)));
     background: radial-gradient(ellipse 75% 100% at 50% 100%, var(--scroll-shadow) 20%, transparent);

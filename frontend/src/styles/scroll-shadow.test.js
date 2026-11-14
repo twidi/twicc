@@ -46,15 +46,15 @@ test('4. the edge numbers are registered inherited numbers (the pseudo-elements 
 const TARGETS = ['wa-dialog::part(body)', 'wa-drawer::part(body)', '[data-scroll-shadow]']
 
 test('5. the transition sits on the scroller that owns the numbers', () => {
-    assert.match(css, /wa-dialog::part\(body\), wa-drawer::part\(body\), \[data-scroll-shadow\] \{ transition: --scroll-edge-top 0.2s ease, --scroll-edge-bottom 0.2s ease; \}/)
+    assert.match(css, /wa-dialog::part\(body\), wa-drawer::part\(body\), \[data-scroll-shadow\], \[data-scroll-shadow-menu\]::part\(menu\) \{ transition: --scroll-edge-top 0.2s ease, --scroll-edge-bottom 0.2s ease; \}/)
 })
 
 test('5a. two in-flow sticky pseudo-elements above the content, pulled back over their height and the gap', () => {
-    const both = TARGETS.flatMap((t) => [`${t}::before`, `${t}::after`]).join(', ')
+    const both = [...TARGETS.flatMap((t) => [`${t}::before`, `${t}::after`]), '[data-scroll-shadow-edge]'].join(', ')
     assert.ok(css.includes(`${both} { content: ''; display: block; flex-shrink: 0; position: sticky; z-index: 2; height: var(--scroll-shadow-size); margin-inline: calc(-1 * var(--scroll-edge-pad-left, 0px)) calc(-1 * var(--scroll-edge-pad-right, 0px)); pointer-events: none; }`))
-    const before = TARGETS.map((t) => `${t}::before`).join(', ')
+    const before = [...TARGETS.map((t) => `${t}::before`), "[data-scroll-shadow-edge='top']"].join(', ')
     assert.ok(css.includes(`${before} { top: calc(-1 * var(--scroll-edge-pad-top, 0px)); margin-block-end: calc(-1 * (var(--scroll-shadow-size) + var(--scroll-edge-gap, 0px))); background: radial-gradient(ellipse 75% 100% at 50% 0, var(--scroll-shadow) 20%, transparent); opacity: var(--scroll-edge-top); }`))
-    const after = TARGETS.map((t) => `${t}::after`).join(', ')
+    const after = [...TARGETS.map((t) => `${t}::after`), "[data-scroll-shadow-edge='bottom']"].join(', ')
     assert.ok(css.includes(`${after} { bottom: calc(-1 * var(--scroll-edge-pad-bottom, 0px)); margin-block-start: calc(-1 * (var(--scroll-shadow-size) + var(--scroll-edge-gap, 0px))); background: radial-gradient(ellipse 75% 100% at 50% 100%, var(--scroll-shadow) 20%, transparent); opacity: var(--scroll-edge-bottom); }`))
 })
 

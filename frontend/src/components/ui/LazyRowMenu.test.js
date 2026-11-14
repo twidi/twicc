@@ -5,11 +5,12 @@ import { compileComponent, makeRenderer, flush, deferred, descendants } from '..
 
 function fixture(t) {
     const tooltips = []
+    const watched = []
     const Tooltip = {
         props: ['for', 'hoist'],
         setup(props) { onMounted(() => tooltips.push({ for: props.for, hoist: props.hoist })); return () => null },
     }
-    const Menu = compileComponent(new URL('./LazyRowMenu.vue', import.meta.url), { './AppTooltip.vue': Tooltip })
+    const Menu = compileComponent(new URL('./LazyRowMenu.vue', import.meta.url), { './AppTooltip.vue': Tooltip, '../../utils/scrollEdges': { watchScrollEdges: (el, host) => watched.push({ el, host }) } })
     const firstRender = deferred()
     const view = makeRenderer(40, element => {
         if (element.type === 'wa-dropdown') { element.open = false; element.updateComplete = firstRender.promise }
@@ -22,7 +23,7 @@ function fixture(t) {
     app.mount(view.root)
     t.after(() => app.unmount())
     const find = type => descendants(view.root, node => node.type === type)
-    return { find, firstRender, selected, tooltips }
+    return { find, firstRender, selected, tooltips, watched }
 }
 
 test('a closed row renders only the trigger, with the shared and the list classes', async t => {
@@ -72,4 +73,23 @@ test('a selection is forwarded and the dropdown stays mounted after it closes', 
     dropdown.open = false
     await flush()
     assert.equal(f.find('wa-dropdown')[0], dropdown)
+})
+
+test('the open menu part is watched for scroll-edge shadows, between two edge elements', async t => {
+    const f = fixture(t)
+    await flush()
+    f.find('wa-button')[0].props.onClick()
+    await flush()
+    const [dropdown] = f.find('wa-dropdown')
+    assert.equal(dropdown.props['data-scroll-shadow-menu'], '')
+    const edges = descendants(dropdown, node => node.props?.['data-scroll-shadow-edge'])
+    assert.deepEqual(edges.map(edge => edge.props['data-scroll-shadow-edge']), ['top', 'bottom'])
+    assert.equal(dropdown.children[0], edges[0], 'the top edge comes first')
+    assert.equal(dropdown.children.at(-1), edges[1], 'the bottom edge comes last')
+    const menu = {}
+    const host = { shadowRoot: { querySelector: selector => (selector === '[part~="menu"]' ? menu : null) } }
+    dropdown.props.onWaAfterShow({ target: host, currentTarget: host })
+    assert.deepEqual(f.watched, [{ el: menu, host }])
+    dropdown.props.onWaAfterShow({ target: {}, currentTarget: host })
+    assert.equal(f.watched.length, 1, 'a submenu event is ignored')
 })

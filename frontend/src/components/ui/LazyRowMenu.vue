@@ -26,6 +26,7 @@
  */
 import { nextTick, ref } from 'vue'
 import AppTooltip from './AppTooltip.vue'
+import { watchScrollEdges } from '../../utils/scrollEdges'
 
 defineProps({
     triggerId: { type: String, required: true },
@@ -51,6 +52,14 @@ async function mountMenu() {
     await dropdownRef.value?.updateComplete
     if (dropdownRef.value) dropdownRef.value.open = true
 }
+
+// A menu taller than the room it has scrolls: its scroll-edge shadows (styles/scroll-shadow.css)
+// read the numbers written on the menu part. Submenus fire the same event: only the dropdown's own.
+function onAfterShow(event) {
+    if (event.target !== event.currentTarget) return
+    const menu = event.currentTarget.shadowRoot?.querySelector('[part~="menu"]')
+    if (menu) watchScrollEdges(menu, event.currentTarget)
+}
 </script>
 
 <template>
@@ -60,8 +69,11 @@ async function mountMenu() {
         class="sidebar-row-menu"
         :class="menuClass"
         :placement="placement"
+        data-scroll-shadow-menu
         @wa-select="emit('select', $event)"
+        @wa-after-show="onAfterShow"
     >
+        <div data-scroll-shadow-edge="top" aria-hidden="true"></div>
         <wa-button
             :id="triggerId"
             slot="trigger"
@@ -74,6 +86,7 @@ async function mountMenu() {
             <wa-icon name="ellipsis-v" :label="label"></wa-icon>
         </wa-button>
         <slot />
+        <div data-scroll-shadow-edge="bottom" aria-hidden="true"></div>
     </wa-dropdown>
     <span v-else class="sidebar-row-menu" :class="menuClass">
         <wa-button
