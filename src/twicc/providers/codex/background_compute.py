@@ -298,6 +298,7 @@ class CodexComputeCoordinator:
         self._last_summary_at = time.monotonic()
         self._pass_started_at = time.monotonic()
         self._final_summary_pending = False
+        self._startup_reported = False
         # ``stop_compute_worker`` closes the context's queues at the end of
         # a run; the next run needs fresh ones.
         self._queues_closed = False
@@ -792,9 +793,13 @@ class CodexComputeCoordinator:
                 await self._confirm_initial_ready({session_id})
         current = len(self.initial_ready)
         classified = len(self.initial_classified) == self._initial_total
-        completed = classified and current == self._initial_total and not (
-            self.failures or self.deferred or self._prepared or self._forced_rebuild or self._unavailable_diagnoses
+        # Parked sessions wait for a source change: they no longer hold startup open.
+        parked = self._parked_ids()
+        repairs = (
+            self.failures.keys() | self.deferred | self._prepared.keys() | self._forced_rebuild
+            | self._unavailable_diagnoses.keys()
         )
+        completed = classified and not (self.initial_ids - self.initial_ready - parked) and not repairs - parked
         await broadcast_startup_progress(
             "background_compute", current, self._initial_total,
             provider=Provider.CODEX.value, completed=completed, detail=self._detail(),
@@ -803,8 +808,16 @@ class CodexComputeCoordinator:
             # Classification releases global indexing even when repairs continue.
             self.initial_done.set()
         if completed:
+            self._startup_reported = True
             self._final_summary_pending = True
             self._flush_final_summary()
+
+    def _parked_ids(self) -> set[str]:
+        """Failed sessions and blocked roots that only a source change or a restart resumes."""
+        return {
+            session_id for session_id, deadline in self._retry_at.items()
+            if deadline == inf and session_id in self.failures
+        } | {root for root, deadline in self._blocked_roots.items() if deadline == inf}
 
     def _flush_final_summary(self) -> None:
         if not self._final_summary_pending:
@@ -1265,7 +1278,11 @@ class CodexComputeCoordinator:
                 deadlines = list(self._blocked_roots.values())
                 if deadline is not None:
                     deadlines.append(now + max(0, deadline - wall_now))
-                pending = bool(deadlines or outstanding or recovery_ids)
+                # Parked recovery waits for a source change, not for this loop.
+                pending = bool(
+                    any(isfinite(deadline) for deadline in deadlines) or outstanding
+                    or recovery_ids - self._parked_ids()
+                )
                 return None, recovery_ids, pending, min((deadline for deadline in deadlines if isfinite(deadline)), default=None)
             root = self._active_root
             excluded = self.deferred | {sid for sid, deadline in self._retry_at.items() if deadline > now}
@@ -1324,6 +1341,10 @@ class CodexComputeCoordinator:
                 sid for sid in diagnosed if diagnosed_roots.get(sid) == root
             }
             self._active_diagnoses.clear()
+            if self._blocked_roots[root] == inf and root in self.initial_classified and not self._startup_reported:
+                # A root parked behind paused members can be the last one
+                # holding startup open; it was classified before it was parked.
+                await self._classify_initial(root, confirm_ready=False)
 
     async def run(self) -> None:
         """Keep actual work pending until selection and owned writer drain finish."""

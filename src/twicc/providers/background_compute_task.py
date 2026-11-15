@@ -547,15 +547,19 @@ async def start_background_compute_task(
     selection_changed = asyncio.Event()
     notified = set()
 
+    def set_pending(pending):
+        work_state.set_pending(ctx.provider, pending)
+
     def wakeup(session_id):
+        set_pending(True)
         notified.add(session_id)
         selection_changed.set()
 
-    work_state.set_pending(ctx.provider, True)
+    set_pending(True)
     work_state.register_source_wakeup(ctx.provider, wakeup)
     idle_confirmed = False
     try:
-        idle_confirmed = await _run_background_compute(ctx, initial_done, selection_changed, notified)
+        idle_confirmed = await _run_background_compute(ctx, initial_done, selection_changed, notified, set_pending)
     except asyncio.CancelledError:
         # Cancellation can arrive before the coordinator installs its own
         # retirement guard. Prove teardown before releasing actual-work gating.
@@ -570,16 +574,18 @@ async def start_background_compute_task(
         raise
     finally:
         work_state.unregister_source_wakeup(ctx.provider, wakeup)
-        if idle_confirmed:
-            work_state.set_pending(ctx.provider, False)
+        # An unexpected exit retains the gate, even after a parked release.
+        set_pending(not idle_confirmed)
 
 
-async def _run_background_compute(ctx, initial_done, selection_changed, notified) -> bool:
+async def _run_background_compute(ctx, initial_done, selection_changed, notified, set_pending) -> bool:
     """Compute one native tree at a time with bounded admission within each depth.
 
     Startup classification includes deferred sources. Ready progress uses a fixed
     initial top-level cohort and only advances after database confirmation.
     Source age uses wall time; failure deadlines use monotonic time.
+    Roots parked behind paused sources complete startup and release the work
+    gate; the loop stays registered so a source change resumes them.
     """
     from twicc.core.models import Session, SessionType
     from twicc.projects import load_project_directories, load_project_git_roots
@@ -636,8 +642,18 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
     applied: asyncio.Queue = asyncio.Queue()
     completion: asyncio.Future | None = None
     completed_normally = False
+    # Startup completes once. Later source changes must not reopen it.
+    startup_reported = False
 
-    async def progress(candidate_ids=(), *, completed=False):
+    def parked_roots():
+        # An infinite deferral means every required source of the root is
+        # paused: only a source change or a provider restart resumes it.
+        return {root for root, deadline in deferred.items() if deadline == inf}
+
+    async def progress(candidate_ids=(), *, completed=False, parked=frozenset()):
+        nonlocal startup_reported
+        if startup_reported:
+            return
         check_ids = display_ids if completed else display_ids & set(candidate_ids)
         confirmed = set()
         ids = list(check_ids)
@@ -648,9 +664,10 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                 unavailable_reason__isnull=True,
             ).values_list("id", flat=True))))
         ready.update(confirmed)
+        startup_reported = completed and not display_ids - ready - parked
         await broadcast_startup_progress(
             "background_compute", baseline + len(ready), total, provider=ctx.provider.value,
-            completed=completed and baseline + len(ready) == total,
+            completed=startup_reported,
         )
 
     def classify(root_id):
@@ -915,7 +932,12 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                     context = await query(lambda sid=sid: tree_completion_context(sid, ctx.compute_version))
                     ctx.command_queue.put_nowait({"session_id": sid, "tree_completion": context})
                     continue
-                if not outstanding and not member_roots and not await query(outdated().exists):
+                parked = parked_roots()
+
+                def unparked_outdated(parked=parked):
+                    return outdated().exclude(pk__in=list(parked))
+
+                if not outstanding and not member_roots - parked and not await query(unparked_outdated().exists):
                     if completion is not None:
                         # Acknowledgments precede notifications and project work.
                         # Only the terminal writer future confirms their full drain.
@@ -934,17 +956,21 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         completion = None
                     # Source observations can change while notifications drain.
                     # A closed successful run can safely give way to a fresh run.
-                    if await query(outdated().exists) or selection_changed.is_set():
+                    if await query(unparked_outdated().exists) or selection_changed.is_set():
                         selection_due = True
                         continue
                     for root in tuple(unclassified):
                         classify(root)
-                    await progress(completed=True)
+                    await progress(completed=True, parked=parked)
                     if selection_changed.is_set():
                         selection_due = True
                         continue
-                    completed_normally = True
-                    break
+                    if not parked:
+                        completed_normally = True
+                        break
+                    # Only paused sources remain: release the gate, stay
+                    # registered, and wait for a source change.
+                    set_pending(False)
                 # Worker status uses a bounded bridge. Its short check never
                 # repeats a candidate read while the pipeline is full.
                 timeout = max(0, next_deadline - time.monotonic()) if next_deadline is not None else None

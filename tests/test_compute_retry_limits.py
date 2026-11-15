@@ -218,3 +218,85 @@ def test_superseded_results_do_not_exhaust_retries(recovery_runtime, monkeypatch
         finally:
             await stop(task, ctx)
     asyncio.run(scenario())
+
+
+async def wait_until(predicate, *, task, seconds=10):
+    async with asyncio.timeout(seconds):
+        while not predicate():
+            if task.done():
+                await task
+            await asyncio.sleep(.01)
+
+
+@pytest.mark.parametrize("provider", [Provider.CODEX, Provider.CLAUDE_CODE])
+@pytest.mark.parametrize("paused", ["root", "member"])
+def test_paused_failure_settles_pending_work_and_startup_until_source_change(
+    recovery_runtime, monkeypatch, provider, paused,
+):
+    path, progress = recovery_runtime
+    configure(path, provider, monkeypatch)
+    if paused == "member":
+        # The paused member blocks its outdated root, which can never become ready.
+        with closing(sqlite3.connect(path)) as database:
+            database.execute("UPDATE core_session SET parent_session_id='healthy', type='subagent' WHERE id='faulty'")
+            database.commit()
+    attempts = []
+    broken = True
+    original = extraction.initialize_compute_session
+
+    def fail(session_id):
+        if session_id == "faulty" and broken:
+            attempts.append(session_id)
+            raise RuntimeError("persistent diagnostic failure")
+        return original(session_id)
+
+    monkeypatch.setattr(extraction, "initialize_compute_session", fail)
+
+    async def scenario():
+        nonlocal broken
+        task, ctx, state, _ = start(provider)
+        try:
+            await wait_until(lambda: len(attempts) == 5, task=task)
+            # Only a paused source remains: nothing can progress until it changes.
+            await wait_until(lambda: not state.has_pending(), task=task)
+            assert progress[-1][1] is True
+            assert versions(path) == {"faulty": None, "healthy": None if paused == "member" else 123}
+            broken = False
+            reopened = []
+            set_pending = state.set_pending
+            def observe(source, value):
+                reopened.append(value)
+                set_pending(source, value)
+            monkeypatch.setattr(state, "set_pending", observe)
+            state.notify_source_changed(provider, "faulty")
+            await wait_until(
+                lambda: versions(path) == {"faulty": 123, "healthy": 123} and not state.has_pending(), task=task,
+            )
+            # The source change reopened the gate before the recovery ran.
+            assert reopened[0] is True
+        finally:
+            await stop(task, ctx)
+    asyncio.run(scenario())
+
+
+def test_missing_rollout_settles_pending_work_and_startup(
+    codex_recovery_runtime, monkeypatch, provider_home,
+):
+    path, progress = codex_recovery_runtime
+    configure(path, Provider.CODEX, monkeypatch)
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET file_path=? WHERE id='faulty'", (str(path.parent / "gone.jsonl"),))
+        database.execute("UPDATE core_session SET compute_version=123 WHERE id='healthy'")
+        database.commit()
+    monkeypatch.setattr(codex.search, "is_initialized", lambda: False)
+
+    async def scenario():
+        task, ctx, state, owner = start(Provider.CODEX, prepare=None)
+        try:
+            await wait_until(lambda: "faulty" in owner.failures, task=task)
+            await wait_until(lambda: not state.has_pending(), task=task)
+            assert progress[-1][1] is True
+            assert owner.failures["faulty"].unavailable_reason == "rollout_missing"
+        finally:
+            await stop(task, ctx)
+    asyncio.run(scenario())

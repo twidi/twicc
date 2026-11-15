@@ -629,11 +629,11 @@ def test_missing_rollout_restored_without_rebuild_or_restart(codex_recovery_runt
         db_writer.start_db_writer()
         task = asyncio.create_task(owner.run())
         try:
+            # A parked missing rollout no longer holds startup open.
             async with asyncio.timeout(5):
-                while 'faulty' not in owner.failures:
+                while 'faulty' not in owner.failures or not progress[-1][1] or work_state.has_pending():
                     await asyncio.sleep(.01)
             assert unavailable() == 'rollout_missing'
-            assert not any(completed for _, completed in progress)
             rollout.write_bytes(orjson.dumps({'type': 'session_meta', 'payload': {
                 'id': 'faulty', 'cwd': '/test', 'history_mode': 'paginated',
             }}) + b'\n')
