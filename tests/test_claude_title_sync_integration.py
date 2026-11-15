@@ -747,7 +747,11 @@ def test_actual_orchestrator_shutdown_drains_final_history_and_reconciles_pendin
         watching = asyncio.Event()
         async def watcher_lifetime():
             watching.set()
-            await asyncio.Event().wait()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                # Like the real watcher task: cancellation drains admitted changes.
+                await watcher._drain_changes()
         owner._watcher_task = asyncio.create_task(watcher_lifetime())
         await watching.wait()
         stopping = asyncio.create_task(owner.shutdown())

@@ -92,6 +92,9 @@ def test_final_read_requires_accepted_ending_after_shell_rejection(
             row, _ = await runtime._claim_ready(current[0], set(), ())
             assert row is not None and row.kind == 'ending'
             await worker.worker(row)
+            # The rejection queues a turn snapshot write; settle it before
+            # reading turns on another shared-cache connection.
+            await drain(agent)
             await asyncio.to_thread(pending.refresh_from_db)
             assert pending.status == 'rejected'
             assert agent.state == AgentState.ASSISTANT_TURN

@@ -58,4 +58,4 @@ def test_message_payload_and_optional_turn_references():
             'text': 'body', 'source_refs': refs, 'source_line': 4,
             'storage_incarnation': 'scope', 'history_epoch': 7}
     assert validate_data('turn.started', {'message_refs': refs}) == {'message_refs': refs, 'input_origins': None}
-    assert validate_data('turn.ended', {'message_refs': refs}) == {'background_work': None, 'message_refs': refs, 'input_origins': None}
+    assert validate_data('turn.ended', {'message_refs': refs}) == {'background_work': None, 'message_refs': refs, 'input_origins': None, 'final_message': None}
