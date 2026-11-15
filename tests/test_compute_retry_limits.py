@@ -300,3 +300,115 @@ def test_missing_rollout_settles_pending_work_and_startup(
         finally:
             await stop(task, ctx)
     asyncio.run(scenario())
+
+
+def test_unrelated_source_change_does_not_reload_parked_trees(
+    codex_recovery_runtime, monkeypatch, provider_home,
+):
+    from twicc.providers import compute_tree
+    path, _ = codex_recovery_runtime
+    configure(path, Provider.CODEX, monkeypatch)
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET file_path=? WHERE id='faulty'", (str(path.parent / "gone.jsonl"),))
+        database.execute("UPDATE core_session SET compute_version=123 WHERE id='healthy'")
+        database.commit()
+    monkeypatch.setattr(codex.search, "is_initialized", lambda: False)
+    loaded = []
+    load = compute_tree.load_native_tree
+
+    def observe(root, *args, **kwargs):
+        loaded.append(root)
+        return load(root, *args, **kwargs)
+
+    monkeypatch.setattr(compute_tree, "load_native_tree", observe)
+
+    async def scenario():
+        task, ctx, state, owner = start(Provider.CODEX, prepare=None)
+        try:
+            await wait_until(lambda: "faulty" in owner.failures and not state.has_pending(), task=task)
+            loaded.clear()
+            for _ in range(3):
+                state.notify_source_changed(Provider.CODEX, "healthy")
+                await asyncio.sleep(.05)
+                await wait_until(lambda: not state.has_pending(), task=task)
+            # Only the changed tree can be unblocked; the parked one stays parked.
+            assert "faulty" not in loaded
+            assert "faulty" in owner._blocked_roots
+        finally:
+            await stop(task, ctx)
+    asyncio.run(scenario())
+
+
+def test_unrelated_source_change_keeps_other_deferrals(codex_recovery_runtime, monkeypatch):
+    path, _ = codex_recovery_runtime
+    configure(path, Provider.CODEX, monkeypatch)
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET compute_version=123 WHERE id='healthy'")
+        database.commit()
+    monkeypatch.setattr(codex, "_EXTERNAL_WRITER_RETRY_SECONDS", 60)
+    attempts = []
+
+    async def prepare(candidate):
+        attempts.append(candidate.session_id)
+        return codex.DeferredCandidate(candidate.session_id, "busy")
+
+    async def scenario():
+        task, ctx, state, owner = start(Provider.CODEX, prepare=prepare)
+        try:
+            await wait_until(lambda: "faulty" in owner.deferred, task=task)
+            await asyncio.sleep(.1)
+            before = len(attempts)
+            for _ in range(3):
+                state.notify_source_changed(Provider.CODEX, "healthy")
+                await asyncio.sleep(.05)
+            assert len(attempts) == before
+            # Its own source change still retries it at once.
+            state.notify_source_changed(Provider.CODEX, "faulty")
+            await wait_until(lambda: len(attempts) == before + 1, task=task)
+        finally:
+            await stop(task, ctx)
+    asyncio.run(scenario())
+
+
+def test_claude_current_source_change_skips_selection_while_parked(recovery_runtime, monkeypatch):
+    from twicc.providers import compute_tree
+    path, progress = recovery_runtime
+    configure(path, Provider.CLAUDE_CODE, monkeypatch)
+    attempts = []
+    original = extraction.initialize_compute_session
+
+    def fail(session_id):
+        if session_id == "faulty":
+            attempts.append(session_id)
+            raise RuntimeError("persistent diagnostic failure")
+        return original(session_id)
+
+    monkeypatch.setattr(extraction, "initialize_compute_session", fail)
+    selections = []
+    select = compute_tree.select_outdated_root
+
+    def observe(*args, **kwargs):
+        selections.append(args)
+        return select(*args, **kwargs)
+
+    monkeypatch.setattr(compute_tree, "select_outdated_root", observe)
+
+    async def scenario():
+        task, ctx, state, _ = start(Provider.CLAUDE_CODE)
+        try:
+            await wait_until(lambda: len(attempts) == 5 and versions(path)["healthy"] == 123, task=task)
+            await wait_until(lambda: not state.has_pending(), task=task)
+            selections.clear()
+            for _ in range(3):
+                state.notify_source_changed(Provider.CLAUDE_CODE, "healthy")
+                await asyncio.sleep(.05)
+                await wait_until(lambda: not state.has_pending(), task=task)
+            # A current tree brings no work: the parked state stays as it was.
+            assert selections == []
+            assert progress[-1][1] is True
+            # The parked source itself still resumes on its own change.
+            state.notify_source_changed(Provider.CLAUDE_CODE, "faulty")
+            await wait_until(lambda: len(attempts) == 6, task=task)
+        finally:
+            await stop(task, ctx)
+    asyncio.run(scenario())

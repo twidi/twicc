@@ -1346,6 +1346,29 @@ class CodexComputeCoordinator:
                 # holding startup open; it was classified before it was parked.
                 await self._classify_initial(root, confirm_ready=False)
 
+    async def _unblock_source_root(self, session_id: str) -> None:
+        """Unblock the one native tree a committed source change can unblock.
+
+        Other blocked trees keep their deadlines: reloading them at every live
+        write would cost one tree read per parked root. Unknown membership
+        (deleted row, cycle) may belong to any tree, so it unblocks them all.
+        """
+        from twicc.providers.compute_tree import resolve_native_roots
+
+        if not self._blocked_roots:
+            return
+        try:
+            root = (await sync_to_async(lambda: resolve_native_roots({session_id}))()).get(session_id)
+        except Exception:
+            # A failed read must not retire the run; the old full unblock is safe.
+            logger.warning("Codex compute: cannot resolve the root of %s; unblocking all trees", session_id,
+                           exc_info=True)
+            root = None
+        if root is None:
+            self._blocked_roots.clear()
+        else:
+            self._blocked_roots.pop(root, None)
+
     async def run(self) -> None:
         """Keep actual work pending until selection and owned writer drain finish."""
         def wakeup(session_id):
@@ -1538,7 +1561,7 @@ class CodexComputeCoordinator:
                 elif event_type in {"wake", "source"}:
                     self.deferred.clear()
                     if event_type == 'source':
-                        self._blocked_roots.clear()
+                        await self._unblock_source_root(payload)
                         self._retry_at.pop(payload, None)
                         self._retry_delays.pop(payload, None)
                         self._failure_counts.pop(payload, None)

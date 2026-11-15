@@ -724,10 +724,32 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
         if cancelled:
             raise asyncio.CancelledError
 
+    async def wait_for_signal(outstanding):
+        # Worker status uses a bounded bridge. Its short check never
+        # repeats a candidate read while the pipeline is full.
+        timeout = max(0, next_deadline - time.monotonic()) if next_deadline is not None else None
+        if outstanding:
+            timeout = min(timeout, COMPUTE_STATUS_POLL_SECONDS) if timeout is not None else COMPUTE_STATUS_POLL_SECONDS
+        changed = asyncio.create_task(selection_changed.wait())
+        stopped = asyncio.create_task(ctx.stop_event.wait())
+        outcome = asyncio.create_task(applied.get())
+        try:
+            done, _ = await asyncio.wait(
+                (changed, stopped, outcome), timeout=timeout, return_when=asyncio.FIRST_COMPLETED,
+            )
+            if outcome in done:
+                applied.put_nowait(outcome.result())
+        finally:
+            for waiter in (changed, stopped, outcome):
+                waiter.cancel()
+            await asyncio.gather(changed, stopped, outcome, return_exceptions=True)
+
     startup_pending = True
     process_delay = 1.0
     selection_due = True
     next_deadline = None
+    # Set once only parked roots remain and the gate is released.
+    parked_idle = False
     try:
         while not ctx.stop_event.is_set():
             try:
@@ -804,6 +826,8 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         batch = changed_ids[offset:offset + 200]
                         resolved = await query(lambda batch=batch: resolve_native_roots(batch))
                         roots.update(resolved.values())
+                    # A deferred or dropped tree that changed needs a new selection.
+                    revived = bool(roots & (deferred.keys() | dropped_member_roots))
                     for root in roots:
                         deferred.pop(root, None)
                         if root in dropped_member_roots:
@@ -823,6 +847,14 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                     for root in roots - current.keys():
                         classify(root)
                     await progress(roots)
+                    if (parked_idle and not revived and not current
+                            and not pending and not awaiting_status and completion is None):
+                        # Only current trees changed: the parked state stands
+                        # without a new selection. The wakeup reopened the gate.
+                        set_pending(False)
+                        await wait_for_signal(set())
+                        continue
+                parked_idle = False
 
                 now = time.monotonic()
                 deferred = {root: deadline for root, deadline in deferred.items() if deadline > now}
@@ -971,24 +1003,8 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                     # Only paused sources remain: release the gate, stay
                     # registered, and wait for a source change.
                     set_pending(False)
-                # Worker status uses a bounded bridge. Its short check never
-                # repeats a candidate read while the pipeline is full.
-                timeout = max(0, next_deadline - time.monotonic()) if next_deadline is not None else None
-                if outstanding:
-                    timeout = min(timeout, COMPUTE_STATUS_POLL_SECONDS) if timeout is not None else COMPUTE_STATUS_POLL_SECONDS
-                changed = asyncio.create_task(selection_changed.wait())
-                stopped = asyncio.create_task(ctx.stop_event.wait())
-                outcome = asyncio.create_task(applied.get())
-                try:
-                    done, _ = await asyncio.wait(
-                        (changed, stopped, outcome), timeout=timeout, return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if outcome in done:
-                        applied.put_nowait(outcome.result())
-                finally:
-                    for waiter in (changed, stopped, outcome):
-                        waiter.cancel()
-                    await asyncio.gather(changed, stopped, outcome, return_exceptions=True)
+                    parked_idle = True
+                await wait_for_signal(outstanding)
             except Exception:
                 logger.exception("Background compute run failed; retiring before recovery")
                 selection_due = True
