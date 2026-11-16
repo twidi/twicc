@@ -1438,10 +1438,12 @@ class ProviderHelpersRegistry:
         # each provider helpers module imports from this one.
         from twicc.providers.claude_code.helpers import ClaudeCodeHelpers
         from twicc.providers.codex.helpers import CodexHelpers
+        from twicc.providers.gemini.helpers import GeminiHelpers
 
         self.PROVIDER_HELPERS = {
             Provider.CLAUDE_CODE: ClaudeCodeHelpers,
             Provider.CODEX: CodexHelpers,
+            Provider.GEMINI: GeminiHelpers,
         }
         self._helpers: dict[Provider, BaseProviderHelpers] = {
             key: cls() for key, cls in self.PROVIDER_HELPERS.items()

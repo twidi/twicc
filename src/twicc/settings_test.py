@@ -71,10 +71,12 @@ from twicc import provider_homes  # noqa: E402
 os.environ["CLAUDE_CONFIG_DIR"] = str(_TEST_ROOT / "claude")
 os.environ["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = str(_TEST_ROOT / "claude-credentials")
 os.environ["CODEX_HOME"] = str(_TEST_ROOT / "codex")
+os.environ["GEMINI_CLI_HOME"] = str(_TEST_ROOT / "gemini")
 provider_homes.reset_cache()
 CLAUDE_CONFIG_DIR = provider_homes.claude_config_dir().path
 CLAUDE_SECURE_STORAGE_DIR = provider_homes.claude_secure_storage_dir().path
 CODEX_HOME = provider_homes.codex_home().path
+GEMINI_CLI_HOME = provider_homes.gemini_cli_home().path
 PROVIDER_HOMES_DESCRIPTION = provider_homes.describe_provider_homes()
 
 # Use in-memory SQLite for tests

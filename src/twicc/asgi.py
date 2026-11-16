@@ -58,6 +58,7 @@ from twicc.paths import is_first_run
 from twicc.request_origin import UI_ORIGIN, origin_scope
 from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
 from twicc.providers.codex.ws import CodexWSHandler
+from twicc.providers.gemini.ws import GeminiWSHandler
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.state import (
     ProviderDisabledError,
@@ -519,6 +520,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
     PROVIDER_HANDLERS: dict[Provider, type] = {
         Provider.CLAUDE_CODE: ClaudeCodeWSHandler,
         Provider.CODEX: CodexWSHandler,
+        Provider.GEMINI: GeminiWSHandler,
     }
 
     def __init__(self, *args, **kwargs):

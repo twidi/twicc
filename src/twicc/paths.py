@@ -55,6 +55,7 @@ PROVIDER_HOME_KEYS: tuple[str, ...] = (
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_SECURESTORAGE_CONFIG_DIR",
     "CODEX_HOME",
+    "GEMINI_CLI_HOME",
 )
 
 # The OpenRouter API key used by text-to-speech.

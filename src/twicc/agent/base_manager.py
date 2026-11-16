@@ -1092,6 +1092,8 @@ class BaseAgentManager:
 
                 if agent.provider.value == "codex":
                     from twicc.providers.codex.sessions_watcher import get_watcher
+                elif agent.provider.value == "gemini":
+                    from twicc.providers.gemini.sessions_watcher import get_watcher
                 else:
                     from twicc.providers.claude_code.sessions_watcher import get_watcher
                 record_verified_messages(

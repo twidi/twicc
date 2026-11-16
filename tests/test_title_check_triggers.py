@@ -52,6 +52,16 @@ def session_file(provider_home, provider, session_id="title-trigger"):
         records = [{"type": "user", "uuid": "message-one", "cwd": "/tmp/title-project",
                     "timestamp": "2026-10-04T12:00:00Z",
                     "message": {"role": "user", "content": "Implement automatic session titles"}}]
+    elif provider == Provider.GEMINI:
+        slug = provider_home.gemini / ".gemini" / "tmp" / "title-project"
+        slug.mkdir(parents=True, exist_ok=True)
+        (slug / ".project_root").write_text("/tmp/title-project")
+        path = slug / "chats" / f"session-2026-10-04T12-00-{session_id[:8]}.jsonl"
+        records = [
+            {"sessionId": session_id, "projectHash": "hash", "startTime": "2026-10-04T12:00:00Z", "kind": "main"},
+            {"id": "message-one", "timestamp": "2026-10-04T12:00:00Z", "type": "user",
+             "content": [{"text": "Implement automatic session titles"}]},
+        ]
     else:
         path = provider_home.codex / "sessions" / "2026" / "10" / "04" / f"rollout-{session_id}.jsonl"
         records = [
@@ -71,7 +81,8 @@ def session_file(provider_home, provider, session_id="title-trigger"):
 
 def watcher_for(provider):
     module = importlib.import_module(f"twicc.providers.{provider.value}.sessions_watcher")
-    name = "ClaudeCodeSessionsWatcher" if provider == Provider.CLAUDE_CODE else "CodexSessionsWatcher"
+    name = {Provider.CLAUDE_CODE: "ClaudeCodeSessionsWatcher", Provider.CODEX: "CodexSessionsWatcher",
+            Provider.GEMINI: "GeminiSessionsWatcher"}[provider]
     return getattr(module, name)()
 
 
@@ -144,7 +155,8 @@ def test_live_request_requires_indexed_top_level_ready_session(tmp_path, monkeyp
 
 def manager_agent(provider, session, *, ephemeral=False):
     module = importlib.import_module(f"twicc.providers.{provider.value}.agent.manager")
-    name = "ClaudeCodeAgentManager" if provider == Provider.CLAUDE_CODE else "CodexAgentManager"
+    name = {Provider.CLAUDE_CODE: "ClaudeCodeAgentManager", Provider.CODEX: "CodexAgentManager",
+            Provider.GEMINI: "GeminiAgentManager"}[provider]
     manager = getattr(module, name)()
     agent_class = type("TriggerAgent", (BaseAgent,), {"provider": provider})
     agent = agent_class(session.id, session.project_id, "/tmp/title-project", AgentSettings(), ephemeral=ephemeral)
@@ -323,7 +335,8 @@ def test_bulk_archive_requests_only_final_selected_ids(monkeypatch, requests, dr
     assert not Session.objects.get(id="became-active").archived
 
 
-@pytest.mark.parametrize("provider", list(Provider))
+# Gemini has no bulk initial sync: existing files replay through the live watcher.
+@pytest.mark.parametrize("provider", [provider for provider in Provider if provider != Provider.GEMINI])
 def test_startup_initial_sync_does_not_request_title(provider_home, requests, provider):
     session_file(provider_home, provider, "startup-title")
     initial_sync = importlib.import_module(f"twicc.providers.{provider.value}.initial_sync")

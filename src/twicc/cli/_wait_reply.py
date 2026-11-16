@@ -348,7 +348,7 @@ def _session_jsonl_path(session):
     from pathlib import Path
 
     from twicc.core.enums import Provider
-    from twicc.provider_homes import claude_projects_dir, codex_sessions_dir
+    from twicc.provider_homes import claude_projects_dir, codex_sessions_dir, gemini_sessions_dir
 
     if not session.file_path:
         return None
@@ -358,6 +358,7 @@ def _session_jsonl_path(session):
     roots = {
         Provider.CLAUDE_CODE.value: claude_projects_dir,
         Provider.CODEX.value: codex_sessions_dir,
+        Provider.GEMINI.value: gemini_sessions_dir,
     }
     root = roots.get(session.provider)
     return None if root is None else root() / path

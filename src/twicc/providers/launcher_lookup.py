@@ -41,6 +41,8 @@ class _Page(NamedTuple):
 def _compute(provider):
     if provider == 'codex':
         from twicc.providers.codex.compute import get_compute
+    elif provider == 'gemini':
+        from twicc.providers.gemini.compute import get_compute
     else:
         from twicc.providers.claude_code.compute import get_compute
     return get_compute()

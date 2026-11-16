@@ -77,7 +77,7 @@ def test_read_drops_invalid_entries_and_unknown_providers(data_dir):
     (data_dir / "providers-status.json").write_bytes(orjson.dumps({
         "claude_code": {"status": "operational", "incident": {"started_at": "x"}, "acknowledged": None},
         "codex": {"status": "operational", "incident": None, "acknowledged": None},
-        "gemini": {"status": "operational", "incident": None, "acknowledged": None},
+        "mistral": {"status": "operational", "incident": None, "acknowledged": None},
     }))
     assert ps.read_providers_status() == {
         "codex": {"status": "operational", "incident": None, "acknowledged": None},
@@ -244,7 +244,7 @@ def test_acknowledge_refuses_a_stale_incident(data_dir):
 
 
 @pytest.mark.parametrize("provider, ack", [
-    ("gemini", episode(0, "major_outage", 0)),
+    ("mistral", episode(0, "major_outage", 0)),
     (None, episode(0, "major_outage", 0)),
     ("claude_code", None),
     ("claude_code", {"status": "major_outage", "changed_at": iso(0)}),

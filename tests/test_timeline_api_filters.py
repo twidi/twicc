@@ -36,7 +36,7 @@ def next_page(params, body):
     {"view": "x"},
     {"families": "turns,nope"},
     {"authors": "robot"},
-    {"provider": "codex,gemini"},
+    {"provider": "codex,mistral"},
 ])
 def test_unknown_filter_values_answer_400(params):
     response = call(**params)
@@ -48,7 +48,7 @@ def test_unknown_filter_values_answer_400(params):
 def test_every_value_of_a_group_is_the_same_as_none():
     assert parse_request({"families": ",".join(FAMILIES)}).filter.families == ()
     assert parse_request({"authors": ",".join(AUTHORS)}).filter.authors == ()
-    assert parse_request({"provider": "claude_code,codex"}).filter.providers == ()
+    assert parse_request({"provider": "claude_code,codex,gemini"}).filter.providers == ()
 
 
 def test_filter_lists_drop_empty_items_collapse_duplicates_and_keep_the_order():

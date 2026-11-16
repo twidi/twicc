@@ -176,10 +176,12 @@ class OrchestratorRegistry:
         # eventually import from this package.
         from twicc.providers.claude_code.orchestrator import ClaudeCodeOrchestrator
         from twicc.providers.codex.orchestrator import CodexOrchestrator
+        from twicc.providers.gemini.orchestrator import GeminiOrchestrator
 
         self.PROVIDER_ORCHESTRATORS = {
             Provider.CLAUDE_CODE: ClaudeCodeOrchestrator,
             Provider.CODEX: CodexOrchestrator,
+            Provider.GEMINI: GeminiOrchestrator,
         }
         from twicc.providers.compute_work import ComputeWorkState
 
