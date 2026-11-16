@@ -55,6 +55,7 @@ test('the real provider helpers are instances whose class carries the product na
     for (const [dir, className, instance, product] of [
         ['claude_code', 'ClaudeCodeHelpers', 'claudeCodeHelpers', 'Claude Code'],
         ['codex', 'CodexHelpers', 'codexHelpers', 'Codex'],
+        ['gemini', 'GeminiHelpers', 'geminiHelpers', 'Gemini CLI'],
     ]) {
         const source = read(`../../providers/${dir}/helpers.js`)
         const body = source.slice(source.indexOf(`export class ${className} `))

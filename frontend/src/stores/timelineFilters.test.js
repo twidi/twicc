@@ -56,9 +56,10 @@ test('toggle keeps the constant order of the group and unchecks a checked value'
     store.toggle('p', 'authors', 'session_agent')
     store.toggle('p', 'authors', 'unknown')
     assert.deepEqual(store.filtersFor('p').authors, ['unknown', 'session_agent'])
+    store.toggle('p', 'providers', 'gemini')
     store.toggle('p', 'providers', 'codex')
     store.toggle('p', 'providers', 'claude_code')
-    assert.deepEqual(store.filtersFor('p').providers, ['claude_code', 'codex'])
+    assert.deepEqual(store.filtersFor('p').providers, ['claude_code', 'codex', 'gemini'])
 })
 
 test('clearGroup and resetPanel clear the groups only', () => {

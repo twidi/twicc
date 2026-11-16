@@ -455,9 +455,10 @@ def db_setup(db):
 
 
 class ProviderHomeDirs(NamedTuple):
-    """The two provider homes a test owns (see :func:`provider_home`)."""
+    """The provider homes a test owns (see :func:`provider_home`)."""
     claude: Path
     codex: Path
+    gemini: Path
 
 
 @pytest.fixture
@@ -471,11 +472,14 @@ def provider_home(tmp_path, monkeypatch) -> ProviderHomeDirs:
     ``claude_plans_dir()``… — reads the new values. The test creates the
     subfolder it needs (``projects/``, ``sessions/``, ``plans/``).
     """
-    dirs = ProviderHomeDirs(claude=tmp_path / "claude-home", codex=tmp_path / "codex-home")
+    dirs = ProviderHomeDirs(claude=tmp_path / "claude-home", codex=tmp_path / "codex-home",
+                            gemini=tmp_path / "gemini-home")
     dirs.claude.mkdir()
     dirs.codex.mkdir()
+    dirs.gemini.mkdir()
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(dirs.claude))
     monkeypatch.setenv("CODEX_HOME", str(dirs.codex))
+    monkeypatch.setenv("GEMINI_CLI_HOME", str(dirs.gemini))
     provider_homes.reset_cache()
     yield dirs
     # Runs before monkeypatch restores the environment: the next resolution

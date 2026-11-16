@@ -46,6 +46,7 @@ class Provider(StrEnum):
     """Backend provider that produced a session."""
     CLAUDE_CODE = "claude_code"
     CODEX = "codex"
+    GEMINI = "gemini"
 
 
 class ShareKind(StrEnum):

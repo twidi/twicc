@@ -23,6 +23,7 @@ from typing import ClassVar
 from twicc.core.enums import Provider
 from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
 from twicc.providers.codex.agent.manager import CodexAgentManager
+from twicc.providers.gemini.agent.manager import GeminiAgentManager
 
 from .base_manager import BaseAgentManager, BroadcastCallback
 from .states import AgentInfo, AgentState
@@ -43,6 +44,7 @@ class AgentManagerRegistry:
     PROVIDER_MANAGERS: ClassVar[dict[Provider, type[BaseAgentManager]]] = {
         Provider.CLAUDE_CODE: ClaudeCodeAgentManager,
         Provider.CODEX: CodexAgentManager,
+        Provider.GEMINI: GeminiAgentManager,
     }
 
     def __init__(self) -> None:

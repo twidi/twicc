@@ -7,20 +7,27 @@ import { CodexHelpers, codexHelpers } from './codex/helpers'
 import { CodexToolHelpers, codexToolHelpers } from './codex/toolHelpers'
 import { codexWsHandler, respondToPendingRequest as respondToCodexPendingRequest } from './codex/ws'
 import { useCodexStore } from './codex/store'
+import { GeminiHelpers, geminiHelpers } from './gemini/helpers'
+import { GeminiToolHelpers, geminiToolHelpers } from './gemini/toolHelpers'
+import { geminiWsHandler, respondToPendingRequest as respondToGeminiPendingRequest } from './gemini/ws'
+import { useGeminiStore } from './gemini/store'
 
 const PROVIDER_HELPERS = {
     [ClaudeCodeHelpers.provider]: claudeCodeHelpers,
     [CodexHelpers.provider]: codexHelpers,
+    [GeminiHelpers.provider]: geminiHelpers,
 }
 
 const PROVIDER_TOOL_HELPERS = {
     [ClaudeCodeToolHelpers.provider]: claudeCodeToolHelpers,
     [CodexToolHelpers.provider]: codexToolHelpers,
+    [GeminiToolHelpers.provider]: geminiToolHelpers,
 }
 
 const PROVIDER_WS_HANDLERS = {
     [ClaudeCodeHelpers.provider]: claudeCodeWsHandler,
     [CodexHelpers.provider]: codexWsHandler,
+    [GeminiHelpers.provider]: geminiWsHandler,
 }
 
 // Pinia store factory per provider — used by generic dispatchers (bootstrap
@@ -29,6 +36,7 @@ const PROVIDER_WS_HANDLERS = {
 const PROVIDER_STORE_FACTORIES = {
     [ClaudeCodeHelpers.provider]: useClaudeCodeStore,
     [CodexHelpers.provider]: useCodexStore,
+    [GeminiHelpers.provider]: useGeminiStore,
 }
 
 export function getProviderHelpers(provider) {
@@ -116,6 +124,7 @@ export function getProviderOptions() {
 const PENDING_REQUEST_SENDERS = {
     [ClaudeCodeHelpers.provider]: respondToClaudeCodePendingRequest,
     [CodexHelpers.provider]: respondToCodexPendingRequest,
+    [GeminiHelpers.provider]: respondToGeminiPendingRequest,
 }
 
 /**
@@ -130,6 +139,7 @@ const PENDING_REQUEST_SENDERS = {
  *                  message?, action?: 'submit' | 'partial' | 'cancel', answers? }
  * - codex:       { tool_name: 'commandExecution' | 'fileChange' | 'permissions',
  *                  decision?: <string|dict>, permissions?, scope?, strictAutoReview? }
+ * - gemini:      { option_id: <one of tool_input.options[].optionId> }
  *
  * @returns {boolean} True if the message was sent.
  */

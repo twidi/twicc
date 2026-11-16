@@ -51,6 +51,7 @@ class TestDefaults:
         assert provider_homes.describe_provider_homes() == [
             f"Claude Code home: {homes / '.claude'} (default)",
             f"Codex home: {homes / '.codex'} (default)",
+            f"Gemini CLI home: {homes / '.gemini'} (default)",
         ]
 
     def test_cached_until_reset(self, homes, monkeypatch):
@@ -77,6 +78,7 @@ class TestConfigured:
         assert provider_homes.describe_provider_homes() == [
             "Claude Code home: /x (CLAUDE_CONFIG_DIR from .env)",
             "Codex home: /y (CODEX_HOME from .env)",
+            f"Gemini CLI home: {homes / '.gemini'} (default)",
         ]
 
     def test_raw_value_is_passed_unchanged(self, homes, monkeypatch, tmp_path):
@@ -147,6 +149,7 @@ class TestSecureStorage:
             "Claude Code home: /x (CLAUDE_CONFIG_DIR from .env)",
             f"Claude Code credentials: {homes / '.claude'} (CLAUDE_SECURESTORAGE_CONFIG_DIR empty)",
             f"Codex home: {homes / '.codex'} (default)",
+            f"Gemini CLI home: {homes / '.gemini'} (default)",
         ]
 
     def test_secure_storage_only(self, homes, monkeypatch):

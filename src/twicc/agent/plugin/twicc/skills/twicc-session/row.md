@@ -49,7 +49,7 @@ The default (reduced) projection is the row `sessions` returns (example in `list
 ### Key fields
 
 - `last_line` — item count; the upper bound of `content` ranges.
-- `provider` — `claude_code` or `codex`; sets the item schema of `content`.
+- `provider` — `claude_code`, `codex` or `gemini`; sets the item schema of `content`.
 - `parent_session_id` — set on a subagent, `null` otherwise.
 - `slug` (`--full` only) — provider short id (e.g. a Codex subagent nickname), or `null`.
 - `context_max` / `context_usage` — context window and current usage, in tokens.

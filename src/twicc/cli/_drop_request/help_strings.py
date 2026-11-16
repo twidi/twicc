@@ -29,6 +29,7 @@ from twicc.core.services.attachments.inline import (
 _PROVIDER_LABELS = {
     "claude_code": "Claude Code",
     "codex": "Codex",
+    "gemini": "Gemini",
 }
 
 
@@ -139,7 +140,7 @@ def default_suffix(ctx: HelpContext, field: str, formatter=repr) -> str:
 
 def provider_help(ctx: HelpContext) -> str:
     base = (
-        "Provider to use: 'claude_code' or 'codex'. Falls back to the default "
+        "Provider to use: 'claude_code', 'codex' or 'gemini'. Falls back to the default "
         "provider from settings when omitted."
     )
     if ctx.providers:

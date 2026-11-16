@@ -17,7 +17,7 @@ $TWICC sessions [OPTIONS]
 
 - `--project <PROJECT>` — path or id (**drop the leading dash** on ids). A normal project also returns its git worktrees' sessions (a worktree's sessions belong to its main repository); a worktree project returns only its own. A non-existent project returns empty, no error.
 - `--workspace ID` — sessions of projects in that workspace, each member project's git worktrees included. Mutually exclusive with `--project`.
-- `--provider claude_code|codex` — an ordinary column filter, unrelated to state.
+- `--provider claude_code|codex|gemini` — an ordinary column filter, unrelated to state.
 - `--state <VALUE>` — keep one `process.state` bucket. **Repeatable, OR-combined** (a session holds a single state): `--state assistant_turn --state awaiting_user_input` = "busy or blocked"; naming all five = the unfiltered listing. `dead` is accepted: "no TwiCC-managed process".
 - `--active` — every state but `dead`, `user_turn` included (the agent is loaded and idle, not gone). Mutually exclusive with `--state`.
 - The state filter runs **before** the page is cut: `total` and `has_more` count what matches.

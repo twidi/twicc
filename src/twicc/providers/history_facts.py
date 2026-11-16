@@ -390,6 +390,8 @@ class HistoryFactContext:
 
         if self.provider == Provider.CODEX:
             from twicc.providers.codex.history_facts import tool_calls
+        elif self.provider == Provider.GEMINI:
+            from twicc.providers.gemini.history_facts import tool_calls
         else:
             from twicc.providers.claude_code.history_facts import tool_calls
         return tool_calls(parsed)

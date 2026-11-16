@@ -30,6 +30,11 @@ from twicc.providers.codex.constants import (
     MODEL_VERSIONS as _CX_MODEL_VERSIONS,
     SYNCED_SETTINGS_DEFAULTS as _CX_BUILTIN_DEFAULTS,
 )
+from twicc.providers.gemini.constants import (
+    AGENT_SETTINGS_FIELDS_MAPPING as _GM_FIELD_MAP,
+    MODEL_VERSIONS as _GM_MODEL_VERSIONS,
+    SYNCED_SETTINGS_DEFAULTS as _GM_BUILTIN_DEFAULTS,
+)
 
 
 # Provider → (synced-key → cli-field mapping, built-in defaults). Keyed by
@@ -37,6 +42,7 @@ from twicc.providers.codex.constants import (
 _PER_PROVIDER: dict[str, tuple[dict[str, str], dict, list]] = {
     Provider.CLAUDE_CODE.value: (_CC_FIELD_MAP, _CC_BUILTIN_DEFAULTS, _CC_MODEL_VERSIONS),
     Provider.CODEX.value: (_CX_FIELD_MAP, _CX_BUILTIN_DEFAULTS, _CX_MODEL_VERSIONS),
+    Provider.GEMINI.value: (_GM_FIELD_MAP, _GM_BUILTIN_DEFAULTS, _GM_MODEL_VERSIONS),
 }
 
 

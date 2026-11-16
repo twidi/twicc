@@ -1,4 +1,5 @@
 import { i18n } from '../i18n/index.js'
+import { buildAssistantRecord } from './gemini/records.js'
 
 /** Local prompt summaries never contain attachment bytes or preview URLs. */
 export function ephemeralPromptText(text, attachments = []) {
@@ -19,5 +20,6 @@ export function buildEphemeralResultContent(provider, text) {
             },
         }
     }
+    if (provider === 'gemini') return buildAssistantRecord(text)
     return { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } }
 }

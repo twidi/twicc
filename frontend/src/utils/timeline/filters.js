@@ -42,7 +42,7 @@ export const AUTHORS = [
 ]
 
 /** The provider keys (the backend `Provider` values). Their labels come from the provider helpers. */
-export const PROVIDERS = ['claude_code', 'codex']
+export const PROVIDERS = ['claude_code', 'codex', 'gemini']
 
 const DEFAULT_VIEW = 'all'
 const SHOWN_VALUES = 2

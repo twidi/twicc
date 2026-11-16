@@ -40,7 +40,7 @@ The four filiation filters are mutually exclusive. They select spawned sessions,
 | `--spawn-tree ID` | Complete containing spawn tree, including its root and the named session. |
 | `--descendants ID` | Descendants at every depth, excluding the named session. |
 | `--siblings ID` | Other sessions with the same spawning parent. |
-| `--provider PROVIDER` | Current provider: `claude_code` or `codex`. |
+| `--provider PROVIDER` | Current provider: `claude_code`, `codex` or `gemini`. |
 | `--annotation EXPR` | Current annotations. Repeat for AND. Dotted keys address nested values. |
 | `--state STATE` | Current process state. Repeat for OR. |
 | `--active` | Every process state except `dead`, including idle `user_turn`. Exclusive with `--state`. |

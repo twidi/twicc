@@ -56,7 +56,7 @@ class ValueParseError(ValueError):
 
 
 def _provider_prefixed(key: str) -> bool:
-    return key.startswith(("claudeCode", "codex"))
+    return key.startswith(("claudeCode", "codex", "gemini"))
 
 
 def classify_key(key: str) -> str:
@@ -108,7 +108,7 @@ def format_settable_keys_help() -> str:
     lines += [
         "",
         ("Other keys are read/written through their own commands: provider keys "
-        "(claudeCode*/codex*, defaultProvider, disabledProviders, "
+        "(claudeCode*/codex*/gemini*, defaultProvider, disabledProviders, "
         "orchestrationDisabledProviders) via `twicc settings provider`; "
         "notification keys (externalNotificationTargets) via "
         "`twicc settings notifications`."),

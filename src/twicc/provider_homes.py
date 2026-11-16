@@ -66,6 +66,7 @@ class _Resolved(NamedTuple):
     claude_secure_storage: ResolvedHome
     claude_keychain_suffix: str
     codex: ResolvedHome
+    gemini: ResolvedHome
 
 
 _cache: _Resolved | None = None
@@ -81,6 +82,10 @@ def _default_claude_home() -> Path:
 
 def _default_codex_home() -> Path:
     return Path.home() / ".codex"
+
+
+def _default_gemini_home() -> Path:
+    return Path.home()
 
 
 def _validate_absolute(key: str, value: str) -> None:
@@ -148,7 +153,22 @@ def _resolve() -> _Resolved:
     else:
         codex = ResolvedHome(_default_codex_home(), None, "default")
 
-    _cache = _Resolved(claude_config, secure, suffix, codex)
+    # Gemini CLI: ``GEMINI_CLI_HOME`` replaces the user home directory, the CLI
+    # then keeps its state in ``$GEMINI_CLI_HOME/.gemini`` (decompiled from the
+    # 0.68 bundle: ``homedir() = process.env.GEMINI_CLI_HOME || os.homedir()``).
+    gemini_raw = os.environ.get("GEMINI_CLI_HOME")
+    if gemini_raw is not None:
+        if gemini_raw == "":
+            raise ProviderHomeConfigError(
+                "GEMINI_CLI_HOME is empty: Gemini CLI would silently fall back to ~ "
+                "(set an absolute path, or remove the line to use ~/.gemini)"
+            )
+        _validate_absolute("GEMINI_CLI_HOME", gemini_raw)
+        gemini = ResolvedHome(Path(_nfc(gemini_raw)), gemini_raw, "env")
+    else:
+        gemini = ResolvedHome(_default_gemini_home(), None, "default")
+
+    _cache = _Resolved(claude_config, secure, suffix, codex, gemini)
     return _cache
 
 
@@ -245,6 +265,24 @@ def ensure_codex_home() -> None:
     home.path.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
+# ── Gemini CLI ──────────────────────────────────────────────────────────────
+
+
+def gemini_cli_home() -> ResolvedHome:
+    """``$GEMINI_CLI_HOME`` or the user home (the CLI appends ``.gemini`` itself)."""
+    return _resolve().gemini
+
+
+def gemini_dir() -> Path:
+    """``<gemini home>/.gemini`` — settings, credentials and session files."""
+    return gemini_cli_home().path / ".gemini"
+
+
+def gemini_sessions_dir() -> Path:
+    """``<gemini home>/.gemini/tmp`` — ``<project-slug>/chats/session-*.jsonl``."""
+    return gemini_dir() / "tmp"
+
+
 # ── Propagation ─────────────────────────────────────────────────────────────
 
 
@@ -266,6 +304,8 @@ def provider_env_overlay() -> dict[str, str]:
         overlay["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = resolved.claude_secure_storage.raw
     if resolved.codex.raw is not None:
         overlay["CODEX_HOME"] = resolved.codex.raw
+    if resolved.gemini.raw is not None:
+        overlay["GEMINI_CLI_HOME"] = resolved.gemini.raw
     return overlay
 
 
@@ -290,6 +330,9 @@ def describe_provider_homes() -> list[str]:
     elif secure.raw is not None:
         lines.append(_describe("Claude Code credentials", secure, "CLAUDE_SECURESTORAGE_CONFIG_DIR"))
     lines.append(_describe("Codex home", resolved.codex, "CODEX_HOME"))
+    gemini = resolved.gemini
+    gemini_origin = "GEMINI_CLI_HOME from .env" if gemini.source == "env" else "default"
+    lines.append(f"Gemini CLI home: {gemini.path / '.gemini'} ({gemini_origin})")
     return lines
 
 

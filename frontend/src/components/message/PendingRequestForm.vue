@@ -20,6 +20,7 @@ import AppTooltip from '../ui/AppTooltip.vue'
 import CollapsedBar from './CollapsedBar.vue'
 import ClaudePendingRequestBody from '../session/detail/items/claude_code/PendingRequestBody.vue'
 import CodexPendingRequestBody from '../session/detail/items/codex/PendingRequestBody.vue'
+import GeminiPendingRequestBody from '../session/detail/items/gemini/PendingRequestBody.vue'
 
 const props = defineProps({
     sessionId: {
@@ -215,6 +216,7 @@ const autoDenyTooltip = computed(() => t('session.pending.autoDenyHint', { count
 const bodyComponent = computed(() => {
     if (provider.value === PROVIDER.CODEX) return CodexPendingRequestBody
     if (provider.value === PROVIDER.CLAUDE_CODE) return ClaudePendingRequestBody
+    if (provider.value === PROVIDER.GEMINI) return GeminiPendingRequestBody
     return null
 })
 

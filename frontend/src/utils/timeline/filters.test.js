@@ -7,7 +7,7 @@ import {
 
 const familyKeys = FAMILIES.map((family) => family.value)
 const authorKeys = AUTHORS.map((author) => author.value)
-const providerLabel = (provider) => ({ claude_code: 'Claude Code', codex: 'Codex' })[provider] ?? provider
+const providerLabel = (provider) => ({ claude_code: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' })[provider] ?? provider
 const filters = (fields = {}) => ({ ...createFilters(), ...fields })
 
 test('the keys and labels of the global constraints', () => {
@@ -37,7 +37,7 @@ test('the keys and labels of the global constraints', () => {
         { value: 'external_mcp', label: 'External MCP' },
         { value: 'session_agent', label: "The session's agent" },
     ])
-    assert.deepEqual(PROVIDERS, ['claude_code', 'codex'])
+    assert.deepEqual(PROVIDERS, ['claude_code', 'codex', 'gemini'])
 })
 
 test('createFilters returns a fresh default each call', () => {
@@ -84,7 +84,7 @@ test('toQuery keeps the constant order whatever the toggle order', () => {
 test('toQuery omits a complete group (spec 4.5)', () => {
     const query = toQuery(filters({
         families: [...familyKeys].reverse(),
-        providers: ['codex', 'claude_code'],
+        providers: ['gemini', 'codex', 'claude_code'],
         authors: [...authorKeys],
     }))
     assert.deepEqual(query, {})
