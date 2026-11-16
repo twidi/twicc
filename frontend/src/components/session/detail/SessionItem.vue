@@ -399,6 +399,8 @@ function toggleJsonView() {
                     :data="content"
                     :kind="kind"
                     :session-id="sessionId"
+                    :project-id="projectId"
+                    :parent-session-id="parentSessionId"
                     :line-num="lineNum"
                     :is-block-start="isBlockStart"
                     :is-block-end="isBlockEnd"
@@ -407,6 +409,8 @@ function toggleJsonView() {
                     v-else-if="kind === 'tool_use'"
                     :data="content"
                     :session-id="sessionId"
+                    :project-id="projectId"
+                    :parent-session-id="parentSessionId"
                     :line-num="lineNum"
                 />
                 <GeminiThoughts

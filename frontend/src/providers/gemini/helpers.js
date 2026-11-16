@@ -68,9 +68,9 @@ const AGENT_SETTINGS_CHOICES = () => ({
             color: 'var(--wa-color-red-60)',
         },
     ],
-    // The Gemini CLI has no effort control: a single level keeps the
-    // model × effort matrix clickable (see constants.js).
     effort: [
+        // The Gemini CLI has no per-session effort control: a single level
+        // keeps the model × effort matrix clickable (see constants.js).
         { value: EFFORT.MEDIUM, label: i18n.global.t('agentSettings.effort.medium'), display_label: i18n.global.t('agentSettings.effort.mediumDisplay') },
     ],
 })
@@ -89,20 +89,30 @@ export class GeminiHelpers extends BaseProviderHelpers {
     static serviceStatusUrl = null
 
     canStopSubagent() {
-        // Gemini subagent sessions are out of scope in v1: there is no
-        // subagent to stop.
+        // Gemini subagents (``invoke_agent``) run inside the parent's turn
+        // and the backend has no ``stop_subagent`` hook for them: hide the
+        // Stop buttons (tool card + subagent header).
         return false
+    }
+
+    getCommandActivationChars() {
+        // ``/`` for the Gemini CLI slash commands (built-in and custom),
+        // announced over ACP and stored by the backend in the ``Command``
+        // table: no frontend built-in list.
+        return ['/']
     }
 
     buildEphemeralResultContent(text) {
         return buildEphemeralResultContent(PROVIDER.GEMINI, text)
     }
 
-    buildOptimisticUserMessageContent(text) {
-        // Attachments are not supported by the Gemini provider in v1: the
-        // optimistic bubble carries the text only, like the record the CLI
-        // will write.
-        const content = buildUserRecord(text)
+    buildOptimisticUserMessageContent(text, attachments) {
+        // Gemini attachments are always delivered as files; the stored
+        // record carries the text and the extracted ``twicc_attachments``
+        // manifest. Legacy media blocks become ``inlineData`` parts so the
+        // bubble's attachment count (and strip) matches the sent message;
+        // composer attachments are added by the store (``attachmentItems``).
+        const content = buildUserRecord(text, attachments)
         content.syntheticKind = SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE.kind
         return content
     }

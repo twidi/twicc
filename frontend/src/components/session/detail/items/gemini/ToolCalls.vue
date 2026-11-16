@@ -15,6 +15,8 @@ const props = defineProps({
     data: { type: Object, required: true },
     sessionId: { type: String, required: true },
     lineNum: { type: Number, required: true },
+    projectId: { type: String, default: null },
+    parentSessionId: { type: String, default: null },
 })
 
 const thoughts = computed(() => recordThoughts(props.data))
@@ -30,5 +32,7 @@ const calls = computed(() => finishedToolCalls(props.data))
         :index="index"
         :session-id="sessionId"
         :line-num="lineNum"
+        :project-id="projectId"
+        :parent-session-id="parentSessionId"
     />
 </template>

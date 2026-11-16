@@ -3909,7 +3909,7 @@
     "backend.gemini.agentDead": "Nachricht kann nicht gesendet werden: Der Agent ist beendet",
     "backend.gemini.agentStateCannotSend": "Nachricht kann nicht gesendet werden: Der Agent ist im Zustand {state}",
     "backend.gemini.apiKeyMissingUntrusted": "Gemini CLI hat keinen API-Schlüssel gefunden: In einem nicht vertrauenswürdigen Projekt liest es keine .env-Datei. Vertrauen Sie dem Projekt oder setzen Sie GEMINI_API_KEY in der Umgebung von TwiCC.",
-    "backend.gemini.attachmentsUnsupported": "Anhänge sind für Gemini noch nicht verfügbar",
+    "backend.gemini.attachmentsUnsupported": "Eingebettete Anhänge sind für Gemini nicht verfügbar: Hängen Sie sie als Dateien an",
     "backend.gemini.cliNotFound": "Gemini CLI nicht gefunden: Installieren Sie es oder setzen Sie TWICC_GEMINI_BIN",
     "backend.gemini.ephemeralUnsupported": "Kurzlebige Ausführungen sind für Gemini nicht verfügbar",
     "backend.gemini.messageRequired": "Ein neuer Agent kann nicht ohne Nachricht gestartet werden",

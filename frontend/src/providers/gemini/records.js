@@ -5,7 +5,9 @@
 // stream matching and the item renderers, and importable under node:test.
 //
 // Record shapes (Gemini CLI session file):
-//   user:      { id, timestamp, type: 'user', content: string | Part[] }
+//   user:      { id, timestamp, type: 'user', content: string | Part[],
+//                twicc_attachments? }  (the attachment manifest TwiCC
+//                extracted from the prompt at ingestion)
 //   assistant: { id, timestamp, type: 'gemini', content: string,
 //                thoughts?: [{ subject, description, timestamp }],
 //                toolCalls?: [{ id, name, args, result, status, displayName,
@@ -14,7 +16,7 @@
 //   error:     { id, timestamp, type: 'error', content: string }
 // A Part is ``{ text }``, ``{ functionResponse }``, ``{ inlineData }``, …
 
-import { TERMINAL_TOOL_STATUSES } from './constants.js'
+import { AGENT_TOOL_NAME, TERMINAL_TOOL_STATUSES } from './constants.js'
 
 function isObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -40,15 +42,83 @@ export function userMessageText(parsed) {
         .join('')
 }
 
+function isMediaPart(part) {
+    return isObject(part.inlineData) || isObject(part.fileData)
+}
+
 /** Number of media parts (``inlineData`` / ``fileData``) of a user record. */
 export function userMessageAttachmentCount(parsed) {
     if (!isObject(parsed)) return 0
-    return contentParts(parsed).filter(part => isObject(part.inlineData) || isObject(part.fileData)).length
+    return contentParts(parsed).filter(isMediaPart).length
 }
 
-/** Native user record shape for an optimistic bubble (text only). */
-export function buildUserRecord(text) {
-    return { type: 'user', content: text ? [{ text }] : [] }
+function partMediaType(media) {
+    return typeof media.mimeType === 'string' ? media.mimeType.split(';')[0].trim().toLowerCase() : ''
+}
+
+/** Last segment of a URI or path, or null. */
+function uriBasename(uri) {
+    if (typeof uri !== 'string') return null
+    const name = uri.split(/[\\/]/).pop().trim()
+    return name || null
+}
+
+/**
+ * Media parts of a user record as the provider-neutral content blocks the
+ * shared attachment strip reads (``utils/attachmentStrip.js``), in content
+ * order:
+ *  - ``inlineData`` image → ``{ type: 'image', source: { type: 'base64', … } }``
+ *    (a thumbnail);
+ *  - any other ``inlineData`` → ``{ type: 'document', source: { type:
+ *    'base64', … } }`` (a PDF / text / file tile);
+ *  - ``fileData`` (a URI the browser cannot load) → an image tile
+ *    (``local_image``) or a document tile named after the URI.
+ */
+export function userMessageMediaBlocks(parsed) {
+    if (!isObject(parsed)) return []
+    return contentParts(parsed).filter(isMediaPart).map(part => {
+        if (isObject(part.inlineData)) {
+            const mediaType = partMediaType(part.inlineData) || 'application/octet-stream'
+            const source = { type: 'base64', media_type: mediaType, data: typeof part.inlineData.data === 'string' ? part.inlineData.data : '' }
+            return mediaType.startsWith('image/') ? { type: 'image', source } : { type: 'document', source }
+        }
+        const mediaType = partMediaType(part.fileData)
+        const name = uriBasename(part.fileData.fileUri)
+        if (mediaType.startsWith('image/')) return { type: 'local_image', path: part.fileData.fileUri ?? '' }
+        const block = { type: 'document', source: { type: 'base64', media_type: mediaType || 'application/octet-stream' } }
+        if (name) block.title = name
+        return block
+    })
+}
+
+/**
+ * Native user record shape for an optimistic bubble: the text part, then
+ * one ``inlineData`` part per legacy media block (SDK-format ``images`` /
+ * ``documents``), so the bubble's attachment count matches the stored
+ * record's. Only images decode their data (thumbnails); a text document
+ * keeps its raw text, never read. Composer attachments are not parts: the
+ * generic store adds them as ``attachmentItems`` / ``attachmentCount``.
+ */
+export function buildUserRecord(text, attachments = null) {
+    const content = text ? [{ text }] : []
+    const blocks = [...(attachments?.images ?? []), ...(attachments?.documents ?? [])]
+    for (const block of blocks) {
+        const source = block?.source
+        if (typeof source?.data !== 'string' || !source.data) continue
+        content.push({ inlineData: { mimeType: source.media_type || 'application/octet-stream', data: source.data } })
+    }
+    return { type: 'user', content }
+}
+
+/** Whether a tool name runs a subagent (``invoke_agent``). */
+export function isAgentToolName(name) {
+    return name === AGENT_TOOL_NAME
+}
+
+/** The agent name of an ``invoke_agent`` call's arguments, or null. */
+export function invokedAgentName(args) {
+    const value = isObject(args) ? args.agent_name : null
+    return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 /** Native assistant record shape carrying a final text. */

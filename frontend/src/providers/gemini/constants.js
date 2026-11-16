@@ -28,13 +28,19 @@ export const UNTRUSTED_PERMISSION_MODES = [
 /**
  * Effort level values for Gemini sessions.
  *
- * The Gemini CLI exposes no effort control: the single level only keeps the
- * model × effort matrix clickable (a provider without effort choices has no
- * enabled cell, so no model could be picked).
+ * The Gemini CLI exposes no per-session effort control: the single level only
+ * keeps the model × effort matrix clickable (a provider without effort choices
+ * has no enabled cell, so no model could be picked).
  */
 export const EFFORT = {
     MEDIUM: 'medium',
 }
+
+/**
+ * Name of the Gemini CLI tool that runs a subagent (args ``{ agent_name,
+ * prompt }``). Its call is linked to the subagent session by an AgentLink.
+ */
+export const AGENT_TOOL_NAME = 'invoke_agent'
 
 /**
  * Tool call statuses after which a Gemini tool call is finished. Any other

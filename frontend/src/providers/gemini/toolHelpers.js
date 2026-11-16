@@ -6,12 +6,14 @@ import { i18n } from '../../i18n/index.js'
  * (``toolCalls[]``, with ``args`` and ``result``) and rendered by
  * ``components/session/detail/items/gemini/ToolCall.vue``. These helpers
  * provide the parts the generic surfaces share: the "{provider} is …ing"
- * verb (``WorkingAssistantMessage``) and the one-line target summary.
+ * verb (``WorkingAssistantMessage``), the one-line target summary and the
+ * subagent capability of ``invoke_agent``.
  */
 
 import { PROVIDER } from '../../constants'
 import { BaseToolHelpers } from '../baseHelpers'
 import { formatRelativePath } from '../utils/path'
+import { invokedAgentName, isAgentToolName } from './records'
 
 // Gemini CLI tool name → verb key under ``session.tools.verbs``.
 const VERB_KEYS = {
@@ -27,6 +29,7 @@ const VERB_KEYS = {
     web_fetch: 'fetching',
     google_web_search: 'searching',
     write_todos: 'planning',
+    invoke_agent: 'agent',
 }
 
 // Argument names holding a path, in lookup order.
@@ -36,7 +39,17 @@ export class GeminiToolHelpers extends BaseToolHelpers {
     static provider = PROVIDER.GEMINI
 
     computeToolSummary(name, input, baseDir) {
-        return { displayName: null, inline: this.getInlineSummary(name, input, baseDir) }
+        return { displayName: this.getDisplayName(name, input), inline: this.getInlineSummary(name, input, baseDir) }
+    }
+
+    /**
+     * Header label of an ``invoke_agent`` card: the invoked agent's name
+     * (``codebase_investigator``), else the generic "Agent". Null for any
+     * other tool (the card keeps the call's display name).
+     */
+    getDisplayName(name, input) {
+        if (!isAgentToolName(name)) return null
+        return { name: invokedAgentName(input) || i18n.global.t('session.tools.headers.agent'), namespace: null }
     }
 
     /**
@@ -66,6 +79,12 @@ export class GeminiToolHelpers extends BaseToolHelpers {
 
     isFileChangeTool(name) {
         return name === 'write_file' || name === 'replace'
+    }
+
+    isAgentTool(name) {
+        // ``invoke_agent`` runs a subagent session, linked to the call by an
+        // AgentLink: the tool card shows the View Agent button.
+        return isAgentToolName(name)
     }
 }
 

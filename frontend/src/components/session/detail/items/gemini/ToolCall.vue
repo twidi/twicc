@@ -5,35 +5,52 @@
  * Unlike Claude and Codex, a Gemini call carries its arguments and its
  * result in the same record (``toolCalls[]`` of an assistant record), so
  * this card renders everything locally — no tool-result fetch:
- *  - header: display name, target summary, error / cancelled icon;
+ *  - header: display name (the agent name for ``invoke_agent``), target
+ *    summary, error / cancelled icon, and the View Agent button of a call
+ *    linked to its subagent session (AgentLink, same widget as
+ *    ``ToolUseContent``);
  *  - body: the file diff of an edit (``resultDisplay.fileDiff``), else the
  *    arguments; an error callout; the output in a nested "Result" card.
  */
-import { computed, nextTick, onMounted, ref, useId } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, useId } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../../../../../constants'
+import { useCodeCommentsStore } from '../../../../../stores/codeComments'
 import { useDataStore } from '../../../../../stores/data'
+import { sessionRouteLocation } from '../../../../../utils/sessionRoute'
 import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
 import { geminiToolHelpers } from '../../../../../providers/gemini/toolHelpers'
 import { toolCallFileDiff, toolCallOutput } from '../../../../../providers/gemini/records'
 import JsonHumanView from '../../../../json/JsonHumanView.vue'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
 import AppTooltip from '../../../../ui/AppTooltip.vue'
+import CodeCommentsIndicator from '../../../../ui/CodeCommentsIndicator.vue'
+import ProcessDuration from '../../../../ui/ProcessDuration.vue'
 import ToolDiffViewer from '../claude_code/ToolDiffViewer.vue'
 
 const props = defineProps({
     call: { type: Object, required: true },
     sessionId: { type: String, required: true },
     lineNum: { type: Number, required: true },
+    // Route context of the View Agent button: the project, and the main
+    // session when this card belongs to a subagent.
+    projectId: { type: String, default: null },
+    parentSessionId: { type: String, default: null },
     // Position of the call in its record, for the persisted open state of a
     // call without id.
     index: { type: Number, default: 0 },
 })
 
 const dataStore = useDataStore()
+const codeCommentsStore = useCodeCommentsStore()
+const route = useRoute()
+const router = useRouter()
+// Share bundle: opens subagents in an in-page overlay instead of routing.
+const openSubagent = inject('openSubagent', null)
 
 const detailKey = computed(() => `gemini-tool:${props.call.id || `${props.lineNum}:${props.index}`}`)
 const resultKey = computed(() => `result:${detailKey.value}`)
 
-const name = computed(() => props.call.displayName || props.call.name || '')
 const args = computed(() => (props.call.args && typeof props.call.args === 'object' ? props.call.args : {}))
 const hasArgs = computed(() => Object.keys(args.value).length > 0)
 
@@ -41,7 +58,43 @@ const sessionBaseDir = computed(() => {
     const session = dataStore.getSession(props.sessionId)
     return session?.git_directory || session?.cwd || null
 })
-const summary = computed(() => geminiToolHelpers.getInlineSummary(props.call.name, args.value, sessionBaseDir.value))
+const toolSummary = computed(() => geminiToolHelpers.computeToolSummary(props.call.name, args.value, sessionBaseDir.value))
+const name = computed(() => toolSummary.value.displayName?.name || props.call.displayName || props.call.name || '')
+const summary = computed(() => toolSummary.value.inline)
+
+// --- Subagent link (``invoke_agent``) ---
+// The AgentLink of this call, from the store cache (``fetchSubagentsState``
+// on session load, WS ``agent_link_created``). The call is finished when its
+// card renders, so there is no spawn spinner: the button shows once linked.
+const isTask = computed(() => geminiToolHelpers.isAgentTool(props.call.name))
+const rootSessionId = computed(() => props.parentSessionId || props.sessionId)
+const agentId = computed(() => (isTask.value && props.call.id
+    ? dataStore.getAgentLink(props.sessionId, props.call.id)?.agentId ?? null
+    : null))
+const isAgentRunning = computed(() => !!agentId.value && dataStore.isAgentRunning(agentId.value))
+const agentRunStartedAt = computed(() => {
+    const startedMs = Date.parse(dataStore.getAgentRunState(agentId.value)?.runStartedAt ?? '')
+    return Number.isNaN(startedMs) ? null : startedMs / 1000
+})
+const agentCommentsCount = computed(() => {
+    if (!agentId.value || !props.projectId) return 0
+    return codeCommentsStore.getCommentsBySession(props.projectId, rootSessionId.value)
+        .filter(comment => comment.subagentSessionId === agentId.value).length
+})
+const viewAgentButtonId = useId()
+
+/** Open the subagent (its tab, or the share viewer's overlay). */
+function navigateToSubagent() {
+    if (!agentId.value) return
+    if (openSubagent) { openSubagent(agentId.value); return }
+    const projectId = props.projectId || dataStore.getSession(rootSessionId.value)?.project_id
+    if (!projectId) return
+    router.push(sessionRouteLocation(
+        { id: rootSessionId.value, project_id: projectId },
+        route,
+        { subagentId: agentId.value },
+    ))
+}
 
 const isError = computed(() => props.call.status === 'error')
 const isCancelled = computed(() => props.call.status === 'cancelled')
@@ -106,14 +159,31 @@ function onResultHide() {
                     <span class="items-details-summary-description">{{ summary }}</span>
                 </template>
             </div>
-            <div v-if="isError || isCancelled" class="items-details-summary-right">
+            <div v-if="agentId || isError || isCancelled" class="items-details-summary-right">
+                <template v-if="agentId">
+                    <AppTooltip deferred v-if="isAgentRunning && agentRunStartedAt" :for="viewAgentButtonId">
+                        <i18n-t keypath="session.tools.agentRunningFor" scope="global"><template #duration><ProcessDuration :state-changed-at="agentRunStartedAt" /></template></i18n-t>
+                    </AppTooltip>
+                    <wa-button
+                        :id="viewAgentButtonId"
+                        size="small"
+                        variant="brand"
+                        appearance="outlined"
+                        @click.stop="navigateToSubagent"
+                    >
+                        <wa-icon v-if="isAgentRunning" slot="start" name="robot" class="robot-working" :style="{ color: PROCESS_STATE_COLORS[PROCESS_STATE.ASSISTANT_TURN] }"></wa-icon>
+                        {{ $t('session.tools.viewAgent') }}
+                        <CodeCommentsIndicator slot="end" :count="agentCommentsCount" :show-tooltip="false" class="agent-comments-indicator" />
+                    </wa-button>
+                </template>
                 <wa-icon
+                    v-if="isError || isCancelled"
                     :id="statusIconId"
                     :name="isError ? 'xmark' : 'ban'"
                     class="tool-status-icon"
                     :class="{ 'is-error': isError }"
                 ></wa-icon>
-                <AppTooltip :for="statusIconId">{{ isError ? $t('session.tools.gemini.failed') : $t('session.tools.gemini.cancelled') }}</AppTooltip>
+                <AppTooltip v-if="isError || isCancelled" :for="statusIconId">{{ isError ? $t('session.tools.gemini.failed') : $t('session.tools.gemini.cancelled') }}</AppTooltip>
             </div>
         </div>
         <template v-if="isOpen || isClosing()">
@@ -153,6 +223,10 @@ function onResultHide() {
 <style scoped>
 wa-details::part(content) {
     padding-top: 0;
+}
+
+.agent-comments-indicator {
+    font-size: var(--wa-font-size-xs);
 }
 
 .tool-status-icon {
