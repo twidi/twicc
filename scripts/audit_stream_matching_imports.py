@@ -28,7 +28,7 @@ def reachable(start, target):
     return False
 
 
-for provider in ["codex", "claude_code"]:
+for provider in ["codex", "claude_code", "gemini"]:
     matching = root / "providers" / provider / "streamMatching.js"
     helper = matching.with_name("helpers.js")
     returns = reachable(matching, helper)

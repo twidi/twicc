@@ -16,6 +16,10 @@ import CodexMessage from './items/codex/Message.vue'
 import CodexToolUse from './items/codex/ToolUse.vue'
 import CodexReasoning from './items/codex/Reasoning.vue'
 import CodexImageGeneration from './items/codex/ImageGeneration.vue'
+import GeminiMessage from './items/gemini/Message.vue'
+import GeminiToolCalls from './items/gemini/ToolCalls.vue'
+import GeminiThoughts from './items/gemini/Thoughts.vue'
+import { apiErrorData as geminiApiErrorData, recordThoughts as geminiRecordThoughts } from '../../../providers/gemini/records'
 import UnknownEntry from './items/UnknownEntry.vue'
 import FailedSendBanner from './items/FailedSendBanner.vue'
 import BackgroundWorkStatus from './items/BackgroundWorkStatus.vue'
@@ -384,6 +388,43 @@ function toggleJsonView() {
                     v-else
                     :type="entryType"
                     :sub-type="content?.payload?.type || null"
+                    :data="content"
+                    :session-id="sessionId"
+                    :detail-key="`line:${lineNum}`"
+                />
+            </template>
+            <template v-else-if="sessionProvider === PROVIDER.GEMINI">
+                <GeminiMessage
+                    v-if="kind === 'user_message' || kind === 'assistant_message'"
+                    :data="content"
+                    :kind="kind"
+                    :session-id="sessionId"
+                    :line-num="lineNum"
+                    :is-block-start="isBlockStart"
+                    :is-block-end="isBlockEnd"
+                />
+                <GeminiToolCalls
+                    v-else-if="kind === 'tool_use'"
+                    :data="content"
+                    :session-id="sessionId"
+                    :line-num="lineNum"
+                />
+                <GeminiThoughts
+                    v-else-if="kind === 'reasoning'"
+                    :thoughts="geminiRecordThoughts(content)"
+                    :session-id="sessionId"
+                    :line-num="lineNum"
+                />
+                <ApiError
+                    v-else-if="kind === 'api_error'"
+                    :data="geminiApiErrorData(content)"
+                    :project-id="projectId"
+                    :session-id="sessionId"
+                    :line-num="lineNum"
+                />
+                <UnknownEntry
+                    v-else
+                    :type="entryType"
                     :data="content"
                     :session-id="sessionId"
                     :detail-key="`line:${lineNum}`"

@@ -446,9 +446,9 @@ test('the panel lists the three groups in constant order, with the family hints 
     // The hint is part of the label, not the checkbox's own `hint` attribute.
     assert.deepEqual(hintsOf(boxes[0]), filtersModule.FAMILIES.map((family) => family.hint))
     assert.ok(boxes.flat().every((box) => box.props.hint === undefined))
-    assert.deepEqual(labelsOf(boxes[1]), ['Claude Code', 'codex'], 'the product name, else the raw key')
+    assert.deepEqual(labelsOf(boxes[1]), ['Claude Code', 'codex', 'gemini'], 'the product name, else the raw key')
     // Each provider shows its icon before its name.
-    assert.deepEqual(boxes[1].map((box) => descendants(box, (node) => node.type === 'i')[0]?.props['data-provider']), ['claude_code', 'codex'])
+    assert.deepEqual(boxes[1].map((box) => descendants(box, (node) => node.type === 'i')[0]?.props['data-provider']), ['claude_code', 'codex', 'gemini'])
     assert.deepEqual(labelsOf(boxes[2]), ['Unknown', 'Automatic', 'You', 'Agent via CLI/MCP', 'External MCP', "The session's agent"])
     assert.deepEqual(hintsOf(boxes[2]), boxes[2].map(() => null))
     assert.ok(boxes.flat().every((box) => box.props.checked === false))
