@@ -43,7 +43,7 @@ $TWICC info [SECTION...] [OPTIONS]
 
 ### Options
 
-- `--provider <key>` — narrow every requested **provider-keyed** section to one provider (`claude_code`, `codex`, …). No effect on `settings` (instance-wide). Naming a provider **bypasses** the disabled-provider filter for that one: its data is returned even when disabled. The top-level `providers` dict always lists every registered provider.
+- `--provider <key>` — narrow every requested **provider-keyed** section to one provider (`claude_code`, `codex`, `gemini`). No effect on `settings` (instance-wide). Naming a provider **bypasses** the disabled-provider filter for that one: its data is returned even when disabled. The top-level `providers` dict always lists every registered provider.
 - `--project <PROJECT>` — directory path or project id (**drop the leading dash** on ids). **Only consumed with `commands`**; passing it without `commands` is an error. See `commands.md`.
 - `--filter "TOKENS"` — token search for `commands`. **Only consumed with `commands`**. See `commands.md`.
 - `--include-disabled-providers` — flips the disabled-provider filter on the provider-keyed section payloads (not `settings`): disabled providers are listed with the enabled ones. Does not change the top-level `providers` dict (always exhaustive).

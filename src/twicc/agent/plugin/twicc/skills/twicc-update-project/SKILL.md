@@ -49,7 +49,7 @@ All patch flags are optional but at least one is required. They cannot be combin
 - `--unset-color` — Clear the color. Mutually exclusive with `--color`.
 - `--archive` — Mark as archived. Mutually exclusive with `--unarchive`.
 - `--unarchive` — Mark as not archived. Mutually exclusive with `--archive`.
-- `--default-provider VALUE` — Provider a NEW session in this project defaults to (`claude_code`, `codex`). Inherited by sub-projects and git worktrees. Mutually exclusive with `--unset-default-provider`.
+- `--default-provider VALUE` — Provider a NEW session in this project defaults to (`claude_code`, `codex`, `gemini`). Inherited by sub-projects and git worktrees. Mutually exclusive with `--unset-default-provider`.
 - `--unset-default-provider` — Back to inherit (parent chain, then the global default). Mutually exclusive with `--default-provider`.
 - `--worktree-directory PATH` — Absolute base directory under which new git worktrees of this project are created from the UI (free-form, not required to live under the git root). Mutually exclusive with `--unset-worktree-directory`.
 - `--unset-worktree-directory` — Back to the global default (composed against the git root). Mutually exclusive with `--worktree-directory`.
@@ -72,7 +72,7 @@ Edits one provider's bundle in `default_agent_settings`: the defaults that seed 
 
 #### Options
 
-- `--provider VALUE` — **Required.** Provider whose bundle to edit (`claude_code`, `codex`). A disabled provider is accepted (a project may keep defaults for it).
+- `--provider VALUE` — **Required.** Provider whose bundle to edit (`claude_code`, `codex`, `gemini`). A disabled provider is accepted (a project may keep defaults for it).
 - `--model VALUE` — Default model (provider-specific value, e.g. `opus`, `gpt`; aliases `max`/`min` resolve per provider).
 - `--effort VALUE` — Default reasoning effort (aliases `min`/`max`).
 - `--permission-mode VALUE` — Default permission mode used when the project is **trusted** (full range, `bypassPermissions`/`yolo` allowed; aliases `min`/`safe`/`max`/`open`...).

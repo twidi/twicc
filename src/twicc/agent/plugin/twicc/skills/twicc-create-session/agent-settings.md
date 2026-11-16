@@ -12,9 +12,9 @@ All optional. Resolution of a field you omit (and the `--preset` does not set): 
 
 `$TWICC info models agent-settings` gives the authoritative model lists, valid values, and per-value restrictions (skill: `twicc-info`). The lists below are indicative.
 
-- `--model VALUE` — Claude Code: `fable`, `opus`, `sonnet`, `haiku` (Haiku 5.5 only), `fable-5.1`, `fable-5`, `opus-5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `sonnet-5`, `sonnet-4.6`, `sonnet-4.5`. Codex: `gpt-astra`, `gpt-sol`, `gpt-terra`, `gpt-luna`, `gpt`, `gpt-sol-6`, `gpt-sol-5.6`, `gpt-terra-5.6`, `gpt-luna-5.6`.
-- `--effort VALUE` — Claude Code: `low`, `medium`, `high`, `xhigh`, `max`. Codex: `low`, `medium`, `high`, `xhigh`, `max` (`max` needs a GPT-6 or GPT-5.6 model; silently demoted otherwise).
-- `--permission-mode VALUE` — Claude Code: `default`, `auto`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions`. Codex: `read_only`, `strict`, `auto`, `autonomous`, `auto_review`, `yolo`.
+- `--model VALUE` — Claude Code: `fable`, `opus`, `sonnet`, `haiku` (Haiku 5.5 only), `fable-5.1`, `fable-5`, `opus-5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `sonnet-5`, `sonnet-4.6`, `sonnet-4.5`. Codex: `gpt-astra`, `gpt-sol`, `gpt-terra`, `gpt-luna`, `gpt`, `gpt-sol-6`, `gpt-sol-5.6`, `gpt-terra-5.6`, `gpt-luna-5.6`. Gemini: `gemini-pro`, `gemini-flash`, `gemini-flash-lite`, `gemini-pro-2.5`, `gemini-flash-3`.
+- `--effort VALUE` — Claude Code: `low`, `medium`, `high`, `xhigh`, `max`. Codex: `low`, `medium`, `high`, `xhigh`, `max` (`max` needs a GPT-6 or GPT-5.6 model; silently demoted otherwise). Gemini: `medium` only (the Gemini CLI has no effort control).
+- `--permission-mode VALUE` — Claude Code: `default`, `auto`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions`. Codex: `read_only`, `strict`, `auto`, `autonomous`, `auto_review`, `yolo`. Gemini: `default`, `auto_edit`, `plan`, `yolo`.
 - `--thinking / --no-thinking` — Claude Code only.
 - `--claude-in-chrome / --no-claude-in-chrome` — Claude Code only (lets the agent manipulate browser tabs, take screenshots, etc.).
 - `--fast-mode / --no-fast-mode` — supported Claude Code and Codex models; increases credit usage.
@@ -33,9 +33,9 @@ Provider-agnostic values, resolved to each provider's concrete value — for cro
 
 ### Untrusted projects
 
-In a project whose trust is *untrusted* — or not yet decided (unknown counts as untrusted) — `permission_mode` is restricted to a safe subset: `bypassPermissions` (Claude Code) / `yolo` (Codex) are unavailable.
+In a project whose trust is *untrusted* — or not yet decided (unknown counts as untrusted) — `permission_mode` is restricted to a safe subset: `bypassPermissions` (Claude Code) / `yolo` (Codex, Gemini) are unavailable.
 
-- `--permission-mode` resolves against that subset: `min`/`safe`/`max` still work, `max` → the most permissive *allowed* mode (Claude Code `acceptEdits`, Codex `auto_review`).
+- `--permission-mode` resolves against that subset: `min`/`safe`/`max` still work, `max` → the most permissive *allowed* mode (Claude Code `acceptEdits`, Codex `auto_review`, Gemini `auto_edit`).
 - An out-of-subset value (e.g. `bypass`) is clamped to the project's untrusted default, with a note on stderr.
 - `--permission-mode` omitted: the session seeds from the project chain's `permission_mode_if_untrusted` default, then the global untrusted default.
 - `twicc info agent-settings` → `permission_mode_if_untrusted` lists the subset + its aliases.
