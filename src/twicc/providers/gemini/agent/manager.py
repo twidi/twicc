@@ -19,15 +19,22 @@ from .agent import GeminiAgent
 
 logger = logging.getLogger(__name__)
 
+def _refuse_unsupported(*, ephemeral: bool = False, images=None, documents=None) -> None:
+    """Refuse what the provider does not deliver, before anything starts.
 
-def _refuse_unsupported(*, ephemeral: bool = False, attachment_plan=None, images=None, documents=None) -> None:
-    """Refuse what v1 does not deliver, before anything starts."""
+    Composer attachments go through the attachment plan (delivered as files);
+    the legacy inline ``images`` / ``documents`` payloads have no Gemini path.
+    """
     if ephemeral:
         raise SendDeliveryError("Ephemeral runs are not available for Gemini", code="ephemeral_unsupported",
                                 ui_message=ui_message("backend.gemini.ephemeralUnsupported"))
-    if images or documents or (attachment_plan is not None and attachment_plan.entries):
-        raise SendDeliveryError("Attachments are not available for Gemini yet", code="attachments_unsupported",
+    if images or documents:
+        raise SendDeliveryError("Inline attachments are not available for Gemini: attach them as files", code="attachments_unsupported",
                                 ui_message=ui_message("backend.gemini.attachmentsUnsupported"))
+
+
+def _content_kwargs(content) -> dict:
+    return {"content": content} if content is not None else {}
 
 
 class GeminiAgentManager(BaseAgentManager):
@@ -60,18 +67,34 @@ class GeminiAgentManager(BaseAgentManager):
         resume: bool,
         settings: AgentSettings,
         ephemeral: bool = False,
+        prepared_attachments=None,
+        initial_text: str = "",
         **kwargs: Any,
     ) -> GeminiAgent:
         """Spawn ``gemini --acp`` and open the session.
 
         A new session gets its canonical id from ``session/new`` (the draft
         ``session_id`` is only a frontend key); a resume loads the canonical
-        ``session_id``.
+        ``session_id``. Attachments of a new session's first message
+        (``prepared_attachments``) are finished here for the canonical id,
+        before ``session_bound``, and handed to the agent's first turn.
         """
         _refuse_unsupported(ephemeral=ephemeral)
+        if resume and prepared_attachments is not None:
+            raise ValueError("prepared_attachments are only finished by a new session, never by a resume")
         settings, trusted = await self._resolve_launch_settings(project_id, settings)
         agent = GeminiAgent(session_id, project_id, cwd, settings, model=self._cli_model(settings), trusted=trusted)
         await agent.open(resume=resume)
+        if prepared_attachments is not None:
+            from twicc.core.services.attachments import committer
+
+            try:
+                agent._initial_content = committer.finish_attachments(
+                    prepared_attachments, session_id=agent.session_id, text=initial_text,
+                )
+            except BaseException:
+                await agent.interrupt_or_kill("startup-failed")
+                raise
         return agent
 
     async def create_session(
@@ -91,16 +114,30 @@ class GeminiAgentManager(BaseAgentManager):
         completion_cursor: int | None = None,
     ) -> str:
         """Start a brand-new Gemini session; return its canonical id."""
-        _refuse_unsupported(ephemeral=ephemeral, attachment_plan=attachment_plan, images=images, documents=documents)
-        if not text:
+        _refuse_unsupported(ephemeral=ephemeral, images=images, documents=documents)
+        has_attachments = attachment_plan is not None and bool(attachment_plan.entries)
+        if not text and not has_attachments:
             raise SendDeliveryError("Cannot start a new agent without a message", code="send_failed",
                                     ui_message=ui_message("backend.gemini.messageRequired"))
-        async with self._lock:
+        prepared = None
+        if has_attachments:
+            # The canonical id only exists once ``session/new`` returns: prepare
+            # now, finish in ``_create_agent`` (same flow as Codex).
             self._check_ephemeral_readonly(session_id, ephemeral_admission)
-            return await self._start_agent(
-                session_id, project_id, cwd, text, resume=False, settings=settings,
-                ephemeral_admission=ephemeral_admission,
-            )
+            prepared = await self._prepare_attachment_plan(attachment_plan, session_id=None)
+        try:
+            async with self._lock:
+                self._check_ephemeral_readonly(session_id, ephemeral_admission)
+                return await self._start_agent(
+                    session_id, project_id, cwd, text, resume=False, settings=settings,
+                    ephemeral_admission=ephemeral_admission,
+                    **({"prepared_attachments": prepared} if prepared is not None else {}),
+                )
+        finally:
+            if prepared is not None:
+                from twicc.core.services.attachments import committer
+
+                committer.discard_prepared(prepared)
 
     async def send_to_session(
         self,
@@ -118,17 +155,21 @@ class GeminiAgentManager(BaseAgentManager):
         completion_admission: dict | None = None,
         **_kwargs: Any,
     ) -> bool:
-        """Deliver a message (or only new settings when ``text`` is empty).
+        """Deliver a message (or only new settings when there is nothing to send).
 
         - no live agent: resume the session with ``session/load``;
         - idle agent: apply the settings, then prompt;
-        - working agent: apply nothing now, queue the message for right after
-          the current turn;
+        - working agent: queue the message for right after the current turn;
         - starting agent: refuse (the frontend retries).
 
         Returns ``False`` for a settings-only update.
         """
-        _refuse_unsupported(attachment_plan=attachment_plan, images=images, documents=documents)
+        _refuse_unsupported(images=images, documents=documents)
+        self._check_ephemeral_readonly(session_id)
+        content = None
+        if attachment_plan is not None and attachment_plan.entries:
+            content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
+        has_input = bool(text) or content is not None
         async with self._lock:
             self._check_ephemeral_readonly(session_id)
             agent = self._agents.get(session_id)
@@ -146,14 +187,16 @@ class GeminiAgentManager(BaseAgentManager):
                 if agent.state == AgentState.USER_TURN:
                     settings, _trusted = await self._resolve_launch_settings(project_id, settings)
                     await agent.apply_agent_settings(settings, model=self._cli_model(settings))
-                if not text:
+                if not has_input:
                     return False
-                return await agent.send(text)
+                return await agent.send(text, **_content_kwargs(content))
 
-            if not text:
+            if not has_input:
                 raise SendDeliveryError("Cannot start a new agent without a message", code="send_failed",
                                         ui_message=ui_message("backend.gemini.messageRequired"))
-            await self._start_agent(session_id, project_id, cwd, text, resume=True, settings=settings)
+            await self._start_agent(
+                session_id, project_id, cwd, text, resume=True, settings=settings, **_content_kwargs(content),
+            )
             return True
 
     async def _check_agent_timeout(

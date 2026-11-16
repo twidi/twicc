@@ -40,6 +40,15 @@ READ_CALL = {"id": "read_file__call_1", "name": "read_file", "args": {"file_path
 THINKING_WITH_CALL = {**THINKING, "toolCalls": [READ_CALL]}
 ECHO = {"id": "c66e", "timestamp": "2026-11-16T01:04:38.712Z", "type": "user",
         "content": [{"functionResponse": {"id": "read_file__call_1", "name": "read_file", "response": {"output": "hello\n"}}}]}
+INVOKE_CALL = {"id": "invoke_agent__call_1", "name": "invoke_agent",
+               "args": {"agent_name": "codebase_investigator", "prompt": "Explain what calc.py does."},
+               "result": [{"functionResponse": {"id": "invoke_agent__call_1", "name": "invoke_agent",
+                                                "response": {"output": "Subagent 'codebase_investigator' finished."}}}],
+               "status": "success", "timestamp": "2026-11-16T05:29:22.000Z"}
+SUBAGENT_PROMPT = {"id": "84e4", "timestamp": "2026-11-16T05:29:08.369Z", "type": "user", "content": [{"text": (
+    "Your task is to do a deep investigation of the codebase for the following user objective:\n"
+    "<objective>\nExplain what calc.py does.\n</objective>\nReport back."
+)}]}
 ANSWER = {"id": "21aa", "timestamp": "2026-11-16T01:06:20.000Z", "type": "gemini", "content": "Done: out.txt says bye.",
           "thoughts": [], "tokens": {"input": 10632, "output": 27, "cached": 0, "thoughts": 0, "tool": 0, "total": 10659},
           "model": "gemini-3.8-flash"}
@@ -195,9 +204,21 @@ def test_session_file_without_prompt_is_skipped(tmp_path):
     assert read_session_file_meta(_write_session(tmp_path, "demo", [HEADER, CONTEXT, SET])) is None
 
 
-def test_subagent_session_file_is_skipped(tmp_path):
-    path = _write_session(tmp_path, "demo", [{**HEADER, "kind": "subagent"}, PROMPT])
+def test_unknown_session_kind_is_skipped(tmp_path):
+    path = _write_session(tmp_path, "demo", [{**HEADER, "kind": "other"}, PROMPT])
     assert read_session_file_meta(path) is None
+
+
+def test_subagent_session_file(tmp_path):
+    slug_dir = tmp_path / "demo"
+    (slug_dir / "chats" / "parent-id").mkdir(parents=True)
+    (slug_dir / ".project_root").write_text("/work/demo")
+    path = slug_dir / "chats" / "parent-id" / "child-id.jsonl"
+    path.write_bytes(b"".join(orjson.dumps(line) + b"\n" for line in [
+        {**HEADER, "sessionId": "child-id", "kind": "subagent"}, SUBAGENT_PROMPT,
+    ]))
+    meta = read_session_file_meta(path)
+    assert (meta.session_id, meta.cwd, meta.kind) == ("child-id", "/work/demo", "subagent")
 
 
 def test_project_root_falls_back_to_projects_json(tmp_path):
@@ -244,6 +265,7 @@ def test_helpers_contract():
         assert len(helpers.selected_model_value(mv)) <= 30
     bootstrap = helpers.get_bootstrap_data()
     assert bootstrap["agent_settings_choices"]["permission_mode"] == ["default", "auto_edit", "plan", "yolo"]
+    assert bootstrap["agent_settings_choices"]["effort"] == ["medium"]
 
 
 def test_every_provider_is_registered():
@@ -277,3 +299,86 @@ def test_repeating_decimal_prices_sync_once():
     second = persist_provider_prices(Provider.GEMINI, extract_provider_prices(models, Provider.GEMINI))
     assert first == {"created": 1, "unchanged": 0}
     assert second == {"created": 0, "unchanged": 1}
+
+
+# --- Subagents ---------------------------------------------------------------
+
+
+def test_invoke_agent_prompt_matches_the_subagent_task(compute):
+    launcher = {**THINKING, "toolCalls": [INVOKE_CALL]}
+    assert compute.extract_task_tool_uses(launcher) == [("invoke_agent__call_1", False)]
+    prompts = compute.extract_task_tool_use_prompts(launcher)
+    assert prompts == [("invoke_agent__call_1", "Explain what calc.py does.", False)]
+    # compute_base links a subagent when its first message equals the prompt.
+    assert compute.extract_user_message_text(SUBAGENT_PROMPT) == prompts[0][1]
+    assert compute.extract_user_message_text(PROMPT) == "Read note.txt then create out.txt"
+
+
+# --- Attachments -------------------------------------------------------------
+
+
+def test_attachments_manifest_is_extracted_from_the_prompt(compute):
+    from twicc.core.services.attachments.manifest import build_manifest
+    from twicc.core.services.attachments.types import AttachmentManifest, ManifestEntry
+
+    manifest = AttachmentManifest(
+        "s", Path("/data/artifacts/s/attachments"),
+        (ManifestEntry(1, "notes.md", "text", 1, 1, "file", "notes.md"),),
+    )
+    record = {"id": "u1", "timestamp": "2026-11-16T01:00:00Z", "type": "user",
+              "content": [{"text": build_manifest(manifest)}, {"text": "Summarize the attached notes."}]}
+    assert compute.transform_inline(record, session_id="s", line_num=4) is not None
+    assert record["content"] == [{"text": "Summarize the attached notes."}]
+    assert record["twicc_attachments"]["entries"][0]["name"] == "notes.md"
+    attachment_only = {"id": "u2", "timestamp": "2026-11-16T01:00:00Z", "type": "user",
+                       "content": [{"text": build_manifest(manifest)}]}
+    compute.transform_inline(attachment_only, session_id="s", line_num=5)
+    assert compute.compute_item_kind(attachment_only) == ItemKind.USER_MESSAGE
+
+
+def test_instruction_and_context_blocks_are_stripped(compute):
+    record = {"id": "u1", "timestamp": "2026-11-16T01:00:00Z", "type": "user", "content": [{"text": (
+        "<twicc:context>\nsession_id: abc\n</twicc:context>\n\n"
+        "<twicc:instruction>\nYou are running inside TwiCC.\n</twicc:instruction>\n\nHello"
+    )}]}
+    compute.transform_inline(record, session_id="s", line_num=4)
+    assert records.user_text(record) == "Hello"
+
+
+# --- Slash commands ----------------------------------------------------------
+
+
+def test_acp_commands_map_to_command_rows():
+    from twicc.providers.gemini.commands import _commands_from_update
+
+    desired = _commands_from_update([
+        {"name": "memory show", "description": "Shows the current memory contents."},
+        {"name": "review", "description": "Review code", "input": {"hint": "[path]"}},
+        {"description": "no name"},
+    ])
+    assert set(desired) == {"memory show", "review"}
+    assert desired["review"]["argument_hint"] == "[path]"
+    assert desired["memory show"]["is_builtin"] is False
+
+
+def test_twicc_mcp_server_entry_and_auto_approval():
+    from twicc.providers.gemini.agent.agent import is_twicc_mcp_call, twicc_mcp_servers
+
+    [server] = twicc_mcp_servers("session-1")
+    assert server["type"] == "http" and server["name"] == "twicc"
+    assert server["headers"][0]["name"] == "Authorization"
+    assert server["headers"][0]["value"].startswith("Bearer twicc_mcp_session-1.")
+    assert is_twicc_mcp_call("twicc_whoami__call_1")
+    assert is_twicc_mcp_call("mcp_twicc_whoami__call_1")
+    assert not is_twicc_mcp_call("write_file__call_1")
+
+
+def test_tool_call_history_facts_mark_agent_calls(compute):
+    from twicc.providers.history_facts import HistoryFactKind
+
+    facts = compute.extract_history_facts({**THINKING, "toolCalls": [READ_CALL, INVOKE_CALL]}, line_num=7, history=None)
+    assert [(fact.kind, fact.key, fact.data["is_agent"]) for fact in facts] == [
+        (HistoryFactKind.TOOL_CALL, "read_file__call_1", False),
+        (HistoryFactKind.TOOL_CALL, "invoke_agent__call_1", True),
+    ]
+    assert compute.rebuild_agent_prompt_links is True

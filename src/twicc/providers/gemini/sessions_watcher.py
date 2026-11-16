@@ -5,6 +5,7 @@ for the ``<gemini home>/.gemini/tmp/`` layout:
 
     <project-slug>/.project_root            absolute project directory
     <project-slug>/chats/session-<YYYY-MM-DDTHH-MM>-<id8>.jsonl
+    <project-slug>/chats/<parent-session-id>/<subagent-session-id>.jsonl
 
 The session id is the full ``sessionId`` of the file's first line (the file
 name only keeps 8 characters). The JSONL carries no working directory, so the
@@ -36,11 +37,13 @@ logger = logging.getLogger(__name__)
 CHATS_DIR = "chats"
 PROJECT_ROOT_FILE = ".project_root"
 MAIN_KIND = "main"
+SUBAGENT_KIND = "subagent"
 
 
 class SessionFileMeta(NamedTuple):
     session_id: str
     cwd: str
+    kind: str = MAIN_KIND
 
 
 def read_project_root(slug_dir: Path) -> str | None:
@@ -66,8 +69,8 @@ def read_project_root(slug_dir: Path) -> str | None:
 def read_session_file_meta(path: Path) -> SessionFileMeta | None:
     """Identify a Gemini session file worth syncing, ``None`` otherwise.
 
-    Skipped: unreadable files, a header that is not a ``main`` session
-    (subagents, out of scope for now), and files without any user prompt yet.
+    Skipped: unreadable files, a header of an unknown kind (``main`` sessions
+    and ``subagent`` runs are kept), and files without any user prompt yet.
     The CLI creates a session file as soon as a client connects (an ACP
     ``initialize`` writes one), so most of those never get a prompt; a real
     session is picked up on the event that appends its first prompt.
@@ -77,7 +80,8 @@ def read_session_file_meta(path: Path) -> SessionFileMeta | None:
             header = orjson.loads(handle.readline() or b"null")
             if not isinstance(header, dict) or not records.is_header(header):
                 return None
-            if header.get("kind", MAIN_KIND) != MAIN_KIND:
+            kind = header.get("kind", MAIN_KIND)
+            if kind not in (MAIN_KIND, SUBAGENT_KIND):
                 return None
             has_prompt = False
             for line in handle:
@@ -92,10 +96,11 @@ def read_session_file_meta(path: Path) -> SessionFileMeta | None:
         return None
     if not has_prompt:
         return None
-    cwd = read_project_root(path.parent.parent)
+    slug_dir = path.parent.parent if kind == MAIN_KIND else path.parent.parent.parent
+    cwd = read_project_root(slug_dir)
     if not cwd:
         return None
-    return SessionFileMeta(header["sessionId"], cwd)
+    return SessionFileMeta(header["sessionId"], cwd, kind)
 
 
 class GeminiSessionsWatcher(BaseSessionsWatcher):
@@ -116,10 +121,9 @@ class GeminiSessionsWatcher(BaseSessionsWatcher):
         except ValueError:
             return None
         parts = relative.parts
-        if len(parts) != 3 or parts[1] != CHATS_DIR:
+        if len(parts) not in (3, 4) or parts[1] != CHATS_DIR or not parts[-1].endswith(".jsonl"):
             return None
-        filename = parts[2]
-        if not (filename.startswith("session-") and filename.endswith(".jsonl")):
+        if len(parts) == 3 and not parts[2].startswith("session-"):
             return None
 
         meta = self._known.get(path)
@@ -129,6 +133,19 @@ class GeminiSessionsWatcher(BaseSessionsWatcher):
                 return None
             self._known[path] = meta
         self._directories[meta.session_id] = meta.cwd
+        if len(parts) == 4:
+            # A subagent run lives in a folder named after its main session.
+            if meta.kind != SUBAGENT_KIND:
+                return None
+            return ParsedSessionFile(
+                path_to_project_id(meta.cwd),
+                meta.session_id,
+                SessionType.SUBAGENT,
+                file_path=str(relative),
+                parent_session_id=parts[2],
+            )
+        if meta.kind != MAIN_KIND:
+            return None
         return ParsedSessionFile(
             path_to_project_id(meta.cwd),
             meta.session_id,

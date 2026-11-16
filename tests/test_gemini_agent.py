@@ -109,6 +109,7 @@ async def _wait_for(predicate, timeout=10.0):
 
 
 @pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 async def test_new_session_turn_with_streaming_and_approval(fake_cli, tmp_path):
     agent = _Recorder("draft-id", "project", str(tmp_path), _settings(permission_mode="auto_edit"),
                       model="gemini-3.8-flash", trusted=True)
@@ -146,6 +147,7 @@ async def test_new_session_turn_with_streaming_and_approval(fake_cli, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 async def test_resume_ignores_the_history_replay_and_switches_model(fake_cli, tmp_path):
     agent = _Recorder("canonical-id", "project", str(tmp_path), _settings(), model="gemini-3.8-flash", trusted=False)
     await agent.open(resume=True)
@@ -167,3 +169,26 @@ async def test_missing_cli_is_reported(monkeypatch, tmp_path):
     with pytest.raises(SendDeliveryError) as excinfo:
         await agent.open(resume=False)
     assert excinfo.value.ui_message["key"] == "backend.gemini.cliNotFound"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_first_prompt_carries_context_then_twicc_instructions(tmp_path):
+    from twicc.context_injection import clear_context, inject_context
+
+    agent = _Recorder("prompt-test", "project", str(tmp_path), _settings(), model=None, trusted=True)
+    agent._addendum = "You are running inside TwiCC."
+    inject_context(agent.session_id, session_id="prompt-test")
+    try:
+        [block] = await agent._build_prompt("Hello", None)
+        text = block["text"]
+        # The context block stays anchored at the start (the ingestion strips it there).
+        assert text.startswith("<twicc:context>")
+        assert "<twicc:instruction>\nYou are running inside TwiCC.\n</twicc:instruction>" in text
+        assert text.endswith("Hello")
+        # Once only: the CLI keeps it in the conversation it resumes.
+        assert await agent._build_prompt("Again", None) == [{"type": "text", "text": "Again"}]
+        # A slash command is sent untouched.
+        assert await agent._build_prompt("/memory show", None) == [{"type": "text", "text": "/memory show"}]
+    finally:
+        clear_context(agent.session_id)

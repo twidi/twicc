@@ -28,6 +28,7 @@ import orjson
 
 from twicc.core.content_storage.readers import effective_current, iter_current_items
 from twicc.core.enums import ItemKind, Provider
+from twicc.core.services.attachments.types import UserTextSlot
 from twicc.pricing import TokenUsage, calculate_line_context_usage
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
@@ -138,7 +139,9 @@ class GeminiSessionCompute(BaseSessionCompute):
             return ItemKind.SYSTEM
         record_type = parsed_json.get("type")
         if record_type == records.TYPE_USER:
-            return ItemKind.USER_MESSAGE if records.user_text(parsed_json) else ItemKind.SYSTEM
+            if records.user_text(parsed_json) or records.attachment_count(parsed_json):
+                return ItemKind.USER_MESSAGE
+            return ItemKind.SYSTEM
         if record_type == records.TYPE_GEMINI:
             if records.assistant_text(parsed_json):
                 return ItemKind.ASSISTANT_MESSAGE
@@ -167,8 +170,24 @@ class GeminiSessionCompute(BaseSessionCompute):
             return {"model": model}
         return {}
 
+    def user_text_slots(self, parsed: dict) -> tuple[UserTextSlot, ...]:
+        # The prompt parts of a ``user`` record typed by the user (not the
+        # injected session context, not a tool result echo).
+        if parsed.get("type") != records.TYPE_USER or not isinstance(parsed.get("content"), list):
+            return ()
+        if records.is_tool_result_echo(parsed):
+            return ()
+        text = records.content_text(parsed.get("content"))
+        if text.lstrip().startswith(records.SESSION_CONTEXT_PREFIX):
+            return ()
+        return (UserTextSlot(parsed, "content", "gemini"),)
+
     def extract_user_message_text(self, parsed_json: dict) -> str | None:
-        return records.user_text(parsed_json)
+        # A subagent's first message wraps its task in an ``<objective>``
+        # block: that inner prompt is what the launcher's ``invoke_agent`` sent,
+        # and what links the two (exact prompt match, see compute_base).
+        text = records.user_text(parsed_json)
+        return records.subagent_task(text) if text else text
 
     def extract_custom_title(self, parsed_json: dict) -> tuple[str, str] | None:
         return None
@@ -271,17 +290,39 @@ class GeminiSessionCompute(BaseSessionCompute):
     ) -> str | None:
         return None
 
-    # Gemini CLI subagents write their own files (``kind`` other than
-    # ``main``), not linked in v1.
+    # Subagent runs write their own file (``chats/<parent-id>/<id>.jsonl``) and
+    # the ``invoke_agent`` result does not name it: links come from the prompt
+    # (``extract_task_tool_use_prompts`` / ``extract_user_message_text``).
 
     def extract_agent_info_from_tool_result(self, parsed_json: dict) -> tuple[str, str, bool] | None:
         return None
 
+    # Link subagents to their ``invoke_agent`` call by prompt, in the live and
+    # batch paths (the call record is written once the subagent finished).
+    rebuild_agent_prompt_links = True
+
+    def extract_history_facts(self, parsed: dict, *, line_num: int, history) -> list:
+        from .history_facts import extract_history_facts
+
+        return extract_history_facts(parsed, line_num=line_num, history=history)
+
+    def _invoke_agent_calls(self, parsed_json: dict) -> list[dict]:
+        if parsed_json.get("type") != records.TYPE_GEMINI:
+            return []
+        return [call for call in records.tool_calls(parsed_json) if call.get("name") == records.INVOKE_AGENT_TOOL]
+
     def extract_task_tool_uses(self, parsed_json: dict) -> list[tuple[str, bool]]:
-        return _EMPTY_TASK_TOOL_USES
+        calls = self._invoke_agent_calls(parsed_json)
+        return [(call["id"], False) for call in calls] if calls else _EMPTY_TASK_TOOL_USES
 
     def extract_task_tool_use_prompts(self, parsed_json: dict) -> list[tuple[str, str, bool]]:
-        return []
+        prompts = []
+        for call in self._invoke_agent_calls(parsed_json):
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            prompt = args.get("prompt")
+            if isinstance(prompt, str) and prompt.strip():
+                prompts.append((call["id"], prompt, False))
+        return prompts
 
     # ------------------------------------------------------------------
     # Batch single pass
@@ -305,7 +346,7 @@ class GeminiSessionCompute(BaseSessionCompute):
             tool_result_id=result_info.tool_use_id if result_info else None,
             tool_result_error=result_info.error_text if result_info else None,
             tool_use_entries=self.extract_tool_use_entries(parsed_json, session_id=session_id),
-            task_tool_uses=_EMPTY_TASK_TOOL_USES,
+            task_tool_uses=self.extract_task_tool_uses(parsed_json),
             file_paths=self.extract_paths_from_tool_uses(parsed_json),
             has_prefix=False,
             has_suffix=False,

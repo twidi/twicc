@@ -212,6 +212,9 @@ _ARRAY_SLOT_TYPES: dict[str, tuple[str, frozenset[str]]] = {
     "claude": ("text", frozenset({"image", "document"})),
     "codex_response": ("input_text", frozenset({"input_image"})),
     "codex_canonical": ("text", frozenset({"image", "local_image"})),
+    # Gemini CLI parts carry no ``type``: a text part is ``{"text": ...}``.
+    # Attachments reach Gemini as files only, so there is no media entry.
+    "gemini": (None, frozenset()),
 }
 _HYBRID_FORMAT = "hybrid"
 

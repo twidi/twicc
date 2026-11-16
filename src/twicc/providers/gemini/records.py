@@ -19,6 +19,7 @@ No Django import here: shared by the compute, the helpers and the tests.
 
 from __future__ import annotations
 
+import re
 from typing import Any, NamedTuple
 
 TYPE_USER = "user"
@@ -91,6 +92,25 @@ def user_text(record: dict) -> str | None:
     if not text.strip() or text.lstrip().startswith(SESSION_CONTEXT_PREFIX):
         return None
     return text
+
+
+def attachment_count(record: dict) -> int:
+    """Entries of the attachments manifest the ingestion stored on a user record."""
+    attachments = record.get("twicc_attachments")
+    entries = attachments.get("entries") if isinstance(attachments, dict) else None
+    return len(entries) if isinstance(entries, list) else 0
+
+
+# Gemini CLI agents receive their task wrapped in their own prompt template;
+# the ``invoke_agent`` prompt sits between these tags (0.68 local agents).
+_OBJECTIVE_RE = re.compile(r"<objective>\n?(.*?)\n?</objective>", re.DOTALL)
+INVOKE_AGENT_TOOL = "invoke_agent"
+
+
+def subagent_task(text: str) -> str:
+    """The delegated prompt inside a subagent's first message, else ``text``."""
+    match = _OBJECTIVE_RE.search(text)
+    return match.group(1).strip() if match else text
 
 
 def assistant_text(record: dict) -> str | None:
