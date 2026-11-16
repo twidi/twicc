@@ -261,3 +261,19 @@ def test_every_provider_is_registered():
         assert provider in OrchestratorRegistry().PROVIDER_ORCHESTRATORS
         assert provider.value in _PER_PROVIDER
         assert provider.value in _PROVIDER_LABELS
+
+
+@pytest.mark.django_db
+def test_repeating_decimal_prices_sync_once():
+    # OpenRouter publishes some Google cache prices per token with a repeating
+    # decimal; a second sync of the same catalogue must not insert a duplicate.
+    from twicc.pricing import extract_provider_prices, persist_provider_prices
+
+    models = [{"id": "google/gemini-3.5-flash-lite", "pricing": {
+        "prompt": "0.0000001", "completion": "0.0000004", "input_cache_read": "0.00000001",
+        "input_cache_write": "0.0000000833333333333333",
+    }}]
+    first = persist_provider_prices(Provider.GEMINI, extract_provider_prices(models, Provider.GEMINI))
+    second = persist_provider_prices(Provider.GEMINI, extract_provider_prices(models, Provider.GEMINI))
+    assert first == {"created": 1, "unchanged": 0}
+    assert second == {"created": 0, "unchanged": 1}

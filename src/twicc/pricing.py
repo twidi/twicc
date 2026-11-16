@@ -126,18 +126,30 @@ def extract_provider_prices(
         cache_write_5m = Decimal(pricing.get("input_cache_write", "0")) * 1_000_000
         cache_write_1h = helpers.compute_cache_write_1h_price(prompt, cache_write_5m)
 
+        # Round to the stored precision (``ModelPrice`` keeps 6 decimals): a
+        # per-token price with a repeating decimal (Google publishes some
+        # cache prices as 0.0833333…/M) would otherwise never compare equal to
+        # its stored copy, and every sync would insert a duplicate row.
         results.append(
             {
                 "model_id": model_id,
-                "input_price": prompt,
-                "output_price": completion,
-                "cache_read_price": cache_read,
-                "cache_write_5m_price": cache_write_5m,
-                "cache_write_1h_price": cache_write_1h,
+                "input_price": _price_quantum(prompt),
+                "output_price": _price_quantum(completion),
+                "cache_read_price": _price_quantum(cache_read),
+                "cache_write_5m_price": _price_quantum(cache_write_5m),
+                "cache_write_1h_price": _price_quantum(cache_write_1h),
             }
         )
 
     return results
+
+
+_PRICE_PLACES = Decimal("0.000001")
+
+
+def _price_quantum(value: Decimal) -> Decimal:
+    """``value`` rounded to the precision of the ``ModelPrice`` price columns."""
+    return value.quantize(_PRICE_PLACES)
 
 
 def persist_provider_prices(
