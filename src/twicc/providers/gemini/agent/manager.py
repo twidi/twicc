@@ -96,7 +96,11 @@ class GeminiAgentManager(BaseAgentManager):
             raise SendDeliveryError("Cannot start a new agent without a message", code="send_failed",
                                     ui_message=ui_message("backend.gemini.messageRequired"))
         async with self._lock:
-            return await self._start_agent(session_id, project_id, cwd, text, resume=False, settings=settings)
+            self._check_ephemeral_readonly(session_id, ephemeral_admission)
+            return await self._start_agent(
+                session_id, project_id, cwd, text, resume=False, settings=settings,
+                ephemeral_admission=ephemeral_admission,
+            )
 
     async def send_to_session(
         self,

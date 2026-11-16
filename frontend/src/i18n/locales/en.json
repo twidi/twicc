@@ -3908,6 +3908,7 @@
     "backend.codex.waitingForSubagents": "waiting for {count} subagent | waiting for {count} subagents",
     "backend.gemini.agentDead": "Cannot send message: agent is dead",
     "backend.gemini.agentStateCannotSend": "Cannot send message: agent is in state {state}",
+    "backend.gemini.apiKeyMissingUntrusted": "Gemini CLI found no API key: in an untrusted project it reads no .env file. Trust the project or set GEMINI_API_KEY in TwiCC's environment.",
     "backend.gemini.attachmentsUnsupported": "Attachments are not available for Gemini yet",
     "backend.gemini.cliNotFound": "Gemini CLI not found: install it or set TWICC_GEMINI_BIN",
     "backend.gemini.ephemeralUnsupported": "Ephemeral runs are not available for Gemini",

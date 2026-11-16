@@ -135,6 +135,17 @@ class GeminiAgent(BaseAgent):
                     raise AcpError("session/new returned no session id")
                 self.session_id = session_id
             await self._apply_mode(self.agent_settings.permission_mode)
+        except AcpError as exc:
+            await self._connection.close(timeout=1.0)
+            if not self._trusted and "API key" in str(exc):
+                # The CLI reads no ``.env`` file in a folder it does not trust.
+                raise SendDeliveryError(
+                    "Gemini CLI found no API key: in an untrusted project it reads no .env file; "
+                    "trust the project or set GEMINI_API_KEY in TwiCC's environment",
+                    code="agent_start_failed",
+                    ui_message=ui_message("backend.gemini.apiKeyMissingUntrusted"),
+                ) from exc
+            raise
         except BaseException:
             await self._connection.close(timeout=1.0)
             raise

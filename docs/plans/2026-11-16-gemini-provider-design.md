@@ -183,6 +183,16 @@ not bundled: it is an npm package, unlike the Codex wheel.
   Gemini API key; the session then fails with "API key is missing". Put the key
   in the environment of the TwiCC process or in `~/.gemini/.env` and keep project
   directories outside such folders.
+- In a folder it does not trust, the CLI reads no `.env` file at all. TwiCC
+  passes `GEMINI_CLI_TRUST_WORKSPACE=true` only for projects the user trusted in
+  TwiCC; in an untrusted project an API key stored in `~/.gemini/.env` is not
+  found, and the start error says so (trust the project, or export
+  `GEMINI_API_KEY` in TwiCC's environment; OAuth sign-in is unaffected).
+- `session/load` makes the CLI create and remove a short-lived session file;
+  the watcher logs one harmless "file not found" error for it.
+- The live text stream is matched to the stored record by content (ACP chunks
+  carry no record id), so a streamed block can disappear for a moment at the
+  end of a turn, before the watcher stores the final record.
 - Upgrades enable the new provider by default (the provider list is a deny
   list). Without the CLI, nothing runs; creating a Gemini session reports that
   the `gemini` binary is missing.

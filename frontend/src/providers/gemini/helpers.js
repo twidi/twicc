@@ -160,6 +160,19 @@ export class GeminiHelpers extends BaseProviderHelpers {
         return AGENT_SETTINGS_CHOICES()
     }
 
+    /**
+     * The model's context window, from the registry (``provider_extra``).
+     * Gemini has no ``context_max`` setting, so ``session.context_max`` stays
+     * null: without this, the context ring would divide by null.
+     */
+    getEffectiveContextMax(session, overrideModel = undefined) {
+        const model = overrideModel !== undefined ? overrideModel : session?.selected_model
+        const registry = this.getModelRegistry()
+        const entry = (model && registry.find(e => e.selected_model === model))
+            || registry.find(e => e.provider_extra?.context_window)
+        return entry?.provider_extra?.context_window ?? session?.context_max ?? null
+    }
+
     getModelRegistry() {
         return useGeminiStore().modelRegistry
     }

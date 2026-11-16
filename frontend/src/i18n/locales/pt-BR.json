@@ -3908,6 +3908,7 @@
     "backend.codex.waitingForSubagents": "aguardando {count} subagente | aguardando {count} subagentes",
     "backend.gemini.agentDead": "Não é possível enviar a mensagem: o agente foi encerrado",
     "backend.gemini.agentStateCannotSend": "Não é possível enviar a mensagem: o agente está no estado {state}",
+    "backend.gemini.apiKeyMissingUntrusted": "O Gemini CLI não encontrou nenhuma chave de API: em um projeto não confiável ele não lê nenhum arquivo .env. Confie no projeto ou defina GEMINI_API_KEY no ambiente do TwiCC.",
     "backend.gemini.attachmentsUnsupported": "Anexos ainda não estão disponíveis para o Gemini",
     "backend.gemini.cliNotFound": "Gemini CLI não encontrado: instale-o ou defina TWICC_GEMINI_BIN",
     "backend.gemini.ephemeralUnsupported": "Execuções efêmeras não estão disponíveis para o Gemini",
