@@ -27,6 +27,13 @@ const routes = [
         component: LoginView, // never rendered, redirect happens in beforeEnter
     },
     { path: '/', name: 'home', component: HomeView },
+    // Multi-user administration (admins only, lazy-loaded).
+    {
+        path: '/admin/users',
+        name: 'admin-users',
+        component: () => import('./views/AdminUsersView.vue'),
+        meta: { adminOnly: true },
+    },
     { path: '/json-test', name: 'json-test', component: JsonTestView, meta: { public: true } },
     { path: '/git-log-test', name: 'git-log-test', component: GitLogTestView, meta: { public: true } },
     {
@@ -131,6 +138,11 @@ router.beforeEach(async (to) => {
             name: 'login',
             query: { redirect: to.fullPath },
         }
+    }
+
+    // Admin-only pages: members land on the home page instead.
+    if (to.meta.adminOnly && !authStore.isAdmin) {
+        return { name: 'home' }
     }
 
     return true

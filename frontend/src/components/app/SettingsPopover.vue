@@ -48,6 +48,7 @@ import LayoutManagerDialog from '../session/layout/LayoutManagerDialog.vue'
 import ProviderSettingsSection from './ProviderSettingsSection.vue'
 import ShareManagerDialog from '../share/ShareManagerDialog.vue'
 import TelemetryPayloadDialog from './TelemetryPayloadDialog.vue'
+import UserMenu from '../accounts/UserMenu.vue'
 import { showUpdateToast, sendChangelogSeen, sendValidateUsageDumpPath, sendValidateUsageFile, sendValidateTmuxConfigPath, requestTelemetryInstanceIdReset } from '../../composables/useWebSocket'
 import { toast } from '../../composables/useToast'
 import { useProviderActivation } from '../../composables/useProviderActivation'
@@ -135,6 +136,13 @@ const sections = computed(() => [
     { id: 'mcp',           label: t('settings.sections.externalMcp'), navLabel: t('settings.sections.mcp'), synced: true },
     { id: 'peers',         label: t('settings.sections.peers'), synced: true, badge: peersStore.inboxCount },
 ])
+
+// Members only get the sections that act on their own browser/display: the
+// others write instance-wide configuration the server refuses from them.
+const MEMBER_SECTIONS = new Set(['general', 'notifications', 'sessions', 'editor'])
+const visibleSections = computed(() => (authStore.isAdmin
+    ? sections.value
+    : sections.value.filter(section => MEMBER_SECTIONS.has(section.id))))
 
 const activeSection = ref('general')
 const mobileShowContent = ref(false)
@@ -1394,7 +1402,7 @@ function onChangelogClose() {
                     <nav ref="navRef" v-scroll-shadow class="settings-nav">
                         <span ref="navInkRef" class="glide-ink settings-nav-ink" aria-hidden="true"></span>
                         <button
-                            v-for="section in sections"
+                            v-for="section in visibleSections"
                             :key="section.id"
                             class="settings-nav-item"
                             :class="{ active: activeSection === section.id }"
@@ -2461,8 +2469,9 @@ function onChangelogClose() {
                     @click="cycleStatusProvider"
                 ></wa-icon>
                 <AppTooltip v-if="currentStatusDisplay && hasMultipleStatusProviders" :for="statusNextButtonId">{{ $t('settings.status.nextProvider') }}</AppTooltip>
+                <UserMenu v-if="authStore.principal" @navigate="handleCloseRequest" />
                 <wa-button
-                    v-if="showLogout"
+                    v-else-if="showLogout"
                     :id="logoutButtonId"
                     class="logout-button"
                     variant="danger"
@@ -2472,7 +2481,7 @@ function onChangelogClose() {
                 >
                     <wa-icon name="right-from-bracket"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="showLogout" :for="logoutButtonId">{{ $t('auth.logout') }}</AppTooltip>
+                <AppTooltip v-if="showLogout && !authStore.principal" :for="logoutButtonId">{{ $t('auth.logout') }}</AppTooltip>
             </footer>
         </wa-popover>
         <ChangelogDialog ref="changelogDialogRef" @close="onChangelogClose" />
