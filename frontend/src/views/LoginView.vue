@@ -1,6 +1,7 @@
 <script setup>
 import { resolveUiMessage } from '../i18n/uiMessages.js'
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { localUiMessage } from '../i18n/uiMessages.js'
+import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { markAppNavigation } from '../utils/appNavigation'
@@ -10,9 +11,43 @@ const authStore = useAuthStore()
 const router = useRouter()
 
 const password = ref('')
+const email = ref('')
 const error = ref('')
 const loading = ref(false)
 const passwordInput = ref(null)
+const emailInput = ref(null)
+
+// Multi-user sign-in options (all false on a single-user instance, which keeps
+// the historical password-only screen).
+const googleEnabled = computed(() => authStore.googleEnabled)
+const accountsEnabled = computed(() => authStore.accountsEnabled)
+// 'account' (email + password) or 'owner' (instance password).
+const mode = ref(authStore.accountsEnabled ? 'account' : 'owner')
+const showAccountForm = computed(() => accountsEnabled.value && mode.value === 'account')
+// Switching forms is only offered when both ways exist.
+const canSwitchMode = computed(() => accountsEnabled.value && authStore.ownerPassword)
+
+const GOOGLE_ERROR_KEYS = {
+    cancelled: 'auth.login.googleErrors.cancelled',
+    invalid_state: 'auth.login.googleErrors.invalidState',
+    no_account: 'auth.login.googleErrors.noAccount',
+    account_disabled: 'auth.login.googleErrors.accountDisabled',
+    identity_mismatch: 'auth.login.googleErrors.identityMismatch',
+    email_not_verified: 'auth.login.googleErrors.emailNotVerified',
+    rate_limited: 'auth.login.googleErrors.rateLimited',
+}
+
+function toggleMode() {
+    mode.value = mode.value === 'account' ? 'owner' : 'account'
+    error.value = ''
+    focusFirstInput()
+}
+
+function signInWithGoogle() {
+    const redirect = router.currentRoute.value.query.redirect || '/'
+    markAppNavigation()
+    window.location.href = `/api/auth/google/start/?next=${encodeURIComponent(redirect)}`
+}
 
 /**
  * Redirect to the originally requested page (from ?redirect=) or home.
@@ -47,8 +82,19 @@ async function focusPasswordInput() {
     passwordInput.value?.focus()
 }
 
+async function focusFirstInput() {
+    await nextTick()
+    const target = showAccountForm.value && !email.value ? emailInput.value : passwordInput.value
+    if (target?.updateComplete) await target.updateComplete
+    target?.focus()
+}
+
 onMounted(async () => {
-    focusPasswordInput()
+    const googleError = authStore.consumeGoogleError()
+    if (googleError) {
+        error.value = localUiMessage(GOOGLE_ERROR_KEYS[googleError] || 'auth.login.googleErrors.generic')
+    }
+    focusFirstInput()
 
     recheckInterval = setInterval(async () => {
         await authStore.checkAuthOnce()
@@ -71,7 +117,9 @@ async function handleSubmit() {
     let succeeded = false
 
     try {
-        const result = await authStore.login(password.value)
+        // Short-circuits on a single-user instance (no account form, no email).
+        const loginEmail = authStore.accountsEnabled && mode.value === 'account' ? email.value.trim() : ''
+        const result = await authStore.login(password.value, loginEmail)
         if (result.success) {
             succeeded = true
             redirectAway()
@@ -98,45 +146,83 @@ async function handleSubmit() {
                 <BrandLogo :size="64" animated />
                 <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- TwiCC is the product name. -->
                 <h1 class="login-title">TwiCC</h1>
-                <p class="login-subtitle">{{ $t('auth.login.passwordRequired') }}</p>
+                <p class="login-subtitle">{{ showAccountForm ? $t('auth.login.accountRequired') : $t('auth.login.passwordRequired') }}</p>
             </div>
 
             <wa-divider></wa-divider>
 
-            <form @submit.prevent="handleSubmit" class="login-form">
-                <div class="form-group">
-                    <label class="form-label">{{ $t('auth.login.passwordLabel') }}</label>
-                    <wa-input
-                        ref="passwordInput"
-                        type="password"
-                        :placeholder="$t('auth.login.passwordPlaceholder')"
-                        :value="password"
-                        @input="password = $event.target.value"
-                        @wa-input="password = $event.target.value"
-                        :disabled="loading"
-                        size="small"
+            <div class="login-form">
+                <wa-button
+                    v-if="googleEnabled"
+                    variant="neutral"
+                    appearance="outlined"
+                    size="medium"
+                    class="login-button"
+                    @click="signInWithGoogle"
+                >
+                    <wa-icon slot="start" family="brands" name="google"></wa-icon>
+                    {{ $t('auth.login.signInWithGoogle') }}
+                </wa-button>
+
+                <div v-if="googleEnabled" class="login-or">{{ $t('auth.login.or') }}</div>
+
+                <form @submit.prevent="handleSubmit" class="login-form">
+                    <div v-if="showAccountForm" class="form-group">
+                        <label class="form-label">{{ $t('auth.login.emailLabel') }}</label>
+                        <wa-input
+                            ref="emailInput"
+                            type="email"
+                            autocomplete="username"
+                            :placeholder="$t('auth.login.emailPlaceholder')"
+                            :value="email"
+                            @input="email = $event.target.value"
+                            @wa-input="email = $event.target.value"
+                            :disabled="loading"
+                            size="small"
+                        >
+                            <wa-icon slot="start" name="envelope" variant="solid"></wa-icon>
+                        </wa-input>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">{{ showAccountForm ? $t('auth.login.accountPasswordLabel') : $t('auth.login.passwordLabel') }}</label>
+                        <wa-input
+                            ref="passwordInput"
+                            type="password"
+                            autocomplete="current-password"
+                            :placeholder="$t('auth.login.passwordPlaceholder')"
+                            :value="password"
+                            @input="password = $event.target.value"
+                            @wa-input="password = $event.target.value"
+                            :disabled="loading"
+                            size="small"
+                        >
+                            <wa-icon slot="start" name="lock" variant="solid"></wa-icon>
+                        </wa-input>
+                    </div>
+
+                    <wa-button
+                        type="submit"
+                        variant="brand"
+                        size="medium"
+                        :loading="loading"
+                        :disabled="!password || (showAccountForm && !email) || loading"
+                        class="login-button"
                     >
-                        <wa-icon slot="start" name="lock" variant="solid"></wa-icon>
-                    </wa-input>
-                </div>
+                        <wa-icon slot="start" name="right-to-bracket"></wa-icon>
+                        {{ $t('auth.login.signIn') }}
+                    </wa-button>
+                </form>
 
                 <wa-callout v-if="error" variant="danger" size="small" class="login-error">
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                     {{ resolveUiMessage(error) }}
                 </wa-callout>
 
-                <wa-button
-                    type="submit"
-                    variant="brand"
-                    size="medium"
-                    :loading="loading"
-                    :disabled="!password || loading"
-                    class="login-button"
-                >
-                    <wa-icon slot="start" name="right-to-bracket"></wa-icon>
-                    {{ $t('auth.login.signIn') }}
-                </wa-button>
-            </form>
+                <a v-if="canSwitchMode" href="#" class="login-switch" @click.prevent="toggleMode">
+                    {{ showAccountForm ? $t('auth.login.useInstancePassword') : $t('auth.login.useAccount') }}
+                </a>
+            </div>
         </wa-card>
     </div>
 </template>
@@ -199,6 +285,17 @@ async function handleSubmit() {
 
 .login-error {
     margin: 0;
+}
+
+.login-or {
+    text-align: center;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+}
+
+.login-switch {
+    text-align: center;
+    font-size: var(--wa-font-size-s);
 }
 
 .login-button {
