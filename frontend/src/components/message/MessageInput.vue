@@ -36,6 +36,9 @@ import { getParsedContent } from '../../utils/parsedContent'
 import { generateUUID } from '../../utils/crypto'
 import AttachmentStrip from '../media/AttachmentStrip.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
+import DictationButton from './DictationButton.vue'
+import { useSpeechToText } from '../../composables/useSpeechToText.js'
+import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import FilePickerPopup from '../files/FilePickerPopup.vue'
 import CommandPickerPopup from './CommandPickerPopup.vue'
 import MessageHistoryPickerPopup from './MessageHistoryPickerPopup.vue'
@@ -394,6 +397,7 @@ const messageText = ref('')
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const attachButtonId = useId()
+const dictationButtonId = useId()
 const settingsButtonId = useId()
 const textareaAnchorId = useId()
 const hybridButtonId = useId()
@@ -974,6 +978,78 @@ function updateTextareaContent(newText) {
     adjustTextareaHeight()
 }
 
+// ── Dictation (speech to text) ─────────────────────────────────────────────
+// Design: docs/plans/2026-11-18-speech-to-text-design.md.
+function getComposerSelection() {
+    const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+    const length = messageText.value.length
+    if (!inner) return { start: length, end: length }
+    return { start: inner.selectionStart ?? length, end: inner.selectionEnd ?? length }
+}
+
+const dictation = useSpeechToText({
+    settings: settingsStore,
+    speech: useTextToSpeechStore(),
+    locale,
+    getValue: () => messageText.value,
+    getSelection: getComposerSelection,
+    setValue: (value, cursor) => {
+        updateTextareaContent(value)
+        const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+        inner?.setSelectionRange(cursor, cursor)
+    },
+    onInserted: () => {
+        notifyUserDraftUpdated(props.sessionId)
+        // Desktop: hand the caret back for a quick edit or Ctrl+Enter. A touch
+        // device keeps the keyboard closed (the user tapped a button).
+        if (!settingsStore.isTouchDevice) textareaRef.value?.focus()
+    },
+})
+
+// The text was sent or cleared under a live dictation: stop writing into it.
+watch(messageText, (text) => {
+    if (!text && dictation.activeEngine.value === 'browser') dictation.detach()
+})
+
+// Ctrl+Shift+Space in the composer: tap to toggle, or hold to talk (released
+// after HOLD_TO_TALK_MS, the dictation stops with the key).
+const DICTATION_SHORTCUT_LABEL = 'Ctrl+Shift+Space'
+const HOLD_TO_TALK_MS = 600
+let dictationKeyDownAt = 0
+
+function isDictationShortcut(event) {
+    return event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.code === 'Space'
+}
+
+function onDictationKeydown(event) {
+    if (isDictationShortcut(event)) {
+        event.preventDefault()
+        if (event.repeat) return true
+        if (dictation.isActive.value) {
+            dictationKeyDownAt = 0
+            dictation.stop()
+        } else {
+            dictationKeyDownAt = Date.now()
+            dictation.start()
+        }
+        return true
+    }
+    if (event.key === 'Escape' && dictation.isActive.value) {
+        event.preventDefault()
+        event.stopPropagation()
+        dictation.cancel()
+        return true
+    }
+    return false
+}
+
+function onKeyup(event) {
+    if (event.code !== 'Space' || !dictationKeyDownAt) return
+    const held = Date.now() - dictationKeyDownAt
+    dictationKeyDownAt = 0
+    if (held >= HOLD_TO_TALK_MS && dictation.isActive.value) dictation.stop()
+}
+
 /**
  * Mirror popup filter text into the textarea at the given cursor position.
  * Replaces the previously mirrored text (tracked by mirroredLengthRef) with
@@ -1360,6 +1436,8 @@ function onHistoryPickerClose(payload) {
  * PageUp on first line opens message history picker.
  */
 function onKeydown(event) {
+    if (onDictationKeydown(event)) return
+
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault()
         handleSend()
@@ -2160,6 +2238,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
             resize="none"
             @input="onInput"
             @keydown="onKeydown"
+            @keyup="onKeyup"
             @paste="onPaste"
             @focus="adjustTextareaHeight"
         ></wa-textarea>
@@ -2253,6 +2332,14 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                     <wa-icon name="paperclip"></wa-icon>
                 </wa-button>
                 <AppTooltip :for="attachButtonId">{{ $t('composer.attachments.add') }}</AppTooltip>
+
+                <!-- Dictation (speech to text): hidden when the engine is 'off' -->
+                <DictationButton
+                    v-if="dictation.visible.value"
+                    :stt="dictation"
+                    :button-id="dictationButtonId"
+                    :shortcut-label="settingsStore.isTouchDevice ? '' : DICTATION_SHORTCUT_LABEL"
+                />
 
                 <!-- Attachment badge + popover -->
                 <template v-if="attachmentCount > 0">

@@ -102,6 +102,11 @@ export const SETTINGS_SCHEMA = {
     titleAutoApply: null,
     titleSuggestionModel: null,
     summaryModel: null,
+    // Speech to text (dictation), synced: see utils/speechToText.js.
+    sttEngine: null,
+    sttModel: null,
+    sttLanguage: null,
+    sttScriptCommand: null,
     timelineSummaryEnabled: null,
     timelineSpeechFinalOnly: null,
     titleSystemPrompt: null,
@@ -166,6 +171,11 @@ const SETTINGS_VALIDATORS = {
     titleAutoApply: (v) => typeof v === 'boolean',
     titleSuggestionModel: (v) => resolveTitleSuggestionModel(v) === v,
     summaryModel: (v) => ['auto', 'haiku', 'luna', 'openrouter'].includes(v),
+    // Mirrors STT_ENGINES (utils/speechToText.js).
+    sttEngine: (v) => ['auto', 'browser', 'openrouter', 'script', 'off'].includes(v),
+    sttModel: (v) => typeof v === 'string' && v.length <= 200,
+    sttLanguage: (v) => typeof v === 'string' && /^([a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*)?$/.test(v),
+    sttScriptCommand: (v) => typeof v === 'string' && v.length <= 4000,
     timelineSummaryEnabled: (v) => typeof v === 'boolean',
     timelineSpeechFinalOnly: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
@@ -502,6 +512,18 @@ export const useSettingsStore = defineStore('settings', {
     actions: {
         setSummaryModel(value) {
             if (SETTINGS_VALIDATORS.summaryModel(value)) this.summaryModel = value
+        },
+        setSttEngine(value) {
+            if (SETTINGS_VALIDATORS.sttEngine(value)) this.sttEngine = value
+        },
+        setSttModel(value) {
+            if (SETTINGS_VALIDATORS.sttModel(value)) this.sttModel = value
+        },
+        setSttLanguage(value) {
+            if (SETTINGS_VALIDATORS.sttLanguage(value)) this.sttLanguage = value
+        },
+        setSttScriptCommand(value) {
+            if (SETTINGS_VALIDATORS.sttScriptCommand(value)) this.sttScriptCommand = value
         },
         setTimelineSpeechFinalOnly(value) {
             if (SETTINGS_VALIDATORS.timelineSpeechFinalOnly(value)) this.timelineSpeechFinalOnly = value
@@ -1319,6 +1341,10 @@ export function initSettings() {
             titleAutoApply: store.titleAutoApply,
             titleSuggestionModel: store.getTitleSuggestionModel,
             summaryModel: store.summaryModel,
+            sttEngine: store.sttEngine,
+            sttModel: store.sttModel,
+            sttLanguage: store.sttLanguage,
+            sttScriptCommand: store.sttScriptCommand,
             timelineSummaryEnabled: store.timelineSummaryEnabled,
             timelineSpeechFinalOnly: store.timelineSpeechFinalOnly,
             titleSystemPrompt: store.titleSystemPrompt,
