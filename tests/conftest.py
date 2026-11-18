@@ -21,6 +21,26 @@ from tests.orphan_watchdog import start_orphan_watchdog
 
 pytest_plugins = ["tests.content_storage_helpers", "tests.migration_templates"]
 
+@pytest.fixture(autouse=True)
+def _no_accounts_without_db(request, monkeypatch):
+    """Multi-user: every gate asks whether accounts exist (a DB query).
+
+    A test without database access gets the historical single-user answer
+    ("no account") instead of pytest-django's blocked-DB error; tests that
+    use the DB keep the real query.
+    """
+    from twicc.accounts import principal
+
+    principal.invalidate_accounts_enabled()
+    uses_db = bool({"db", "transactional_db", "django_db_setup"} & set(request.fixturenames)) or any(
+        request.node.iter_markers("django_db")
+    )
+    if not uses_db:
+        monkeypatch.setattr(principal, "accounts_enabled_sync", lambda: False)
+    yield
+    principal.invalidate_accounts_enabled()
+
+
 # The clock of ``frozen_now``: one day after the agent-run fixture lines, so
 # their sessions stay hot (the cold policy starts at 30 days).
 NOW = T0 + timedelta(days=1)
