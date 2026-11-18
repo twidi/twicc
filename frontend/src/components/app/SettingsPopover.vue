@@ -35,6 +35,7 @@ import NotificationSettings from './NotificationSettings.vue'
 import TipsSettings from '../settings/TipsSettings.vue'
 import HelpSettings from '../settings/HelpSettings.vue'
 import TextToSpeechSettings from '../settings/TextToSpeechSettings.vue'
+import SpeechToTextSettings from '../settings/SpeechToTextSettings.vue'
 import SummarySettings from '../settings/SummarySettings.vue'
 import HelpIconButton from '../help/HelpIconButton.vue'
 import PeerHelpLink from '../peer/PeerHelpLink.vue'
@@ -132,6 +133,7 @@ const sections = computed(() => [
     { id: 'usage',         label: t('settings.sections.providerUsage'), navLabel: t('settings.sections.usage') },
     { id: 'summaries',     label: t('settings.sections.summaries'), synced: true },
     { id: 'tts',           label: t('settings.sections.textToSpeech'), synced: true },
+    { id: 'dictation',     label: t('settings.sections.dictation'), synced: true },
     { id: 'mcp',           label: t('settings.sections.externalMcp'), navLabel: t('settings.sections.mcp'), synced: true },
     { id: 'peers',         label: t('settings.sections.peers'), synced: true, badge: peersStore.inboxCount },
 ])
@@ -1717,6 +1719,7 @@ function onChangelogClose() {
 
                     <SummarySettings v-if="activeSection === 'summaries'" />
                     <TextToSpeechSettings v-if="activeSection === 'tts'" />
+                    <SpeechToTextSettings v-if="activeSection === 'dictation'" />
 
                     <McpSettings v-if="activeSection === 'mcp'" />
                     <!-- Sharing Section -->

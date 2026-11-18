@@ -20,6 +20,10 @@ NOTIFICATION_KEYS = frozenset({"externalNotificationTargets"})
 # get an entry here — ``tests/test_settings_cli.py`` enforces this so the help
 # never drifts out of sync.
 GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
+    "sttEngine": "Dictation engine in the composer: auto, browser, openrouter, script, or off.",
+    "sttModel": "OpenRouter transcription model for dictation (default openai/whisper-large-v3).",
+    "sttLanguage": "Dictation language as an ISO code (e.g. pt, en); empty means auto-detect.",
+    "sttScriptCommand": "Shell command transcribing a dictation: reads $TWICC_STT_FILE, prints the text.",
     "summaryModel": "Model used for message summaries: auto, haiku, luna, or openrouter. Invalid values use auto.",
     "timelineSpeechFinalOnly": "Read only end-of-turn messages automatically in timeline speech; manual reading remains available.",
     "timelineSummaryEnabled": "Summarize eligible timeline messages automatically before speech; manual summaries remain available.",

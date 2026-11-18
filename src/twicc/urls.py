@@ -17,6 +17,7 @@ from .share import views_assets as share_views_assets
 from .peer import inbound_views as peer_inbound_views
 from .peer import owner_views as peer_owner_views
 from .tts import views as tts_views
+from .stt import views as stt_views
 from .tts import native_views as native_tts_views
 from .summaries import views as summary_views
 from .uploads import views as upload_views
@@ -58,6 +59,7 @@ urlpatterns = [
     path("api/tts/native/capabilities/", native_tts_views.native_capabilities),
     path("api/tts/native/<uuid:session_id>/audio/<str:audio_id>/", native_tts_views.native_audio),
     path("api/tts/native/<uuid:session_id>/audio/<str:audio_id>/ending/", native_tts_views.native_audio_ending),
+    path("api/stt/transcribe/", stt_views.transcribe),
     path("api/tts/speech/", tts_views.tts_speech),
     path("api/tts/audio/<str:audio_id>/", tts_views.tts_audio),
     path("api/tts/audio/<str:audio_id>/ending/", tts_views.tts_audio_ending),
