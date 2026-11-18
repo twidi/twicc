@@ -130,6 +130,7 @@ TWICC_DATA_DIR=$PWD uv run python -m django <command> --settings=twicc.settings
 - **Agent settings:** the seven per-session fields are a closed bundle with one shape for all providers. A new provider flag is a new `Session` column, classified in the provider's `getAgentSettingsCategories()` (`frontend/src/providers/`). Never a side table.
 - **Project defaults** resolve at session creation only, in two mirrors: `frontend/src/utils/projectAgentDefaults.js` and `src/twicc/project_agent_defaults.py`. Keep them in sync.
 - **Trust is human-only.** Never expose it as an agent flag or skill. `permission_mode_if_untrusted` is never a `Session` field. See `src/twicc/core/services/trust.py` and `docs/archives/plans/2026-06-09-project-trust-design.md`.
+- **Multi-user access is deny-by-default** (`src/twicc/accounts/`). Members are filtered at three choke points: `AccessControlMiddleware.process_view` (HTTP; a global route must be listed in `MEMBER_GLOBAL_ROUTES` and filter its own output via `accounts/scoping.py`), `WSConsumer.send_json` → `MemberFrameFilter` (every `/ws/` frame; an unclassified type is dropped), and `WSConsumer._member_inbound_allowed` (inbound frames). A new route or broadcast type stays admin-only for members until you classify it. `twicc user` is local-only: never expose account management to RPC/MCP. See `docs/plans/2026-11-18-multi-user-design.md`.
 
 ## Artifact network broker
 
