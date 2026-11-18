@@ -3,7 +3,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { computed, toRaw } from 'vue'
-import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
+import {
+    buildProjectActivityIndex,
+    computeProjectDisplayName,
+    createProjectActivityComparator,
+    createProjectListComparator,
+} from '../utils/projectActivity.js'
 
 // Execute the real project getters with Pinia. The full store has browser-only
 // dependencies and extensionless imports that Node cannot load.
@@ -11,10 +16,12 @@ const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 const start = source.indexOf('        // Data getters')
 const end = source.indexOf('        // Session scope of a project:', start)
 assert.ok(start >= 0 && end > start)
+// The project order setting, read by the getters through useSettingsStore().
+const sortSetting = { getProjectSortOrder: 'activity' }
 const getters = new Function(
-    'buildProjectActivityIndex', 'createProjectActivityComparator',
+    'buildProjectActivityIndex', 'createProjectActivityComparator', 'createProjectListComparator', 'useSettingsStore',
     `return { ${source.slice(start, end)} }`,
-)(buildProjectActivityIndex, createProjectActivityComparator)
+)(buildProjectActivityIndex, createProjectActivityComparator, createProjectListComparator, () => sortSetting)
 const useProjectStore = defineStore('project-activity-test', {
     state: () => ({ projects: {} }),
     getters,
@@ -108,4 +115,45 @@ test('reactive child updates recalculate parent activity and global order', () =
     store.projects.child.mtime = 5
     assert.equal(activity.value, 10)
     assert.deepEqual(order.value, ['other', 'parent'])
+})
+
+
+test('alphabetical order uses display names, case-insensitive and natural', () => {
+    sortSetting.getProjectSortOrder = 'alphabetical'
+    try {
+        const store = makeStore([
+            { id: '-a', name: 'seer10', mtime: 50 },
+            { id: '-b', name: 'Seer2', mtime: 40 },
+            { id: '-c', name: 'seer', mtime: 30 },
+            { id: '-d', name: null, directory: '/home/me/Alpha', mtime: 20 },
+            { id: '-e', name: 'Émile', mtime: 10 },
+        ])
+        assert.deepEqual(ids(store.getListableProjects), ['-d', '-e', '-c', '-b', '-a'])
+        // Activity is still available for the "recent" views.
+        assert.deepEqual([...store.getListableProjects].sort(store.projectActivityComparator).map(p => p.id),
+            ['-a', '-b', '-c', '-d', '-e'])
+    } finally {
+        sortSetting.getProjectSortOrder = 'activity'
+    }
+})
+
+test('alphabetical order applies to worktrees, ties broken by id', () => {
+    sortSetting.getProjectSortOrder = 'alphabetical'
+    try {
+        const store = makeStore([
+            { id: 'parent', name: 'Main', mtime: 1 },
+            { id: 'wt-2', directory: '/x/feature', worktree_of: 'parent', mtime: 9 },
+            { id: 'wt-1', directory: '/y/feature', worktree_of: 'parent', mtime: 5 },
+            { id: 'wt-0', directory: '/z/bugfix', worktree_of: 'parent', mtime: 3 },
+        ])
+        assert.deepEqual(ids(store.getWorktreesOf('parent')), ['wt-0', 'wt-1', 'wt-2'])
+    } finally {
+        sortSetting.getProjectSortOrder = 'activity'
+    }
+})
+
+test('display name rule: name, then directory basename, then id tail', () => {
+    assert.equal(computeProjectDisplayName({ id: '-x', name: 'Named', directory: '/a/b' }), 'Named')
+    assert.equal(computeProjectDisplayName({ id: '-x', name: null, directory: '/a/b' }), 'b')
+    assert.equal(computeProjectDisplayName({ id: '-home-me-proj', name: null, directory: null }), 'proj')
 })

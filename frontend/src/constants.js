@@ -75,6 +75,19 @@ export const SESSION_TIME_FORMAT = {
 export const DEFAULT_SESSION_TIME_FORMAT = SESSION_TIME_FORMAT.RELATIVE_SHORT
 
 /**
+ * Order of the project lists (home page, project/workspace selectors, pickers):
+ * - activity: most recent activity first (a worktree's activity lifts its main project)
+ * - alphabetical: by display name, case-insensitive natural order ("Seer" < "Seer2" < "Seer10")
+ * The sidebar rail's "recent projects" always stays by activity.
+ */
+export const PROJECT_SORT_ORDER = {
+    ACTIVITY: 'activity',
+    ALPHABETICAL: 'alphabetical',
+}
+
+export const DEFAULT_PROJECT_SORT_ORDER = PROJECT_SORT_ORDER.ACTIVITY
+
+/**
  * Default maximum number of sessions kept alive in the cache (Vue KeepAlive).
  * Each cached session preserves its DOM, scroll position, and component state
  * for instant switching. Cost is ~150-500 KB per session (more with terminal).

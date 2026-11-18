@@ -62,7 +62,7 @@ const activeProjects = computed(() =>
     dataStore.getListableProjects.filter(p => !p.stale && !p.archived)
 )
 
-/** Named active projects (sorted by mtime desc — store order). */
+/** Named active projects (store order: the configured project order). */
 const namedProjects = computed(() =>
     activeProjects.value.filter(p => p.name !== null)
 )
@@ -115,7 +115,7 @@ const othersUnnamedFlatTree = computed(() => {
 })
 
 /**
- * Project IDs in display order: named projects by mtime desc, then unnamed sorted by directory.
+ * Project IDs in display order: named projects in store order, then unnamed sorted by directory.
  * Used to order scope groups in the list view.
  */
 const orderedProjectIds = computed(() => [
@@ -582,7 +582,7 @@ defineExpose({ open, close })
                         </wa-option>
                     </template>
 
-                    <!-- Remaining named projects (sorted by mtime desc) -->
+                    <!-- Remaining named projects (store order) -->
                     <template v-if="activeWsLabel && (namedSplit.others.length || othersUnnamedFlatTree.length)">
                         <wa-divider></wa-divider>
                         <wa-option disabled class="section-header-option">{{ $t('project.list.otherSection') }}</wa-option>

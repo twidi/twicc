@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { computed, nextTick, watch } from 'vue'
+import { computeProjectDisplayName } from '../utils/projectActivity.js'
 
 // Execute production getters/actions with Pinia. The full store requires the browser.
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
@@ -14,7 +15,9 @@ assert.ok(getterStart >= 0 && getterEnd > getterStart)
 assert.ok(actionStart >= 0 && actionEnd > actionStart)
 const useProjects = defineStore('project-display-name-test', {
     state: () => ({ projects: {}, localState: { projectDisplayNames: {} } }),
-    getters: new Function(`return { ${source.slice(getterStart, getterEnd)} }`)(),
+    getters: new Function('computeProjectDisplayName', `return { ${source.slice(getterStart, getterEnd)} }`)(
+        computeProjectDisplayName,
+    ),
     actions: new Function(`return { ${source.slice(actionStart, actionEnd)} }`)(),
 })
 const project = { id: '-home-dev-fixture', name: 'Fixture', directory: '/home/dev/fixture', mtime: 1, total_cost: 0 }

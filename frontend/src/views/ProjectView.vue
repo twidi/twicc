@@ -637,7 +637,7 @@ const effectiveProjectId = computed(() => {
     return ALL_PROJECTS_ID
 })
 
-// All projects for the selector (already sorted by mtime desc in store).
+// All projects for the selector (already in the configured project order in store).
 // Worktree projects are excluded from every project picker/selector.
 const allProjects = computed(() =>
     store.getListableProjects.filter(p => showArchivedProjects.value || !p.archived)

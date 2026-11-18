@@ -18,11 +18,12 @@ export function useRailRecentProjects(store, workspacesStore, settingsStore, clo
 
     const recentProjects = computed(previous => {
         const cutoff = now.value - RECENT_WINDOW_SECONDS
+        // "Recent" is activity-ordered by definition, whatever the project list order.
         return retainList(previous, store.getListableProjects.filter(project => {
             if (project.archived && !settingsStore.isShowArchivedProjects) return false
             const activity = store.getProjectActivity(project.id)
             return activity > 0 && activity >= cutoff
-        }))
+        }).sort(store.projectActivityComparator))
     })
 
     const recentWorkspaces = computed(previous => {

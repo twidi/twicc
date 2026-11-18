@@ -7,6 +7,8 @@ import {
     DEFAULT_DISPLAY_MODE,
     DEFAULT_COLOR_SCHEME,
     DEFAULT_SESSION_TIME_FORMAT,
+    DEFAULT_PROJECT_SORT_ORDER,
+    PROJECT_SORT_ORDER,
     DEFAULT_MAX_CACHED_SESSIONS,
     DISPLAY_MODE,
     COLOR_SCHEME,
@@ -68,6 +70,8 @@ export const SETTINGS_SCHEMA = {
     showMessageTimestamps: true,
     showArchivedSessions: false,
     showArchivedProjects: false,
+    // Local: order of the project lists (see PROJECT_SORT_ORDER).
+    projectSortOrder: DEFAULT_PROJECT_SORT_ORDER,
     showArchivedWorkspaces: false,
     showActiveAcrossFilters: true,
     showSessionsAsTree: true,
@@ -200,6 +204,7 @@ const SETTINGS_VALIDATORS = {
     showMessageTimestamps: (v) => typeof v === 'boolean',
     showArchivedSessions: (v) => typeof v === 'boolean',
     showArchivedProjects: (v) => typeof v === 'boolean',
+    projectSortOrder: (v) => Object.values(PROJECT_SORT_ORDER).includes(v),
     showArchivedWorkspaces: (v) => typeof v === 'boolean',
     showActiveAcrossFilters: (v) => typeof v === 'boolean',
     showSessionsAsTree: (v) => typeof v === 'boolean',
@@ -420,6 +425,7 @@ export const useSettingsStore = defineStore('settings', {
         areMessageTimestampsShown: (state) => state.showMessageTimestamps,
         isShowArchivedSessions: (state) => state.showArchivedSessions,
         isShowArchivedProjects: (state) => state.showArchivedProjects,
+        getProjectSortOrder: (state) => state.projectSortOrder,
         isShowArchivedWorkspaces: (state) => state.showArchivedWorkspaces,
         isShowActiveAcrossFilters: (state) => state.showActiveAcrossFilters,
         isShowSessionsAsTree: (state) => state.showSessionsAsTree,
@@ -953,6 +959,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set the order of the project lists.
+         * @param {string} order - one of PROJECT_SORT_ORDER
+         */
+        setProjectSortOrder(order) {
+            if (SETTINGS_VALIDATORS.projectSortOrder(order)) {
+                this.projectSortOrder = order
+            }
+        },
+
+        /**
          * Set show archived workspaces mode.
          * This setting is not exposed in the settings panel — it is only
          * toggled from the workspace list UI.
@@ -1349,6 +1365,7 @@ export function initSettings() {
             showMessageTimestamps: store.showMessageTimestamps,
             showArchivedSessions: store.showArchivedSessions,
             showArchivedProjects: store.showArchivedProjects,
+            projectSortOrder: store.projectSortOrder,
             showArchivedWorkspaces: store.showArchivedWorkspaces,
             showActiveAcrossFilters: store.showActiveAcrossFilters,
             showSessionsAsTree: store.showSessionsAsTree,
