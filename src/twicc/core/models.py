@@ -2501,3 +2501,102 @@ class TimelineEvent(models.Model):
                 name="uniq_timeline_dedupe",
             ),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Multi-user accounts (design docs/plans/2026-11-18-multi-user-design.md)
+# ---------------------------------------------------------------------------
+
+
+class UserRole(models.TextChoices):
+    """What an account may do instance-wide.
+
+    ``admin`` sees and operates everything and manages accounts and grants.
+    ``member`` only sees the projects granted to it (directly, or through a
+    workspace grant), and never reaches instance-level configuration.
+    """
+
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class AccessLevel(models.TextChoices):
+    """What a grant allows on the projects it covers.
+
+    ``view`` reads sessions, files and artifacts. ``operate`` additionally
+    starts/continues agents and edits project metadata. Neither ever unlocks
+    the interactive terminal for a member (a shell is the host account).
+    """
+
+    VIEW = "view"
+    OPERATE = "operate"
+
+
+class User(models.Model):
+    """One TwiCC account.
+
+    The instance password (``TWICC_PASSWORD_HASH``) keeps working as the
+    built-in *owner* identity — an implicit admin with no row here — so an
+    existing single-user install is untouched until the first account is
+    created. ``auth_epoch`` is stamped into every login session; bumping it
+    (password change, deactivation, role change, "sign out everywhere")
+    invalidates all of that account's sessions at their next request.
+    """
+
+    email = models.CharField(max_length=254, unique=True)  # Always stored lowercased
+    display_name = models.CharField(max_length=100, blank=True, default="")
+    role = models.CharField(max_length=16, choices=UserRole.choices, default=UserRole.MEMBER)
+    # Empty = no local password (Google-only account)
+    password_hash = models.CharField(max_length=255, blank=True, default="")
+    # Google OpenID ``sub`` claim, latched at the first Google sign-in
+    google_sub = models.CharField(max_length=255, null=True, blank=True, unique=True)
+    avatar_url = models.CharField(max_length=500, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    auth_epoch = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["email"]
+
+    def __str__(self) -> str:
+        return self.email
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == UserRole.ADMIN
+
+
+class ProjectGrant(models.Model):
+    """Direct access of one member to one project (and its worktrees)."""
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="project_grants")
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="user_grants")
+    level = models.CharField(max_length=16, choices=AccessLevel.choices, default=AccessLevel.VIEW)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "project"], name="unique_project_grant_per_user"),
+        ]
+
+
+class WorkspaceGrant(models.Model):
+    """Access of one member to every project of one workspace.
+
+    Workspaces live in ``workspaces.json`` (not the DB), so the link is the
+    workspace id string. Membership is resolved live: a project added to the
+    workspace later is covered at once, a removed one stops being covered.
+    A grant whose workspace was deleted simply resolves to no project.
+    """
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="workspace_grants")
+    workspace_id = models.CharField(max_length=100)
+    level = models.CharField(max_length=16, choices=AccessLevel.choices, default=AccessLevel.VIEW)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "workspace_id"], name="unique_workspace_grant_per_user"),
+        ]
