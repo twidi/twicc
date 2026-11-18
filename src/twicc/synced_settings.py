@@ -46,6 +46,13 @@ logger = logging.getLogger(__name__)
 #     notifications classification in the same ``_keys.py``.
 _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     "summaryModel": "auto",
+    # Speech to text (dictation in the composer), design 2026-11-18:
+    # engine auto/browser/openrouter/script/off, the OpenRouter model, the
+    # language (ISO code, "" = auto-detect) and the script command line.
+    "sttEngine": "auto",
+    "sttModel": "openai/whisper-large-v3",
+    "sttLanguage": "",
+    "sttScriptCommand": "",
     "timelineSummaryEnabled": True,
     "timelineSpeechFinalOnly": True,
     "defaultProvider": Provider.CLAUDE_CODE.value,
