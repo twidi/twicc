@@ -1102,7 +1102,9 @@ class CodexAgentManager(BaseAgentManager):
                     project_is_untrusted,
                 )
 
-                untrusted = project_is_untrusted(project_id)
+                from twicc.accounts.agent_floor import is_member_driven
+
+                untrusted = is_member_driven(session_id) or project_is_untrusted(project_id)
                 mode = settings.permission_mode
                 if untrusted:
                     mode = clamp_permission_mode_for_untrusted(Provider.CODEX, mode)

@@ -1126,7 +1126,9 @@ class ClaudeCodeAgent(BaseAgent):
                     project_is_untrusted,
                 )
 
-                untrusted = project_is_untrusted(self.project_id)
+                from twicc.accounts.agent_floor import is_member_driven
+
+                untrusted = is_member_driven(self.session_id) or project_is_untrusted(self.project_id)
                 mode = self.agent_settings.permission_mode
                 if untrusted:
                     mode = clamp_permission_mode_for_untrusted(Provider.CLAUDE_CODE, mode)

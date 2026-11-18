@@ -20,6 +20,13 @@ async def _binding(request):
     authenticated = await session.aget(SESSION_AUTH_KEY)
     fingerprint = await session.aget(SESSION_FINGERPRINT_KEY)
     if settings.TWICC_PASSWORD_HASH and not request_allowed(request, authenticated, fingerprint):
+        principal = getattr(request, 'twicc_principal', None)
+        # Multi-user: an admin account qualifies too.
+        if principal is None or not principal.is_admin:
+            return None
+    principal = getattr(request, 'twicc_principal', None)
+    if principal is not None and not principal.is_admin:
+        # Native speech reads any session aloud: ADMIN-only.
         return None
     return (session.session_key or '', compute_fingerprint(settings.TWICC_PASSWORD_HASH))
 

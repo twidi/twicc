@@ -29,8 +29,12 @@ from twicc.frontend_static import FrontendStaticFiles
 from twicc.http_streams import DownloadCleanupMiddleware
 from twicc.agent import AgentInfo, AgentState, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
-from twicc.auth.access import scope_allowed
-from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
+from twicc.accounts.agent_floor import mark_member_driven
+from twicc.accounts.notify import ACCOUNTS_CHANGED
+from twicc.accounts.principal import accounts_enabled
+from twicc.accounts.project_access import get_project_access, invalidate_access_cache
+from twicc.accounts.ws_filter import MemberFrameFilter
+from twicc.auth.access import resolve_scope_principal
 from twicc.agent.registry import get_agent_manager_registry
 from twicc.agent_settings_presets import (
     RESERVED_PRESET_NAMES,
@@ -497,6 +501,40 @@ def _spawn_detached(coro, *, label: str) -> asyncio.Task:
     return task
 
 
+# --- multi-user: inbound frame classes for member connections --------------
+# (see WSConsumer._member_inbound_allowed; anything unlisted is refused)
+
+_MEMBER_INBOUND_FREE = frozenset({
+    "ping",
+    "presence",
+    "telemetry_activity",
+    "changelog_seen",
+    "update_seen_tips",
+    "update_seen_help",
+})
+_MEMBER_INBOUND_VIEW = frozenset({
+    "session_viewed",
+    "mark_session_read_state",
+})
+_MEMBER_INBOUND_OPERATE = frozenset({
+    "kill_process",
+    "stop_subagent",
+    "interrupt_session",
+    "user_draft_updated",
+    "codex_dismiss_async_question",
+})
+
+
+def _session_project_ids(session_id) -> tuple[str, ...]:
+    """The project(s) a session is reachable through: its own, and its parent's."""
+    from twicc.core.models import Session
+
+    if not isinstance(session_id, str) or not session_id:
+        return ()
+    row = Session.objects.filter(pk=session_id).values_list("project_id", "parent_session__project_id").first()
+    return tuple(pid for pid in row if pid) if row else ()
+
+
 class WSConsumer(AsyncJsonWebsocketConsumer):
     """
     WebSocket consumer for broadcasting real-time updates.
@@ -522,6 +560,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
     }
 
     def __init__(self, *args, **kwargs):
+        # Multi-user: set in connect() (None until then / for refused sockets).
+        self._principal = None
+        self._member_filter = None
         super().__init__(*args, **kwargs)
         self._provider_handlers: dict[Provider, object] = {
             key: cls(self) for key, cls in self.PROVIDER_HANDLERS.items()
@@ -577,6 +618,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         When absent, all messages are sent (backward compatible).
         """
         handshake_started = perf_counter()
+        self._principal = None
+        self._member_filter = None
+        # Refresh the cached "accounts exist" flag: the remote gate below reads it.
+        await accounts_enabled()
         # Unprotected instance (no password): refuse non-local connections —
         # there's nothing to authenticate against. No-op when a password is
         # configured or the operator opted out (see twicc.auth.local_access).
@@ -587,29 +632,25 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=WS_CLOSE_AUTH_FAILURE)
             return
 
-        # Check authentication if password protection is enabled.
-        # A session bound to an older password hash (rotated since login)
-        # is rejected the same way as an unauthenticated one.
-        if settings.TWICC_PASSWORD_HASH:
-            session = self.scope.get("session", {})
-            # Session.get() triggers a synchronous DB load, so we must
-            # wrap it with sync_to_async in this async consumer.
-            session_auth, session_fp = await sync_to_async(
-                lambda: (session.get(SESSION_AUTH_KEY), session.get(SESSION_FINGERPRINT_KEY))
-            )()
-            if not scope_allowed(self.scope, session_auth, session_fp):
-                logger.warning("WebSocket connection rejected: not authenticated")
-                # Accept first so we can send a message and a close code.
-                # Closing before accept causes the close code to be lost
-                # (the WebSocket handshake is never completed).
-                await self.accept()
-                # Send an auth_failure message as a fallback: some proxies
-                # (notably Vite's dev proxy via node-http-proxy) may strip
-                # the WebSocket close code, delivering 1006 instead of 4001.
-                # The client handles both the message and the close code.
-                await self.send_json({"type": "auth_failure"})
-                await self.close(code=WS_CLOSE_AUTH_FAILURE)
-                return
+        # Resolve who is connecting (multi-user, design 2026-11-18): the owner
+        # (instance password / unprotected local mode / dev bypass) or an
+        # account. A session bound to an older password hash, a disabled
+        # account or a bumped auth epoch is rejected like an unauthenticated one.
+        principal = await resolve_scope_principal(self.scope)
+        if principal is None:
+            logger.warning("WebSocket connection rejected: not authenticated")
+            # Accept first so we can send a message and a close code.
+            # Closing before accept causes the close code to be lost
+            # (the WebSocket handshake is never completed).
+            await self.accept()
+            # Send an auth_failure message as a fallback: some proxies
+            # (notably Vite's dev proxy via node-http-proxy) may strip
+            # the WebSocket close code, delivering 1006 instead of 4001.
+            # The client handles both the message and the close code.
+            await self.send_json({"type": "auth_failure"})
+            await self.close(code=WS_CLOSE_AUTH_FAILURE)
+            return
+        await self._apply_principal(principal)
 
         # Parse optional subscribe filter from query string
         query_string = self.scope.get("query_string", b"").decode()
@@ -954,6 +995,20 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         """
         msg_type = content.get("type")
 
+        if self._member_filter is not None and not await self._member_inbound_allowed(msg_type, content):
+            logger.warning("Member %s refused WebSocket frame %r", self._principal.email, msg_type)
+            frame = {
+                "type": "error",
+                "code": "access_denied",
+                "message": ui_message_text("Access denied", 'backend.accounts.accessDenied'),
+            }
+            if request_id := content.get("request_id"):
+                frame["request_id"] = request_id
+            if session_id := content.get("session_id"):
+                frame["session_id"] = session_id
+            await self.send_json(frame)
+            return
+
         if msg_type == "ping":
             await self.send_json({"type": "pong"})
 
@@ -1098,7 +1153,86 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 provider, action,
             )
 
+    async def _apply_principal(self, principal) -> None:
+        """Bind the connection to a principal; members get a frame filter."""
+        self._principal = principal
+        if principal.is_admin:
+            self._member_filter = None
+        else:
+            access = await get_project_access(principal)
+            self._member_filter = MemberFrameFilter(principal, access)
+
+    async def _refresh_access(self) -> bool:
+        """Re-resolve this connection's identity after an ``accounts_changed`` event.
+
+        Returns False (and closes the socket with ``auth_failure``) when the
+        identity is no longer valid: disabled account, bumped epoch, rotated
+        password.
+        """
+        principal = await resolve_scope_principal(self.scope)
+        if principal is None:
+            await super().send_json({"type": "auth_failure"})
+            await self.close(code=WS_CLOSE_AUTH_FAILURE)
+            return False
+        await self._apply_principal(principal)
+        return True
+
+    async def _member_inbound_allowed(self, msg_type, content: dict) -> bool:
+        """Whether a member connection may send this frame (deny by default).
+
+        Read-only frames (presence, viewed markers…) need a viewable session;
+        frames that drive an agent need an operable one. Instance-level
+        frames (settings, workspaces, terminals, telemetry, provider auth…)
+        are refused.
+        """
+        access = self._member_filter.access
+        if msg_type in _MEMBER_INBOUND_FREE:
+            return True
+        if msg_type == "suggest_title":
+            session_id = content.get("sessionId")
+            projects = await sync_to_async(_session_project_ids)(session_id) if session_id else ()
+            # A draft has no row yet: titling it only reads the prompt it sends.
+            return not projects or any(access.can_view(pid) for pid in projects)
+        if msg_type == "send_message":
+            session_id = content.get("session_id")
+            projects = await sync_to_async(_session_project_ids)(session_id) if session_id else ()
+            if projects:
+                allowed = any(access.can_operate(pid) for pid in projects)
+            else:
+                # A new session: the project it is created in must be operable.
+                project_id = content.get("project_id")
+                allowed = access.can_operate(project_id)
+                if allowed:
+                    self._member_filter.remember(session_id, project_id)
+            if allowed:
+                mark_member_driven(session_id)
+            return allowed
+        needs_operate = msg_type in _MEMBER_INBOUND_OPERATE or (
+            isinstance(msg_type, str) and msg_type.endswith(":pending_request_response")
+        )
+        if needs_operate or msg_type in _MEMBER_INBOUND_VIEW:
+            session_id = content.get("session_id")
+            projects = await sync_to_async(_session_project_ids)(session_id) if session_id else ()
+            check = access.can_operate if needs_operate else access.can_view
+            return any(check(pid) for pid in projects)
+        return False
+
     async def send_json(self, content, close=False):
+        if self._member_filter is not None:
+            if isinstance(content, dict) and content.get("type") == ACCOUNTS_CHANGED:
+                if not await self._refresh_access():
+                    return
+            content = await self._member_filter.filter(content)
+            if content is None:
+                return
+        elif isinstance(content, dict) and content.get("type") == ACCOUNTS_CHANGED and self._principal is not None:
+            # An admin may have been demoted/disabled: re-resolve.
+            if not await self._refresh_access():
+                return
+            if self._member_filter is not None:
+                content = await self._member_filter.filter(content)
+                if content is None:
+                    return
         try:
             await super().send_json(_ws_ui_messages(content), close=close)
         except Exception as exc:
@@ -2248,6 +2382,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 atomic_write_json(get_workspaces_path(), {"workspaces": workspaces})
 
         await sync_to_async(_write)()
+        # Workspace grants resolve through workspaces.json: drop cached access.
+        invalidate_access_cache()
+        from twicc.workspaces import _broadcast_accounts_changed
+
+        await _broadcast_accounts_changed()
 
         await self.channel_layer.group_send(
             "updates",
