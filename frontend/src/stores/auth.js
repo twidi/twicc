@@ -24,6 +24,22 @@ export const useAuthStore = defineStore('auth', {
         // Command the operator must run to set a password (carries the correct
         // launch prefix for how this TwiCC was started). Shown on that screen.
         setPasswordCommand: null,
+        // ── Multi-user (design docs/plans/2026-11-18-multi-user-design.md) ──
+        // At least one account exists: the login screen offers email + password.
+        accountsEnabled: false,
+        // Google sign-in is configured on the server.
+        googleEnabled: false,
+        // The instance (owner) password is set.
+        ownerPassword: false,
+        // The signed-in identity: {kind: 'owner'|'user', id, email, display_name,
+        // role: 'admin'|'member', is_admin, avatar_url} — null when signed out.
+        principal: null,
+        // Refusal code of the last Google sign-in (single-use, from /api/auth/check/).
+        googleError: null,
+        // From /api/me/: null = unrestricted (admin/owner), else {projectId: 'view'|'operate'}.
+        projectAccess: null,
+        // Workspace ids a member may see (null = unrestricted).
+        visibleWorkspaceIds: null,
     }),
 
     getters: {
@@ -49,9 +65,85 @@ export const useAuthStore = defineStore('auth', {
          * is ready).
          */
         isConnecting: (state) => state.checking && state.connectionError,
+
+        /**
+         * Whether the caller is an admin. True for the owner (instance password,
+         * unprotected local mode) and admin accounts; also true while the
+         * principal is unknown so a single-user install never loses UI.
+         */
+        isAdmin: (state) => !state.principal || state.principal.is_admin !== false,
+
+        /** Whether the caller is a member account (restricted to granted projects). */
+        isMember: (state) => !!state.principal && state.principal.is_admin === false,
+
+        /**
+         * Whether the caller may view a project. Unrestricted callers see everything.
+         * Returns a function (Pinia getter with argument).
+         */
+        canView: (state) => (projectId) => {
+            if (!state.projectAccess) return true
+            return !!projectId && Object.hasOwn(state.projectAccess, projectId)
+        },
+
+        /** Whether the caller may drive agents / write in a project. */
+        canOperate: (state) => (projectId) => {
+            if (!state.projectAccess) return true
+            return !!projectId && state.projectAccess[projectId] === 'operate'
+        },
     },
 
     actions: {
+        /** Apply a /api/auth/check/ payload. */
+        applyCheck(data) {
+            this.authenticated = data.authenticated
+            this.passwordRequired = data.password_required
+            this.serverVersion = typeof data.version === 'string' ? data.version : null
+            this.accessDenied = data.access_denied || null
+            this.setPasswordCommand = data.set_password_command || null
+            this.accountsEnabled = !!data.accounts_enabled
+            this.googleEnabled = !!data.google_enabled
+            this.ownerPassword = !!data.owner_password
+            this.principal = data.principal || null
+            if (data.google_error) this.googleError = data.google_error
+        },
+
+        /**
+         * Load what the caller may reach (/api/me/). Unrestricted callers get
+         * null maps; on failure the previous state is kept.
+         */
+        async fetchMe() {
+            try {
+                const res = await fetch('/api/me/')
+                if (!res.ok) return
+                const data = await res.json()
+                if (data.principal) this.principal = data.principal
+                this.projectAccess = data.unrestricted ? null : (data.projects || {})
+                this.visibleWorkspaceIds = data.unrestricted ? null : (data.workspace_ids || [])
+            } catch {
+                // Network error — keep the previous access state.
+            }
+        },
+
+        /**
+         * React to an ``accounts_changed`` broadcast: re-check identity and access.
+         * Returns true when what this caller may see changed (role or project map),
+         * so the caller can reload the views that depend on it.
+         */
+        async refreshAccess() {
+            const before = JSON.stringify([this.principal?.id, this.principal?.role, this.projectAccess, this.visibleWorkspaceIds])
+            await this.checkAuthOnce()
+            if (this.authenticated) await this.fetchMe()
+            const after = JSON.stringify([this.principal?.id, this.principal?.role, this.projectAccess, this.visibleWorkspaceIds])
+            return before !== after
+        },
+
+        /** Read and clear the last Google sign-in refusal code. */
+        consumeGoogleError() {
+            const code = this.googleError
+            this.googleError = null
+            return code
+        },
+
         /**
          * Check authentication status with the server.
          * Retries with exponential backoff on network errors (backend not ready).
@@ -70,11 +162,8 @@ export const useAuthStore = defineStore('auth', {
                     const res = await fetch('/api/auth/check/')
                     if (!res.ok) throw new Error(`Auth check failed: ${res.status}`)
                     const data = await res.json()
-                    this.authenticated = data.authenticated
-                    this.passwordRequired = data.password_required
-                    this.serverVersion = typeof data.version === 'string' ? data.version : null
-                    this.accessDenied = data.access_denied || null
-                    this.setPasswordCommand = data.set_password_command || null
+                    this.applyCheck(data)
+                    if (this.authenticated) await this.fetchMe()
                     this.connectionError = false
                     this.checking = false
                     return // Success
@@ -107,11 +196,7 @@ export const useAuthStore = defineStore('auth', {
                 const res = await fetch('/api/auth/check/')
                 if (!res.ok) return // Silently ignore errors
                 const data = await res.json()
-                this.authenticated = data.authenticated
-                this.passwordRequired = data.password_required
-                this.serverVersion = typeof data.version === 'string' ? data.version : null
-                this.accessDenied = data.access_denied || null
-                this.setPasswordCommand = data.set_password_command || null
+                this.applyCheck(data)
                 // If we were in a connection error state, clear it
                 if (this.connectionError) {
                     this.connectionError = false
@@ -123,16 +208,19 @@ export const useAuthStore = defineStore('auth', {
         },
 
         /**
-         * Attempt to log in with a password.
+         * Attempt to log in with a password, as an account (with ``email``) or
+         * as the instance owner (without).
          * @param {string} password
+         * @param {string} [email]
          * @returns {{ success: boolean, error?: string }}
          */
-        async login(password) {
+        async login(password, email = '') {
             try {
+                const body = email ? { email, password } : { password }
                 const res = await fetch('/api/auth/login/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password }),
+                    body: JSON.stringify(body),
                 })
                 const data = await res.json()
 
@@ -172,6 +260,9 @@ export const useAuthStore = defineStore('auth', {
                 console.error('Logout failed:', e)
             }
             this.authenticated = false
+            this.principal = null
+            this.projectAccess = null
+            this.visibleWorkspaceIds = null
         },
 
         /**

@@ -795,6 +795,12 @@ async def _broadcast_after_write() -> None:
     if another writer (auto-add, WS whole-blob) slipped in between, so
     UI clients always converge to the same snapshot.
     """
+    # Workspace grants are resolved through workspaces.json: drop cached access
+    # and let member connections re-resolve what they may see.
+    from twicc.accounts.project_access import invalidate_access_cache
+
+    invalidate_access_cache()
+    await _broadcast_accounts_changed()
     data = await sync_to_async(read_workspaces)()
     workspaces = data.get("workspaces", [])
     await _broadcast_workspaces_updated(workspaces)
@@ -806,3 +812,15 @@ async def _broadcast_workspaces_updated(workspaces: list[dict]) -> None:
         "type": "broadcast",
         "data": {"type": "workspaces_updated", "workspaces": workspaces},
     })
+
+
+async def _broadcast_accounts_changed() -> None:
+    """Tell connections that project visibility may have moved (workspace membership)."""
+    from twicc.accounts.notify import ACCOUNTS_CHANGED
+    from twicc.accounts.principal import accounts_enabled
+
+    if not await accounts_enabled():
+        return
+    channel_layer = get_channel_layer()
+    if channel_layer is not None:
+        await channel_layer.group_send("updates", {"type": "broadcast", "data": {"type": ACCOUNTS_CHANGED}})

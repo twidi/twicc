@@ -100,7 +100,10 @@ def test_existing_password_auth_applies(owner, monkeypatch, settings):
     from twicc.auth import middleware
 
     settings.TWICC_PASSWORD_HASH = "test-password-hash"
-    monkeypatch.setattr(middleware, "request_allowed", lambda *args: False)
+    async def _nobody(request):
+        return None
+
+    monkeypatch.setattr(middleware, "resolve_request_principal", _nobody)
     _, _, prefix = owner
     assert Client().get(prefix + "index.html").status_code == 401
 

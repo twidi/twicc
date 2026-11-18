@@ -6,6 +6,9 @@ import { DIRECT_TAB_MAP, PROJECT_TABS, directTab, routeNameForTab, tabForRouteNa
 test('the tab strip is Timeline, Stats, Files, Git (only with a git root), Terminal', () => {
     assert.deepEqual(visibleProjectTabs({ hasGitRepo: true }).map((tab) => tab.id), ['timeline', 'stats', 'files', 'git', 'terminal'])
     assert.deepEqual(visibleProjectTabs({ hasGitRepo: false }).map((tab) => tab.id), ['timeline', 'stats', 'files', 'terminal'])
+    // Multi-user members never get a terminal.
+    assert.deepEqual(visibleProjectTabs({ hasGitRepo: true, hasTerminal: false }).map((tab) => tab.id), ['timeline', 'stats', 'files', 'git'])
+    assert.equal(directTab(5, { hasGitRepo: true, hasTerminal: false }), null)
     assert.equal(PROJECT_TABS[0].label, 'Timeline')
     assert.ok(PROJECT_TABS.every((tab) => tab.label && tab.icon))
 })

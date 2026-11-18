@@ -41,12 +41,11 @@ from typing import NamedTuple
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
-from django.conf import settings
 
 from twicc.core.ui_messages import ui_message_text
-from twicc.auth.access import scope_allowed
+from twicc.accounts.principal import accounts_enabled
+from twicc.auth.access import resolve_scope_principal
 from twicc.auth.local_access import scope_remote_access_blocked
-from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
 from twicc.core.session_availability import aunavailable_reason_by_id, unavailable_message
 from twicc.paths import ENV_SECRET_KEYS, tmux_socket_suffix
 from twicc.provider_homes import provider_env_overlay
@@ -937,6 +936,8 @@ async def terminal_application(scope, receive, send):
         return
 
     # ── Authentication ────────────────────────────────────────────────
+    # Refresh the cached "accounts exist" flag: the remote gate reads it.
+    await accounts_enabled()
     # Unprotected instance (no password): refuse non-local connections —
     # there's nothing to authenticate against. No-op when a password is
     # configured or the operator opted out (see twicc.auth.local_access).
@@ -947,19 +948,20 @@ async def terminal_application(scope, receive, send):
         await send({"type": "websocket.close", "code": WS_CLOSE_AUTH_FAILURE})
         return
 
-    # A session bound to an older password hash (rotated since login)
-    # is rejected the same way as an unauthenticated one.
-    if settings.TWICC_PASSWORD_HASH:
-        session = scope.get("session", {})
-        session_auth, session_fp = await sync_to_async(
-            lambda: (session.get(SESSION_AUTH_KEY), session.get(SESSION_FINGERPRINT_KEY))
-        )()
-        if not scope_allowed(scope, session_auth, session_fp):
-            logger.warning("Terminal WebSocket rejected: not authenticated")
-            await send({"type": "websocket.accept"})
-            await send({"type": "websocket.send", "text": json.dumps({"type": "auth_failure"})})
-            await send({"type": "websocket.close", "code": WS_CLOSE_AUTH_FAILURE})
-            return
+    # A session bound to an older password hash (rotated since login), a
+    # disabled account or a bumped auth epoch is rejected like an
+    # unauthenticated one. A terminal is a shell as the instance account,
+    # so it is ADMIN-only: a member's project grant never reaches it.
+    principal = await resolve_scope_principal(scope)
+    if principal is None or not principal.is_admin:
+        logger.warning(
+            "Terminal WebSocket rejected: %s",
+            "not authenticated" if principal is None else f"member {principal.email} has no terminal access",
+        )
+        await send({"type": "websocket.accept"})
+        await send({"type": "websocket.send", "text": json.dumps({"type": "auth_failure"})})
+        await send({"type": "websocket.close", "code": WS_CLOSE_AUTH_FAILURE})
+        return
 
     # ── Resolve terminal context and working directory ──────────────────
     session_id = scope["url_route"]["kwargs"].get("session_id")

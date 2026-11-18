@@ -34,6 +34,7 @@ from twicc.core.services.attachments.types import AttachmentRef
 from twicc.file_tree import validate_path
 from twicc.uploads import locks, store
 from twicc.uploads.broadcast import broadcast_upload_state
+from twicc.accounts.scoping import request_access
 from twicc.views import ensure_session_artifacts_root, validate_standalone_root
 from twicc.core.ui_messages import ui_message_text
 
@@ -538,10 +539,27 @@ async def _create_view(request, *, project_id: str | None = None, session_id: st
     body = _parse_creation_body(request, standalone=project_id is None)
     if isinstance(body, JsonResponse):
         return body
+    if project_id is None and body.attachment_ref is None and not (await request_access(request)).unrestricted:
+        # Multi-user: a member never writes into a free-form host directory;
+        # only project uploads (checked by AccessControlMiddleware) and the
+        # server-targeted composer staging are open to them.
+        return _error(ui_message_text("Access denied", 'backend.accounts.accessDenied'), 403)
     return await locks.run_guarded(
         _create(body, project_id=project_id, session_id=session_id),
         label=f"create({body.client_id})",
     )
+
+
+def _member_may_touch(access, meta: dict) -> bool:
+    """Whether a member may see/drive an upload: its project is operable, or it is composer staging."""
+    scope = meta.get("scope") or {}
+    if scope.get("kind") == "project":
+        return access.can_operate(scope.get("project_id"))
+    return lifecycle.composer_ref(meta) is not None
+
+
+def _member_visible_upload_ids(access) -> set[str]:
+    return {meta["id"] for meta in store.list_metadata() if _member_may_touch(access, meta)}
 
 
 # ── List (§5.3 GET) ───────────────────────────────────────────────────────────
@@ -562,6 +580,10 @@ def _list_records(now: datetime) -> list[dict]:
 async def _list_view(request):
     now = datetime.now(UTC)
     records = await asyncio.to_thread(_list_records, now)
+    access = await request_access(request)
+    if not access.unrestricted:
+        visible_ids = await asyncio.to_thread(_member_visible_upload_ids, access)
+        records = [record for record in records if record["id"] in visible_ids]
     return JsonResponse({"uploads": records, "now": now.isoformat()})
 
 
@@ -826,6 +848,9 @@ async def upload_detail(request, upload_id):
     # Invalid id, unknown or unparsable ``<id>.json`` → 404 before any lock or path work.
     meta = await asyncio.to_thread(store.peek_metadata, upload_id)
     if meta is None:
+        return _status(404)
+    access = await request_access(request)
+    if not access.unrestricted and not _member_may_touch(access, meta):
         return _status(404)
     if request.method == "HEAD":
         return await _head(upload_id, meta)

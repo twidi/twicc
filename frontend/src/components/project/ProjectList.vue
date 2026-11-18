@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
+import { useAuthStore } from '../../stores/auth'
 import { buildProjectTree } from '../../utils/projectTree'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ProjectCard from './ProjectCard.vue'
@@ -11,6 +12,7 @@ import HelpIconButton from '../help/HelpIconButton.vue'
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
+const authStore = useAuthStore()
 
 // Show archived projects setting
 const showArchivedProjects = computed(() => settingsStore.isShowArchivedProjects)
@@ -76,6 +78,7 @@ function handleToggleShowArchived(event) {
                     {{ $t('common.filters.showArchived') }}
                 </wa-switch>
                 <wa-button
+                    v-if="authStore.isAdmin"
                     id="project-list-create-btn"
                     variant="neutral"
                     appearance="plain"
@@ -84,7 +87,7 @@ function handleToggleShowArchived(event) {
                 >
                     <wa-icon name="plus"></wa-icon>
                 </wa-button>
-                <AppTooltip for="project-list-create-btn">{{ $t('project.actions.create') }}</AppTooltip>
+                <AppTooltip v-if="authStore.isAdmin" for="project-list-create-btn">{{ $t('project.actions.create') }}</AppTooltip>
             </div>
         </div>
 

@@ -1175,6 +1175,21 @@ export function useWebSocket() {
         }
     }
 
+    async function handleAccountsChanged() {
+        const authStore = useAuthStore()
+        const changed = await authStore.refreshAccess()
+        window.dispatchEvent(new CustomEvent('twicc:accounts-changed'))
+        if (authStore.needsLogin) {
+            await handleWsAuthFailure()
+            return
+        }
+        if (changed) {
+            const { markAppNavigation } = await import('../utils/appNavigation')
+            markAppNavigation()
+            window.location.reload()
+        }
+    }
+
     function handleMessage(msg) {
         // Synchronous invalidation precedes source updates and component rendering.
         useSummariesStore().invalidate(msg)
@@ -1206,6 +1221,13 @@ export function useWebSocket() {
                 console.warn('WebSocket received auth_failure message, treating as auth rejection')
                 __hmrState.lastCloseWasAuthFailure = true
                 handleWsAuthFailure()
+                break
+            case 'accounts_changed':
+                // Multi-user: accounts or grants changed somewhere. Re-check who we
+                // are and what we may reach; when that changed, reload the page so
+                // every store (projects, sessions, workspaces) is rebuilt from the
+                // server's filtered view. The admin panel listens to the event.
+                handleAccountsChanged()
                 break
             case 'project_added':
                 store.addProject(msg.project)

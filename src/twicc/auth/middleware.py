@@ -15,9 +15,10 @@ from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 
 from twicc.artifacts import NOT_AUTHENTICATED_SVG
 from twicc.auth import tokens as api_tokens
-from twicc.auth.access import request_allowed
+from twicc.accounts.principal import OWNER, SESSION_USER_ID_KEY, accounts_enabled
+from twicc.auth.access import auth_required, resolve_request_principal
 from twicc.auth.local_access import remote_access_blocked
-from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
+from twicc.auth.session_auth import SESSION_AUTH_KEY
 from twicc.request_origin import UI_ORIGIN, origin_scope
 from twicc.rpc.permissions import RPC_SCOPE_FULL, RPC_SCOPE_READ
 from twicc.core.ui_messages import ui_error
@@ -76,29 +77,37 @@ class PasswordAuthMiddleware:
 
     def __init__(self, get_response):
         self.get_response = get_response
-        self.password_required = bool(settings.TWICC_PASSWORD_HASH)
         # Django/asgiref detect coroutine middleware via iscoroutinefunction
         # on the *instance*, not on cls.__call__. A class with ``async def
         # __call__`` is not enough — mark the instance explicitly.
         markcoroutinefunction(self)
-        if self.password_required:
+        if settings.TWICC_PASSWORD_HASH:
             logger.info("Password protection enabled")
         else:
             logger.info("Password protection disabled (TWICC_PASSWORD_HASH not set)")
 
     async def __call__(self, request):
-        # No password configured: nothing to authenticate against. Refuse
+        # Refresh the cached "accounts exist" flag first: every helper below
+        # (``auth_required``, ``remote_access_blocked``) reads it synchronously.
+        await accounts_enabled()
+        # The resolved caller, read by AccessControlMiddleware and the views.
+        # None on public paths and the SPA shell (they resolve it themselves
+        # when they need it, e.g. ``/api/auth/check/``).
+        request.twicc_principal = None
+
+        # Nothing to authenticate against (no password, no account). Refuse
         # data-bearing endpoints for non-local requests (unless the operator
         # opted out via TWICC_ALLOW_INSECURE_REMOTE) so a forgotten password
         # doesn't leave the instance silently reachable over the network. Public
         # paths and the SPA shell stay open so the frontend can load and render
         # the "set a password" screen (driven by /api/auth/check/).
-        if not self.password_required:
+        if not auth_required():
             if _is_data_path(request) and remote_access_blocked(request):
                 return JsonResponse(
                     ui_error("remote_access_requires_password", 'backend.auth.remotePasswordRequired'),
                     status=403,
                 )
+            request.twicc_principal = OWNER
             return await self.get_response(request)
 
         # Allow public paths
@@ -115,15 +124,15 @@ class PasswordAuthMiddleware:
         if not request.path.startswith("/api/") and not is_protected_non_api:
             return await self.get_response(request)
 
-        # Check authentication for API requests. A session that was logged in
-        # against an older password hash (rotated since) is treated as
-        # unauthenticated, and its server-side row is dropped so it can't be
-        # re-used by a parallel request.
-        session = request.session
-        auth_value = await session.aget(SESSION_AUTH_KEY)
-        fingerprint = await session.aget(SESSION_FINGERPRINT_KEY)
-        if not request_allowed(request, auth_value, fingerprint):
-            if auth_value:
+        # Resolve the caller: an account session (bound to its auth epoch),
+        # the owner (session bound to the current password hash), or the
+        # dev-worktree bypass. A stale session (rotated password, disabled
+        # account, bumped epoch) is treated as unauthenticated, and its
+        # server-side row is dropped so it can't be re-used by a parallel request.
+        principal = await resolve_request_principal(request)
+        if principal is None:
+            session = request.session
+            if await session.aget(SESSION_AUTH_KEY) or await session.aget(SESSION_USER_ID_KEY) is not None:
                 await session.aflush()
             if is_protected_non_api:
                 # An inline <img> (image rendered inside a message) can't follow an
@@ -144,6 +153,7 @@ class PasswordAuthMiddleware:
                 status=401,
             )
 
+        request.twicc_principal = principal
         return await self.get_response(request)
 
 
@@ -186,7 +196,7 @@ class RpcTokenAuthMiddleware:
         # The id of the API token record behind this call, for the timeline origin (design 2026-10-14,
         # section 5). None for the unprotected pass-through and for the read-only cookie scope.
         request.rpc_token_id = None
-        password_set = bool(settings.TWICC_PASSWORD_HASH)
+        password_set = auth_required()
         has_tokens = await sync_to_async(api_tokens.has_tokens)()
 
         if not password_set and not has_tokens:
@@ -232,17 +242,23 @@ class RpcTokenAuthMiddleware:
     async def _request_allowed(request) -> bool:
         """Whether ambient authority lets this request through, at read scope.
 
-        Mirrors ``PasswordAuthMiddleware``: read the auth markers async (works
-        on the event loop) and hand them to ``twicc.auth.access``, which
-        validates them against the live ``TWICC_PASSWORD_HASH`` (a rotated hash
-        invalidates the session) and also grants the dev-worktree local bypass.
-        With no password configured there is no authenticated-session concept,
-        so outside a bypassing worktree a token is the only way in.
+        Only an ADMIN principal (the owner, or an admin account) qualifies: the
+        RPC surface is the CLI, whose reads are instance-wide and not filtered
+        per project, so a member's cookie must never reach it. With no password
+        and no account there is no authenticated-session concept, so outside a
+        bypassing worktree a token is the only way in.
         """
-        session = request.session
-        auth_value = await session.aget(SESSION_AUTH_KEY)
-        fingerprint = await session.aget(SESSION_FINGERPRINT_KEY)
-        return request_allowed(request, auth_value, fingerprint)
+        principal = await resolve_request_principal(request)
+        if principal is None or not principal.is_admin:
+            return False
+        if principal.is_owner and not auth_required():
+            # Unprotected mode resolves everyone as the owner; keep the
+            # historical rule (token required) unless the dev bypass applies.
+            from twicc.auth.access import dev_local_bypass_enabled
+            from twicc.auth.local_access import request_is_local
+
+            return dev_local_bypass_enabled() and request_is_local(request)
+        return True
 
     @staticmethod
     def _bearer(request):

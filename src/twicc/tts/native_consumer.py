@@ -9,9 +9,10 @@ import orjson
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
 
-from twicc.auth.access import scope_allowed
+from twicc.accounts.principal import accounts_enabled
+from twicc.auth.access import resolve_scope_principal
 from twicc.auth.local_access import scope_remote_access_blocked
-from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY, compute_fingerprint
+from twicc.auth.session_auth import compute_fingerprint
 from twicc.tts.native_protocol import MAX_COMMAND_BYTES, parse_native_command
 from twicc.tts.native_sessions import SessionLost, registry
 from twicc.core.ui_messages import ui_message
@@ -22,16 +23,19 @@ INVALID_COMMAND_MESSAGE = 'Speech could not start. Reload the page and try again
 
 async def authorize_scope(scope) -> tuple | None:
     """Reload credentials from storage. Cached handshake fields cannot grant access."""
+    await accounts_enabled()
     if scope_remote_access_blocked(scope):
+        return None
+    # Multi-user: native speech reads any session aloud, so it is ADMIN-only
+    # (a member's per-project grant is not checked per command here).
+    principal = await resolve_scope_principal(scope)
+    if principal is None or not principal.is_admin:
         return None
     session = scope.get('session')
     session_key = session.session_key if session is not None else None
     fresh = import_module(settings.SESSION_ENGINE).SessionStore(session_key=session_key)
-    values = await fresh.aload() if session_key else {}
-    if settings.TWICC_PASSWORD_HASH and not scope_allowed(
-        scope, values.get(SESSION_AUTH_KEY), values.get(SESSION_FINGERPRINT_KEY),
-    ):
-        return None
+    if session_key:
+        await fresh.aload()
     return (fresh.session_key or '', compute_fingerprint(settings.TWICC_PASSWORD_HASH))
 
 

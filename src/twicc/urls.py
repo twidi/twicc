@@ -6,6 +6,7 @@ from .browser_probe import browser_frame_check
 from .inline_artifacts.views import inline_artifact_asset
 from .core.services.attachments import views as composer_attachment_views
 from .auth import views as auth_views
+from .accounts import views as account_views
 from .rpc import views as rpc_views
 from .share import inline_artifact_views as share_inline_views
 from .share import artifact_views as share_artifact_views
@@ -32,6 +33,18 @@ urlpatterns = [
     path("api/auth/check/", auth_views.auth_check),
     path("api/auth/login/", auth_views.login),
     path("api/auth/logout/", auth_views.logout),
+    path("api/auth/google/start/", auth_views.google_start),
+    path("api/auth/google/callback/", auth_views.google_callback),
+    # Multi-user: current principal + account administration (admin-only)
+    path("api/me/", account_views.me),
+    path("api/admin/users/", account_views.users),
+    path("api/admin/users/<int:user_id>/", account_views.user_detail),
+    path("api/admin/users/<int:user_id>/revoke-sessions/", account_views.user_revoke_sessions),
+    path("api/admin/users/<int:user_id>/grants/", account_views.user_grants),
+    path("api/admin/projects/<str:project_id>/access/", account_views.project_access),
+    path("api/admin/projects/<str:project_id>/access/<int:user_id>/", account_views.project_access),
+    path("api/admin/workspaces/<str:workspace_id>/access/", account_views.workspace_access),
+    path("api/admin/workspaces/<str:workspace_id>/access/<int:user_id>/", account_views.workspace_access),
     # API endpoints
     path("api/bootstrap/", views.bootstrap),
     path("api/changelog/", views.changelog),

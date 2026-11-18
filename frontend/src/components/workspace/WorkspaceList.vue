@@ -3,12 +3,14 @@
 import { computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
+import { useAuthStore } from '../../stores/auth'
 import WorkspaceCard from './WorkspaceCard.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import HelpIconButton from '../help/HelpIconButton.vue'
 
 const settingsStore = useSettingsStore()
 const workspacesStore = useWorkspacesStore()
+const authStore = useAuthStore()
 
 const emit = defineEmits(['select', 'menu-select', 'manage', 'create'])
 
@@ -37,6 +39,7 @@ const visibleWorkspaces = computed(() =>
                     {{ $t('common.filters.showArchived') }}
                 </wa-switch>
                 <wa-button
+                    v-if="authStore.isAdmin"
                     id="ws-list-manage-btn"
                     variant="neutral"
                     appearance="plain"
@@ -45,8 +48,9 @@ const visibleWorkspaces = computed(() =>
                 >
                     <wa-icon name="gear"></wa-icon>
                 </wa-button>
-                <AppTooltip for="ws-list-manage-btn">{{ $t('workspace.actions.manage') }}</AppTooltip>
+                <AppTooltip v-if="authStore.isAdmin" for="ws-list-manage-btn">{{ $t('workspace.actions.manage') }}</AppTooltip>
                 <wa-button
+                    v-if="authStore.isAdmin"
                     id="ws-list-create-btn"
                     variant="neutral"
                     appearance="plain"
@@ -55,7 +59,7 @@ const visibleWorkspaces = computed(() =>
                 >
                     <wa-icon name="plus"></wa-icon>
                 </wa-button>
-                <AppTooltip for="ws-list-create-btn">{{ $t('workspace.actions.create') }}</AppTooltip>
+                <AppTooltip v-if="authStore.isAdmin" for="ws-list-create-btn">{{ $t('workspace.actions.create') }}</AppTooltip>
             </div>
         </div>
         <wa-callout v-if="!visibleWorkspaces.length" variant="brand" class="workspace-hint">

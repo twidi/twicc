@@ -60,6 +60,7 @@ import { createInlineArtifactRuntime } from '../inline-artifacts/runtime.js'
 import { makeOwnerInlineAdapter } from '../inline-artifacts/ownerAdapter.js'
 import InlineArtifactRuntimeHost from '../inline-artifacts/InlineArtifactRuntimeHost.vue'
 import { useUploadsStore } from '../stores/uploads'
+import { useAuthStore } from '../stores/auth'
 import { originKey } from '../utils/uploads/rules'
 import {
     buildFilesRouteParams,
@@ -87,6 +88,7 @@ import { isReducedMotion } from '../utils/reducedMotion'
 const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
+const authStore = useAuthStore()
 const workspacesStore = useWorkspacesStore()
 const layoutsStore = useLayoutsStore()
 const settingsStore = useSettingsStore()
@@ -663,7 +665,8 @@ const activeTabId = computed(() => {
 const TOOL_TABS = [
     { id: 'files', labelKey: 'session.tabs.files', icon: 'folder', present: () => true },
     { id: 'git', labelKey: 'session.tabs.git', icon: 'code-branch', present: () => hasGitRepo.value, redirectReady: () => !!store.getProject(session.value?.project_id) },
-    { id: 'terminal', labelKey: 'session.tabs.terminal', icon: 'terminal', present: () => true },
+    // Multi-user: a terminal is a shell as the host account — admins only.
+    { id: 'terminal', labelKey: 'session.tabs.terminal', icon: 'terminal', present: () => authStore.isAdmin, redirectReady: () => true },
     { id: 'tasks', labelKey: 'session.tabs.tasks', icon: 'square-check', present: () => hasTasks.value, redirectReady: () => !!session.value },
     { id: 'plan', labelKey: 'session.tabs.plan', icon: 'list-check', present: () => hasPlan.value, redirectReady: () => !!session.value },
     { id: 'artifacts', labelKey: 'session.tabs.artifacts', icon: 'shapes', present: () => !session.value?.draft },
@@ -2675,6 +2678,7 @@ onBeforeUnmount(() => {
             <Teleport :to="toolTarget('terminal')" :disabled="!toolTarget('terminal')">
                 <div class="layout-tool-wrap" v-show="layout.isToolPanelVisible('terminal')">
                     <TerminalPanel
+                        v-if="authStore.isAdmin"
                         ref="terminalPanelRef"
                         :context-key="`s:${session.id}`"
                         :session-id="session.id"

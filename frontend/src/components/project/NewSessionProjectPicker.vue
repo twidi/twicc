@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
+import { useAuthStore } from '../../stores/auth'
 import { splitProjectsByPriority } from '../../utils/projectSort'
 import { buildProjectTree, flattenProjectTree } from '../../utils/projectTree'
 import ProjectBadge from './ProjectBadge.vue'
@@ -20,6 +21,7 @@ const emit = defineEmits(['select-project'])
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 const workspacesStore = useWorkspacesStore()
+const authStore = useAuthStore()
 const route = useRoute()
 const dropdownRef = ref(null)
 const createProjectDialogRef = ref(null)
@@ -91,7 +93,7 @@ function openWorktreeDialog(project) {
 <template>
     <wa-dropdown v-bind="$attrs" ref="dropdownRef" @wa-select="handleNewSessionSelect">
         <slot name="trigger" />
-        <wa-dropdown-item value="__new_project__">
+        <wa-dropdown-item v-if="authStore.isAdmin" value="__new_project__">
             <wa-icon slot="icon" name="plus"></wa-icon>
             {{ $t('project.actions.create') }}
         </wa-dropdown-item>
