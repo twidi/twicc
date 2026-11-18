@@ -20,6 +20,7 @@ import TimelinePanel from '../timeline/TimelinePanel.vue'
 import TabBar from '../ui/TabBar.vue'
 import UploadTabStatus from '../files/UploadTabStatus.vue'
 import { useUploadsStore } from '../../stores/uploads'
+import { useAuthStore } from '../../stores/auth'
 import { originKey } from '../../utils/uploads/rules'
 import { deriveFileRoots, getWorktreeParent } from '../../utils/projectRoots'
 import { worktreeLabel } from '../../utils/worktree'
@@ -50,6 +51,7 @@ const props = defineProps({
 })
 
 const dataStore = useDataStore()
+const authStore = useAuthStore()
 const workspacesStore = useWorkspacesStore()
 const route = useRoute()
 const router = useRouter()
@@ -237,7 +239,9 @@ const hasGitRepo = computed(() => {
 })
 
 // Timeline, Stats, Files, Git (only with a git root), Terminal — see utils/projectTabs.js.
-const TABS = computed(() => visibleProjectTabs({ hasGitRepo: hasGitRepo.value }))
+// Multi-user: the terminal is a shell as the host account — admins only.
+const canUseTerminal = computed(() => authStore.isAdmin)
+const TABS = computed(() => visibleProjectTabs({ hasGitRepo: hasGitRepo.value, hasTerminal: canUseTerminal.value }))
 
 // Active tab derived from the route name; the bare routes are the Timeline.
 const activeTab = computed(() => tabForRouteName(route.name))
@@ -409,7 +413,7 @@ function handleTabShortcut(event) {
 
     if (type === 'direct') {
         // Alt+Shift+{1..5} → fixed tabs; 4 (Git) does nothing without a git root, 5 stays the Terminal.
-        targetTab = directTab(index, { hasGitRepo: hasGitRepo.value })
+        targetTab = directTab(index, { hasGitRepo: hasGitRepo.value, hasTerminal: canUseTerminal.value })
         if (!targetTab) return
     } else if (type === 'prev' || type === 'next') {
         const tabs = orderedTabs.value
@@ -498,7 +502,7 @@ onBeforeUnmount(() => {
                 />
             </wa-tab-panel>
 
-            <wa-tab-panel name="terminal">
+            <wa-tab-panel v-if="canUseTerminal" name="terminal">
                 <TerminalPanel
                     ref="terminalPanelRef"
                     :context-key="terminalContextKey"

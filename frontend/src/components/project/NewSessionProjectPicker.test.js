@@ -19,7 +19,7 @@ function setup({ workspace = null, projects = [], worktrees = [] } = {}) {
     const state = runInNewContext(`${descriptor.scriptSetup.content.replace(/^import .*$/gm, '')}; ({
         splitNamedProjects, splitFlatTree, activeWsLabel, pickableWorktreesOf,
         isNewSessionWorktreesExpanded, handleNewSessionSelect, handleProjectResolved,
-        openWorktreeDialog, dropdownRef, createProjectDialogRef, worktreeDialogRef,
+        openWorktreeDialog, dropdownRef, createProjectDialogRef, worktreeDialogRef, authStore,
     })`, {
         useI18n: () => createAppI18n().global, computed, ref, splitProjectsByPriority, buildProjectTree, flattenProjectTree,
         defineOptions: () => {}, defineEmits: () => (...args) => emitted.push(args),
@@ -27,6 +27,7 @@ function setup({ workspace = null, projects = [], worktrees = [] } = {}) {
         useSettingsStore: () => settings,
         useRoute: () => ({ query: workspace ? { workspace: workspace.id } : {} }),
         useWorkspacesStore: () => ({ getWorkspaceById: () => workspace, getVisibleProjectIds: () => workspace.visibleIds }),
+        useAuthStore: () => ({ isAdmin: true }),
     })
     return { state, settings, emitted }
 }

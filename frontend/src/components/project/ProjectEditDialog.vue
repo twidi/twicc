@@ -18,6 +18,8 @@ import { resolveProjectTrust } from '../../utils/trust'
 import { useProjectDirectoryRecheck } from '../../composables/useProjectDirectoryRecheck'
 import { resolveProjectIconUrl } from '../../utils/projectIcon'
 import ProjectAgentDefaultsSection from './ProjectAgentDefaultsSection.vue'
+import AccessMembersSection from '../accounts/AccessMembersSection.vue'
+import { useAuthStore } from '../../stores/auth'
 import TabBar from '../ui/TabBar.vue'
 import HelpIconButton from '../help/HelpIconButton.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
@@ -41,6 +43,11 @@ const workspacesStore = useWorkspacesStore()
 const settingsStore = useSettingsStore()
 const helpStore = useHelpStore()
 const layoutsStore = useLayoutsStore()
+const authStore = useAuthStore()
+// Multi-user: the Access tab is for admins, once accounts exist. A worktree
+// inherits its main repository's access, so the tab edits the main project.
+const showAccessTab = computed(() => !isCreateMode.value && authStore.isAdmin && authStore.accountsEnabled)
+const accessProjectId = computed(() => props.project?.worktree_of || props.project?.id || '')
 
 // Refs for the dialog and form elements
 const dialogRef = ref(null)
@@ -322,6 +329,8 @@ function handleDialogAfterShow(e) {
  * Open the dialog.
  */
 function open() {
+    // Multi-user: creating/editing projects is admin-only (the server refuses it).
+    if (!authStore.isAdmin) return
     errorMessage.value = ''
     directoryNotFound.value = false
     mainTab.value = 'general'
@@ -858,6 +867,7 @@ defineExpose({
             >
                 <wa-tab slot="nav" panel="general">{{ $t('common.entities.project') }}</wa-tab>
                 <wa-tab v-if="!isCreateMode" slot="nav" panel="agent">{{ $t('project.edit.agentSettingsTab') }}</wa-tab>
+                <wa-tab v-if="showAccessTab" slot="nav" panel="access">{{ $t('accounts.access.tab') }}</wa-tab>
 
                 <wa-tab-panel name="general">
                     <div class="tab-body">
@@ -1171,6 +1181,16 @@ defineExpose({
                 <wa-tab-panel v-if="!isCreateMode" name="agent">
                     <div class="tab-body">
                         <ProjectAgentDefaultsSection ref="agentDefaultsRef" :project="project" />
+                    </div>
+                </wa-tab-panel>
+
+                <wa-tab-panel v-if="showAccessTab" name="access">
+                    <div class="tab-body">
+                        <wa-callout v-if="project?.worktree_of" variant="neutral" size="small">
+                            <wa-icon slot="icon" name="code-branch"></wa-icon>
+                            {{ $t('accounts.access.worktreeInherits') }}
+                        </wa-callout>
+                        <AccessMembersSection v-if="mainTab === 'access'" kind="project" :target-id="accessProjectId" />
                     </div>
                 </wa-tab-panel>
             </TabBar>

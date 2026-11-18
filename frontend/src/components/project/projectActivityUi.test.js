@@ -41,7 +41,7 @@ function setup(file, fixture, bindings, props = {}, extras = {}) {
         useI18n: () => createAppI18n().global, ...Vue, buildProjectTree, flattenProjectTree, splitProjectsByPriority, isWorkspaceProjectId, extractWorkspaceId,
         ALL_PROJECTS_ID: '__all__', defineProps: () => props, defineEmits: () => () => {}, defineOptions: () => {},
         useDataStore: () => fixture.data, useSettingsStore: () => fixture.settings,
-        useWorkspacesStore: () => fixture.workspaces, useRoute: () => ({ query: {} }), ...extras,
+        useWorkspacesStore: () => fixture.workspaces, useAuthStore: () => ({ isAdmin: true }), useRoute: () => ({ query: {} }), ...extras,
     })
 }
 const ids = rows => Array.from(rows, p => p.id)

@@ -10,6 +10,7 @@ import { getComposerPlaceholder } from '../../i18n/composerPlaceholder.js'
 import { ref, computed, watch, nextTick, useId, toRef, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from '../../stores/data'
+import { useAuthStore } from '../../stores/auth'
 import { useSettingsStore } from '../../stores/settings'
 import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../../providers'
 import ProviderIcon from '../ui/ProviderIcon.vue'
@@ -116,6 +117,7 @@ const props = defineProps({
 const router = useRouter()
 const route = useRoute()
 const store = useDataStore()
+const authStore = useAuthStore()
 const settingsStore = useSettingsStore()
 const codeCommentsStore = useCodeCommentsStore()
 
@@ -514,7 +516,12 @@ const attachmentStripItems = computed(() => composerStripItems({
 }))
 
 // Determine if input/button should be disabled
+// Multi-user: a member with view-only access to this project may read the
+// session but not drive its agent (the server refuses the send anyway).
+const readOnlyAccess = computed(() => !authStore.canOperate(props.projectId))
+
 const isDisabled = computed(() => {
+    if (!authStore.canOperate(props.projectId)) return true
     if (!store.wsConnected) return true
     const providerHelpers = getProviderHelpers(session.value?.provider)
     if (providerHelpers && !providerHelpers.canSendMessage()) return true
@@ -2393,6 +2400,10 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                     <wa-icon name="xmark" variant="classic"></wa-icon>
                     <span>{{ hasDropdownsChanged ? $t('composer.actions.reset') : $t('composer.actions.clear') }}</span>
                 </wa-button>
+                <span v-if="readOnlyAccess" class="read-only-access">
+                    <wa-icon name="eye" variant="classic"></wa-icon>
+                    <span>{{ $t('accounts.composer.viewOnly') }}</span>
+                </span>
                 <!-- Send / Update button: dynamically labeled based on state.
                      A pending request replaces it with the paused indicator. Session
                      preparation keeps it visible but disabled. -->
@@ -2476,6 +2487,14 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
 </template>
 
 <style scoped>
+.read-only-access {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+}
+
 .ephemeral-icon:not(.session-state-icon--ephemeral) { color: var(--wa-color-neutral-60); }
 /* On: the shared ephemeral colour (styles/session-state-icons.css). */
 

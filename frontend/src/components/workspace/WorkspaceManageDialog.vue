@@ -14,6 +14,8 @@ import ProjectSelectOptions from '../project/ProjectSelectOptions.vue'
 import DirectoryPickerPopup from '../files/DirectoryPickerPopup.vue'
 import { matchPattern } from '../../utils/workspacePatterns'
 import BrowserUrlListEditor from '../browser/BrowserUrlListEditor.vue'
+import AccessMembersSection from '../accounts/AccessMembersSection.vue'
+import { useAuthStore } from '../../stores/auth'
 
 const { t } = useI18n()
 
@@ -21,6 +23,7 @@ const workspacesStore = useWorkspacesStore()
 const settingsStore = useSettingsStore()
 const helpStore = useHelpStore()
 const dataStore = useDataStore()
+const authStore = useAuthStore()
 
 // -- Dialog refs --------------------------------------------------------------
 const dialogRef = ref(null)
@@ -333,6 +336,8 @@ function maybeShowWorkspaceHelp() {
 }
 
 function open() {
+    // Multi-user: managing workspaces is admin-only (the server refuses it).
+    if (!authStore.isAdmin) return
     maybeShowWorkspaceHelp()
     view.value = 'list'
     errorMessage.value = ''
@@ -350,6 +355,8 @@ function close() {
 }
 
 function openForWorkspace(workspaceId) {
+    // Multi-user: managing workspaces is admin-only (the server refuses it).
+    if (!authStore.isAdmin) return
     const ws = workspacesStore.getWorkspaceById(workspaceId)
     if (!ws) {
         open()
@@ -366,6 +373,8 @@ function openForWorkspace(workspaceId) {
 }
 
 function openNew() {
+    // Multi-user: managing workspaces is admin-only (the server refuses it).
+    if (!authStore.isAdmin) return
     maybeShowWorkspaceHelp()
     errorMessage.value = ''
     deleteConfirmId.value = null
@@ -647,6 +656,16 @@ defineExpose({ open, close, openForWorkspace, openNew })
                     :entries="formData.browserUrls"
                 />
             </div>
+
+            <!-- Multi-user access (admins, existing workspace, once accounts exist).
+                 Saved at once, independently of the form's Save. -->
+            <template v-if="formData.id && authStore.isAdmin && authStore.accountsEnabled">
+                <wa-divider></wa-divider>
+                <div class="form-group">
+                    <label class="form-label">{{ $t('accounts.access.tab') }}</label>
+                    <AccessMembersSection kind="workspace" :target-id="formData.id" />
+                </div>
+            </template>
 
             <!-- Error -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">

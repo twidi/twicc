@@ -15,6 +15,7 @@ import { onClickOutside } from '@vueuse/core'
 import { useDataStore, ALL_PROJECTS_ID } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
+import { useAuthStore } from '../../stores/auth'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import { aggregateWeeklyActivity } from '../../utils/activityAggregation'
 import { formatDate } from '../../utils/date'
@@ -45,6 +46,7 @@ const props = defineProps({
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 const workspacesStore = useWorkspacesStore()
+const authStore = useAuthStore()
 
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
@@ -286,7 +288,7 @@ function handleUnarchive() {
 
             <!-- Action buttons (a project or a workspace): part of the compact panel, always visible at full
                  height. -->
-            <div v-if="!isAllProjectsMode" ref="actionsRef" class="detail-actions">
+            <div v-if="!isAllProjectsMode && authStore.isAdmin" ref="actionsRef" class="detail-actions">
                 <wa-button
                     v-if="!isArchived"
                     id="detail-archive-button"

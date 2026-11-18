@@ -23,15 +23,19 @@ export const PROJECT_TABS = Object.freeze([
 /** Alt+Shift+digit → tab id. Fixed: a missing tab (Git without a git root) leaves its key unused. */
 export const DIRECT_TAB_MAP = Object.freeze({ 1: 'timeline', 2: 'stats', 3: 'files', 4: 'git', 5: 'terminal' })
 
-/** The tab strip: Git only with a git root. */
-export function visibleProjectTabs({ hasGitRepo }) {
-    return PROJECT_TABS.filter((tab) => tab.id !== 'git' || hasGitRepo)
+/**
+ * The tab strip: Git only with a git root; Terminal only when the caller may
+ * open a shell (multi-user: admins only — a terminal is the host account).
+ */
+export function visibleProjectTabs({ hasGitRepo, hasTerminal = true }) {
+    return PROJECT_TABS.filter((tab) => (tab.id !== 'git' || hasGitRepo) && (tab.id !== 'terminal' || hasTerminal))
 }
 
 /** The tab a direct shortcut opens, or null when the key is unused or its tab is missing. */
-export function directTab(index, { hasGitRepo }) {
+export function directTab(index, { hasGitRepo, hasTerminal = true }) {
     const id = DIRECT_TAB_MAP[index] ?? null
     if (id === 'git' && !hasGitRepo) return null
+    if (id === 'terminal' && !hasTerminal) return null
     return id
 }
 
