@@ -22,6 +22,7 @@ from channels.layers import get_channel_layer
 import orjson
 
 from twicc import search
+from twicc.accounts.scoping import NO_PROJECT_SENTINEL, request_access, restrict_project_ids
 from twicc.core.content_storage.readers import effective_current, iter_matching_items, aload_current
 from twicc.agent.registry import get_agent_manager_registry
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
@@ -227,6 +228,7 @@ async def all_sessions(request):
     before_mtime = request.GET.get("before_mtime")
     project_ids_param = request.GET.get("project_ids")
     project_id_list = project_ids_param.split(",") if project_ids_param else None
+    project_id_list = restrict_project_ids(await request_access(request), project_id_list)
     pinned_only = request.GET.get("pinned", "").lower() in ("1", "true")
     unread_only = request.GET.get("unread", "").lower() in ("1", "true")
     has_process = request.GET.get("has_process", "").lower() in ("1", "true")
@@ -310,8 +312,9 @@ async def project_list(request):
     if request.method == "POST":
         return await _create_project(request)
 
+    access = await request_access(request)
     projects = await sync_to_async(list)(Project.objects.all())
-    data = [serialize_project(p) for p in projects]
+    data = [serialize_project(p) for p in projects if access.can_view(p.id)]
     return JsonResponse(data, safe=False)
 
 
@@ -1200,7 +1203,12 @@ async def async_question_session_existence(request):
             sync_ready = orchestrator.initial_sync_done.is_set() and orchestrator.initial_sync_succeeded
         except (KeyError, AttributeError):
             pass
-    present = {session_id async for session_id in Session.objects.filter(id__in=session_ids).values_list("id", flat=True)}
+    access = await request_access(request)
+    present = {
+        session_id
+        async for session_id, project_id in Session.objects.filter(id__in=session_ids).values_list("id", "project_id")
+        if access.can_view(project_id)
+    }
     return JsonResponse({"sessions": {
         session_id: "present" if session_id in present else "deleted" if sync_ready else "unknown"
         for session_id in session_ids
@@ -3548,7 +3556,8 @@ async def home_data(request):
     current_monday = today - timedelta(days=today.weekday())
     cutoff = current_monday - timedelta(weeks=_WEEKLY_ACTIVITY_MAX_WEEKS - 1)
 
-    projects = await sync_to_async(list)(Project.objects.all())
+    access = await request_access(request)
+    projects = [p for p in await sync_to_async(list)(Project.objects.all()) if access.can_view(p.id)]
 
     # Load all weekly activities in a single query (within the 52-week window).
     # Always aggregate per (project, date) so multi-provider rows collapse
@@ -3579,9 +3588,21 @@ async def home_data(request):
         )
         data.append(d)
 
-    global_activity = _format_weekly_activity(
-        activities_by_project.get(None, []), current_monday
-    )
+    if access.unrestricted:
+        global_rows = activities_by_project.get(None, [])
+    else:
+        # A member's "global" activity is the sum over the projects they see.
+        totals: dict = {}
+        for p in projects:
+            for a in activities_by_project.get(p.id, []):
+                row = totals.setdefault(a["date"], {
+                    "project_id": None, "date": a["date"], "user_message_count": 0, "session_count": 0, "cost": 0,
+                })
+                row["user_message_count"] += a["user_message_count"] or 0
+                row["session_count"] += a["session_count"] or 0
+                row["cost"] += a["cost"] or 0
+        global_rows = list(totals.values())
+    global_activity = _format_weekly_activity(global_rows, current_monday)
 
     return JsonResponse({
         "projects": data,
@@ -3631,10 +3652,14 @@ async def daily_activity(request, project_id=None):
 
     # Determine filtering: specific project, set of projects (workspace), or global
     project_ids_param = request.GET.get("project_ids") if not project_id else None
+    access = await request_access(request)
     if project_id:
         project_filters = {"project_id": project_id}
     elif project_ids_param:
-        project_filters = {"project_id__in": project_ids_param.split(",")}
+        project_filters = {"project_id__in": restrict_project_ids(access, project_ids_param.split(","))}
+    elif not access.unrestricted:
+        # A member's global view: the sum over the projects they see.
+        project_filters = {"project_id__in": restrict_project_ids(access, None)}
     else:
         project_filters = {"project__isnull": True}
 
@@ -3707,6 +3732,11 @@ async def timeline(request):
         feed_request = timeline_feed.parse_request(request.GET)
     except timeline_feed.FeedError as error:
         return JsonResponse({"error": str(error), "ui_message": _exception_ui_message(error)}, status=400)
+    access = await request_access(request)
+    if not access.unrestricted:
+        feed_request = feed_request._replace(
+            project_ids=tuple(restrict_project_ids(access, feed_request.project_ids or None))
+        )
     return JsonResponse(await sync_to_async(timeline_feed.fetch_feed)(feed_request))
 
 
@@ -3718,6 +3748,9 @@ async def timeline_final_message_snapshots(request):
         ending_ids, projects, include_muted = timeline_final_messages.parse_request(request.GET)
     except timeline_feed.FeedError as error:
         return JsonResponse({"error": str(error), "ui_message": _exception_ui_message(error)}, status=400)
+    access = await request_access(request)
+    if not access.unrestricted:
+        projects = tuple(restrict_project_ids(access, projects or None))
 
     def read():
         from twicc.projects import expand_project_ids_with_worktrees
@@ -3740,6 +3773,15 @@ async def search_sessions(request):
 
     project_id = request.GET.get("project_id")
     project_ids = request.GET.getlist("project_ids")
+    access = await request_access(request)
+    if not access.unrestricted:
+        # Members search only what they can see: a foreign project_id matches
+        # nothing, and an unscoped search is narrowed to the visible set.
+        if project_id and not access.can_view(project_id):
+            project_id = None
+            project_ids = [NO_PROJECT_SENTINEL]
+        elif not project_id:
+            project_ids = restrict_project_ids(access, project_ids or None)
     session_id = request.GET.get("session_id")
 
     from_role = request.GET.get("from")
@@ -4074,6 +4116,10 @@ async def bootstrap(request):
     # would still block ASGI. Hop into a worker thread for the lot.
     raw_settings = await asyncio.to_thread(read_synced_settings)
     clean_settings, version = prepare_settings_for_client(raw_settings)
+    if not (await request_access(request)).unrestricted:
+        from twicc.accounts.scoping import strip_member_settings
+
+        clean_settings = strip_member_settings(clean_settings)
     disabled_providers_present = "disabledProviders" in raw_settings
     disabled_providers = (raw_settings.get("disabledProviders") or []) if disabled_providers_present else []
     from twicc.providers.state import get_all_provider_states
@@ -4111,6 +4157,13 @@ async def bootstrap(request):
             category: [k for k in keys if k not in AGENT_SETTINGS_HIDDEN_FROM_FRONTEND]
             for category, keys in categories.items()
         }
+    workspaces = workspaces_data.get("workspaces", [])
+    access = await request_access(request)
+    if not access.unrestricted:
+        from twicc.accounts.project_access import filter_workspaces_payload, visible_workspace_ids
+
+        visible = await sync_to_async(visible_workspace_ids)(request.twicc_principal, access)
+        workspaces = filter_workspaces_payload(workspaces, access, visible)
     return JsonResponse({
         "settings": clean_settings,
         "settings_version": version,
@@ -4120,7 +4173,7 @@ async def bootstrap(request):
         "twicc_launch_prefix": settings.TWICC_LAUNCH_PREFIX,
         "update_instructions": prepare_update_instructions_for_client(settings.UPDATE_INSTRUCTIONS),
         "claudeHybridEnabled": settings.CLAUDE_HYBRID_ENABLED,
-        "workspaces": workspaces_data.get("workspaces", []),
+        "workspaces": workspaces,
         "terminal_config": terminal_config,
         "message_snippets": message_snippets,
         "tts": tts_client_payload(tts_config),
@@ -4325,8 +4378,11 @@ async def artifact_bookmark_list(request):
         return HttpResponseNotAllowed(["GET", "POST"])
     if request.method == "POST":
         return await _create_artifact_bookmark(request)
+    access = await request_access(request)
     bookmarks = await sync_to_async(list)(ArtifactBookmark.objects.all())
-    return JsonResponse({"bookmarks": [serialize_artifact_bookmark(b) for b in bookmarks]})
+    return JsonResponse({
+        "bookmarks": [serialize_artifact_bookmark(b) for b in bookmarks if access.can_view(b.project_id)]
+    })
 
 
 async def _create_artifact_bookmark(request):

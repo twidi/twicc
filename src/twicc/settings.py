@@ -171,6 +171,8 @@ MIDDLEWARE = [
     "twicc.auth.middleware.PasswordAuthMiddleware",
     "twicc.auth.middleware.RpcTokenAuthMiddleware",
     "twicc.auth.middleware.RequestOriginMiddleware",
+    # Multi-user: per-project authorization of members (deny by default).
+    "twicc.accounts.middleware.AccessControlMiddleware",
 ]
 
 # Artifact data-store PUTs (design 2026-08-05 §4) carry up to 10 MB bodies;
