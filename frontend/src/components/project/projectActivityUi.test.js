@@ -7,7 +7,11 @@ import { createPinia, defineStore } from 'pinia'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
-import { buildProjectActivityIndex, createProjectActivityComparator } from '../../utils/projectActivity.js'
+import {
+    buildProjectActivityIndex,
+    createProjectActivityComparator,
+    createProjectListComparator,
+} from '../../utils/projectActivity.js'
 import { buildProjectTree, flattenProjectTree } from '../../utils/projectTree.js'
 import { splitProjectsByPriority } from '../../utils/projectSort.js'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds.js'
@@ -17,9 +21,10 @@ const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 // Execute production getters with real Pinia reactivity. The full store imports browser dependencies.
 const dataSource = read('../../stores/data.js')
 const getters = new Function('buildProjectActivityIndex', 'createProjectActivityComparator',
-    'getArchivedProjectIds', 'getWorktreeIdsByParent',
+    'createProjectListComparator', 'useSettingsStore', 'getArchivedProjectIds', 'getWorktreeIdsByParent',
     `return { ${dataSource.slice(dataSource.indexOf('        // Data getters'), dataSource.indexOf('        // Session scope of a project:'))} }`,
-)(buildProjectActivityIndex, createProjectActivityComparator, getArchivedProjectIds, getWorktreeIdsByParent)
+)(buildProjectActivityIndex, createProjectActivityComparator, createProjectListComparator,
+    () => ({ getProjectSortOrder: 'activity' }), getArchivedProjectIds, getWorktreeIdsByParent)
 const useProjects = defineStore('activity-ui-test', { state: () => ({ projects: {}, weeklyActivity: {} }), getters })
 const project = (id, fields = {}) => ({ id, name: id, directory: `/dev/${id}`, mtime: 10, archived: false, stale: false, ...fields })
 function fixture() {

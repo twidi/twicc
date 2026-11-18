@@ -23,6 +23,7 @@ import { useOriginSettingsForm } from '../../composables/useOriginSettingsForm'
 import { usePeerSystemConfigured } from '../../composables/usePeerSystemConfigured'
 import {
     DISPLAY_MODE,
+    PROJECT_SORT_ORDER,
     COLOR_SCHEME,
     SESSION_TIME_FORMAT,
     DEFAULT_MAX_CACHED_SESSIONS,
@@ -508,6 +509,7 @@ const displayMode = computed(() => store.getDisplayMode)
 const fontSize = computed(() => store.getFontSize)
 const colorScheme = computed(() => store.getColorScheme)
 const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
+const projectSortOrder = computed(() => store.getProjectSortOrder)
 const showCosts = computed(() => store.areCostsShown)
 const telemetryEnabled = computed(() => store.isTelemetryEnabled)
 const showTelemetryPayload = ref(false)
@@ -872,6 +874,11 @@ watch(
 )
 
 // Display mode options for the select
+const projectSortOrderOptions = computed(() => [
+    { value: PROJECT_SORT_ORDER.ACTIVITY, label: t('settings.general.projectSortOrder.activity') },
+    { value: PROJECT_SORT_ORDER.ALPHABETICAL, label: t('settings.general.projectSortOrder.alphabetical') },
+])
+
 const displayModeOptions = computed(() => [
     { value: DISPLAY_MODE.CONVERSATION, label: t('settings.sessions.displayMode.conversation') },
     { value: DISPLAY_MODE.SIMPLIFIED, label: t('settings.sessions.displayMode.simplified') },
@@ -899,6 +906,10 @@ function onDefaultProviderChange(event) {
 /**
  * Handle display mode change.
  */
+function onProjectSortOrderChange(event) {
+    store.setProjectSortOrder(event.target.value)
+}
+
 function onDisplayModeChange(event) {
     store.setDisplayMode(event.target.value)
 }
@@ -1547,6 +1558,21 @@ function onChangelogClose() {
                                 @input="onFontSizeChange"
                                 size="small"
                             ></wa-slider>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">{{ $t('settings.general.projectSortOrder.label') }}</label>
+                            <wa-select
+                                :value.prop="projectSortOrder"
+                                @change="onProjectSortOrderChange"
+                                size="small"
+                            >
+                                <wa-option
+                                    v-for="option in projectSortOrderOptions"
+                                    :key="option.value"
+                                    :value="option.value"
+                                >{{ option.label }}</wa-option>
+                            </wa-select>
+                            <span class="setting-group-hint">{{ $t('settings.general.projectSortOrder.hint') }}</span>
                         </div>
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.general.keepRailVisible.label') }}</label>

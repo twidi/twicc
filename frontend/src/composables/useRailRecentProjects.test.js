@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { computed, effectScope, reactive } from 'vue'
-import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
+import {
+    buildProjectActivityIndex,
+    createProjectActivityComparator,
+    createProjectListComparator,
+} from '../utils/projectActivity.js'
 import { createWorkspaceMembership, getArchivedProjectIds, getWorktreeIdsByParent } from '../utils/projectScopes.js'
 import { observeStageRuns } from '../utils/stageRuns.js'
 import { useRailRecentProjects } from './useRailRecentProjects.js'
@@ -13,10 +17,13 @@ const dataSource = readFileSync(new URL('../stores/data.js', import.meta.url), '
 const dataStart = dataSource.indexOf('        // Data getters')
 const dataEnd = dataSource.indexOf('        // Session scope of a project:', dataStart)
 const projectGetter = dataSource.match(/^        getProject:.*$/m)[0]
+// The project list order setting; the rail must stay by activity whatever its value.
+const projectSort = { getProjectSortOrder: 'activity' }
 const projectGetters = new Function('buildProjectActivityIndex', 'createProjectActivityComparator',
-    'getArchivedProjectIds', 'getWorktreeIdsByParent',
+    'createProjectListComparator', 'useSettingsStore', 'getArchivedProjectIds', 'getWorktreeIdsByParent',
     `return { ${dataSource.slice(dataStart, dataEnd)} ${projectGetter} }`,
-)(buildProjectActivityIndex, createProjectActivityComparator, getArchivedProjectIds, getWorktreeIdsByParent)
+)(buildProjectActivityIndex, createProjectActivityComparator, createProjectListComparator, () => projectSort,
+    getArchivedProjectIds, getWorktreeIdsByParent)
 const workspaceSource = readFileSync(new URL('../stores/workspaces.js', import.meta.url), 'utf8')
 const workspaceStart = workspaceSource.indexOf('    getters: {') + '    getters: '.length
 const workspaceEnd = workspaceSource.indexOf('\n    actions:', workspaceStart)
@@ -35,6 +42,16 @@ test('activity updates retain equivalent recent project and workspace lists', t 
     store.projects.p.mtime = NOW
     assert.strictEqual(api.recentProjects.value, projects)
     assert.strictEqual(api.recentWorkspaces.value, workspaces)
+})
+
+test('recent projects stay ordered by activity when the project lists are alphabetical', t => {
+    projectSort.getProjectSortOrder = 'alphabetical'
+    t.after(() => { projectSort.getProjectSortOrder = 'activity' })
+    const { api } = fixture(t, [
+        { id: 'a', name: 'Alpha', mtime: NOW - 30 },
+        { id: 'z', name: 'Zulu', mtime: NOW - 10 },
+    ])
+    assert.deepEqual(ids(api.recentProjects.value), ['z', 'a'])
 })
 
 function fixture(t, projects, workspaces = [], clock = () => NOW) {

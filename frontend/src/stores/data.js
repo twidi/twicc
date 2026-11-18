@@ -9,7 +9,12 @@ import { mergeSessionEventRows, insertEventDaySeparators } from '../utils/chatEv
 import { setEventSegmentExpanded } from '../utils/chatEvents/segments.js'
 import { orderCompactItems } from '../utils/chatEvents/placement.js'
 import { refreshStatisticsHome } from '../composables/statisticsRefresh.js'
-import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
+import {
+    buildProjectActivityIndex,
+    computeProjectDisplayName,
+    createProjectActivityComparator,
+    createProjectListComparator,
+} from '../utils/projectActivity.js'
 import { getScopeSessionList, getStableSessionList } from '../utils/sessionLists.js'
 import { getRootSessions } from '../utils/rootSessions.js'
 import { getUnreadMemos } from '../utils/unreadMemos.js'
@@ -960,17 +965,21 @@ export const useDataStore = defineStore('data', {
         projectActivityComparator() {
             return createProjectActivityComparator(this.projectActivityById)
         },
+        // Order of every project list: the user's choice (activity, or alphabetical).
+        projectListComparator() {
+            return createProjectListComparator(useSettingsStore().getProjectSortOrder, this.projectActivityById)
+        },
         // Includes every raw project object for aggregates and uniqueness checks.
         getProjects(state) {
-            return Object.values(state.projects).sort(this.projectActivityComparator)
+            return Object.values(state.projects).sort(this.projectListComparator)
         },
         // Top-level lists inherit cached worktree activity before UI visibility filters.
         getListableProjects() {
             return this.getProjects.filter(project => !project.worktree_of)
         },
-        // Worktree rows retain their own activity, ordered most recent first.
+        // Worktree rows retain their own activity; ordered like the project lists.
         getWorktreesOf(state) {
-            const comparator = this.projectActivityComparator
+            const comparator = this.projectListComparator
             return (projectId) => Object.values(state.projects)
                 .filter(project => project.worktree_of === projectId)
                 .sort(comparator)
@@ -1582,20 +1591,8 @@ export const useDataStore = defineStore('data', {
             const project = state.projects[projectId]
             if (!project) return projectId // Fallback to raw ID if project not loaded
 
-            let displayName
-
-            if (project.name) {
-                // 1. User-defined name takes priority
-                displayName = project.name
-            } else if (project.directory) {
-                // 2. Last part of directory path
-                const parts = project.directory.split('/')
-                displayName = parts[parts.length - 1] || project.directory
-            } else {
-                // 3. Last part of ID after dashes
-                const parts = project.id.split('-')
-                displayName = parts[parts.length - 1] || project.id
-            }
+            // User-defined name, else last directory segment, else id tail.
+            const displayName = computeProjectDisplayName(project)
 
             // Cache it
             state.localState.projectDisplayNames[projectId] = displayName
