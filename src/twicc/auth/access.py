@@ -127,3 +127,83 @@ def scope_allowed(scope, session_auth, session_fingerprint) -> bool:
     if is_session_authenticated(session_auth, session_fingerprint, settings.TWICC_PASSWORD_HASH):
         return True
     return dev_local_bypass_enabled() and scope_is_local(scope)
+
+
+# --- principals (multi-user, design 2026-11-18) -----------------------------
+#
+# ``request_allowed``/``scope_allowed`` above answer the owner-only question
+# ("is this the instance password holder?"). The functions below answer the
+# general one — *who* is calling — and are what every gate now uses. Accounts
+# never weaken the owner path: the instance password keeps working as the
+# built-in admin identity.
+
+
+def auth_required() -> bool:
+    """Whether callers must authenticate at all (password set, or accounts exist).
+
+    Reads the cached accounts flag — call after ``await accounts_enabled()``.
+    """
+    from twicc.accounts.principal import accounts_enabled_cached
+
+    return bool(settings.TWICC_PASSWORD_HASH) or accounts_enabled_cached()
+
+
+async def _resolve_principal(values: dict, is_local: bool):
+    from twicc.accounts.principal import (
+        OWNER,
+        SESSION_USER_EPOCH_KEY,
+        SESSION_USER_ID_KEY,
+        accounts_enabled,
+        load_user_principal,
+    )
+    from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
+
+    enabled = await accounts_enabled()
+    user_id = values.get(SESSION_USER_ID_KEY)
+    if user_id is not None:
+        return await load_user_principal(user_id, values.get(SESSION_USER_EPOCH_KEY))
+    if is_session_authenticated(
+        values.get(SESSION_AUTH_KEY), values.get(SESSION_FINGERPRINT_KEY), settings.TWICC_PASSWORD_HASH
+    ):
+        return OWNER
+    if dev_local_bypass_enabled() and is_local:
+        return OWNER
+    if not settings.TWICC_PASSWORD_HASH and not enabled:
+        # Unprotected single-user mode: everyone allowed past the remote gate
+        # is the owner (the remote gate itself is applied by the callers).
+        return OWNER
+    return None
+
+
+async def _session_values(session) -> dict:
+    from twicc.accounts.principal import SESSION_USER_EPOCH_KEY, SESSION_USER_ID_KEY
+    from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
+
+    if session is None:
+        return {}
+    keys = (SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY, SESSION_USER_ID_KEY, SESSION_USER_EPOCH_KEY)
+    return {key: await session.aget(key) for key in keys}
+
+
+async def resolve_request_principal(request):
+    """The :class:`~twicc.accounts.principal.Principal` behind an HTTP request, or None."""
+    values = await _session_values(getattr(request, "session", None))
+    return await _resolve_principal(values, request_is_local(request))
+
+
+async def resolve_scope_principal(scope):
+    """The principal behind an ASGI (WebSocket) scope, or None.
+
+    Reloads the session from storage: a long-lived connection must not keep
+    an identity the session store no longer carries.
+    """
+    from importlib import import_module
+
+    session = scope.get("session")
+    session_key = getattr(session, "session_key", None)
+    if session_key:
+        fresh = import_module(settings.SESSION_ENGINE).SessionStore(session_key=session_key)
+        values = await _session_values(fresh)
+    else:
+        values = {}
+    return await _resolve_principal(values, scope_is_local(scope))

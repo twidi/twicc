@@ -80,6 +80,11 @@ def scope_is_local(scope) -> bool:
 def _unprotected_and_not_opted_out() -> bool:
     """The gate only applies to an instance with no password where the operator
     has not explicitly allowed insecure remote access."""
+    from twicc.accounts.principal import accounts_enabled_cached
+
+    # Accounts make the instance authenticated even without an instance password.
+    if accounts_enabled_cached():
+        return False
     return not settings.TWICC_PASSWORD_HASH and not settings.TWICC_ALLOW_INSECURE_REMOTE
 
 

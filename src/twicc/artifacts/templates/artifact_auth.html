@@ -26,8 +26,8 @@ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:c
 .title{margin:0;font-size:1.4rem;font-weight:700;letter-spacing:.05em}
 .sub{margin:.4rem 0 0;font-size:.85rem;color:var(--muted)}
 label{display:block;font-size:.85rem;font-weight:600;margin-bottom:.4rem}
-input[type=password]{width:100%;padding:.6rem .7rem;font-size:1rem;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--text)}
-input[type=password]:focus{outline:2px solid var(--brand);outline-offset:1px}
+input[type=password],input[type=email]{width:100%;padding:.6rem .7rem;font-size:1rem;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--text)}
+input[type=password]:focus,input[type=email]:focus{outline:2px solid var(--brand);outline-offset:1px}
 .err{margin:.9rem 0 0;padding:.55rem .7rem;border-radius:8px;font-size:.85rem;background:var(--danger-bg);color:var(--danger-text)}
 button{width:100%;margin-top:1.1rem;padding:.65rem;font-size:.95rem;font-weight:600;border:none;border-radius:8px;background:var(--brand);color:var(--brand-text);cursor:pointer}
 button:hover{filter:brightness(1.08)}
@@ -63,6 +63,7 @@ button:hover{filter:brightness(1.08)}
   </div>
   <input type="hidden" name="redirect" value="{{ redirect }}">
   <label for="pw">Password</label>
+  {% if accounts_enabled %}<input id="email" type="email" name="email" placeholder="Email (leave empty for the instance password)" autocomplete="username" style="margin-bottom:.5rem">{% endif %}
   <input id="pw" type="password" name="password" placeholder="Enter password" autofocus autocomplete="current-password">
   {% if error %}<p class="err">Incorrect password. Try again.</p>{% endif %}
   <button type="submit">Sign in</button>
