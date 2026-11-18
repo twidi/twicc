@@ -1757,6 +1757,12 @@ from twicc.cli.token import app as token_app  # noqa: E402
 app.add_typer(token_app)
 
 
+# ``user`` manages accounts and grants (multi-user mode). Local/human only —
+# never exposed via ``/rpc/`` or MCP. Each command sets Django up lazily.
+from twicc.cli.user import app as user_app  # noqa: E402
+app.add_typer(user_app)
+
+
 # ``whoami`` resolves the TwiCC session owning the calling process via PID
 # ancestry. The function performs lazy Django setup inside its body.
 from twicc.cli.whoami import whoami_cmd  # noqa: E402

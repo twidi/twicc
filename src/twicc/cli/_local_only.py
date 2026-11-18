@@ -12,7 +12,8 @@ from __future__ import annotations
 
 # Why each command is local-only:
 # - "password", "token": interactive secret management (must run on the host).
+# - "user": account/grant management — an agent must never mint itself an admin.
 # - "claude", "codex": provider passthroughs (spawn local provider CLIs).
 # - "run": local process exec.
 # - "whoami": host-bound caller identity (resolved from the local process).
-LOCAL_ONLY_COMMANDS = frozenset({"password", "claude", "codex", "run", "token", "whoami"})
+LOCAL_ONLY_COMMANDS = frozenset({"password", "claude", "codex", "run", "token", "user", "whoami"})
